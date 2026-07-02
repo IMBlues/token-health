@@ -102,6 +102,7 @@ private struct UsageCard: View {
     let config: ServiceConfig
     let snapshot: ProviderUsageSnapshot?
     @State private var showsDetails = false
+    @State private var revealsSensitiveAmounts = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -122,7 +123,11 @@ private struct UsageCard: View {
 
             if let snapshot, snapshot.state == .ready {
                 ForEach(primaryUsages(from: snapshot.usages)) { usage in
-                    UsageLine(usage: usage)
+                    UsageLine(
+                        usage: usage,
+                        isSensitiveAmount: isSensitiveAmount(usage),
+                        revealsSensitiveAmount: $revealsSensitiveAmounts
+                    )
                 }
 
                 let details = detailUsages(from: snapshot.usages)
@@ -141,7 +146,11 @@ private struct UsageCard: View {
                     if showsDetails {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(details) { usage in
-                                UsageLine(usage: usage)
+                                UsageLine(
+                                    usage: usage,
+                                    isSensitiveAmount: isSensitiveAmount(usage),
+                                    revealsSensitiveAmount: $revealsSensitiveAmounts
+                                )
                             }
                         }
                     }
@@ -192,6 +201,10 @@ private struct UsageCard: View {
                 return isTokenTotal(usage)
             case .sevenDaysTools:
                 return false
+            case .balance:
+                return true
+            case .todayCost, .todayTokens, .todayRequests:
+                return isTodayTotal(usage)
             case .fiveHours, .week, .mcpMonth:
                 return true
             }
@@ -206,6 +219,10 @@ private struct UsageCard: View {
                 return !isTokenTotal(usage)
             case .sevenDaysTools:
                 return true
+            case .balance:
+                return false
+            case .todayCost, .todayTokens, .todayRequests:
+                return !isTodayTotal(usage)
             case .fiveHours, .week, .mcpMonth:
                 return false
             }
@@ -215,6 +232,17 @@ private struct UsageCard: View {
 
     private func isTokenTotal(_ usage: TokenUsage) -> Bool {
         (usage.label ?? "").lowercased().contains("total")
+    }
+
+    private func isTodayTotal(_ usage: TokenUsage) -> Bool {
+        (usage.label ?? "").lowercased().contains("total")
+    }
+
+    private func isSensitiveAmount(_ usage: TokenUsage) -> Bool {
+        guard config.providerKind == .deepSeek else {
+            return false
+        }
+        return usage.window == .balance || usage.window == .todayCost
     }
 
     private func usageSort(_ lhs: TokenUsage, _ rhs: TokenUsage) -> Bool {
@@ -228,22 +256,32 @@ private struct UsageCard: View {
 
     private func usageRank(_ usage: TokenUsage) -> Int {
         switch usage.window {
-        case .fiveHours:
+        case .balance:
             0
-        case .week:
+        case .todayCost:
             1
-        case .mcpMonth:
+        case .todayTokens:
             2
+        case .todayRequests:
+            3
+        case .fiveHours:
+            10
+        case .week:
+            11
+        case .mcpMonth:
+            12
         case .sevenDaysTokens:
-            isTokenTotal(usage) ? 3 : 10
+            isTokenTotal(usage) ? 13 : 20
         case .sevenDaysTools:
-            20
+            30
         }
     }
 }
 
 private struct UsageLine: View {
     let usage: TokenUsage
+    let isSensitiveAmount: Bool
+    @Binding var revealsSensitiveAmount: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -251,9 +289,22 @@ private struct UsageLine: View {
                 Text(usage.label ?? usage.window.title)
                     .font(.caption.weight(.medium))
                 Spacer()
-                Text(amountText)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(amountText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+
+                    if isSensitiveAmount {
+                        Button {
+                            revealsSensitiveAmount.toggle()
+                        } label: {
+                            Image(systemName: revealsSensitiveAmount ? "eye.slash" : "eye")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(revealsSensitiveAmount ? "Hide amount" : "Show amount")
+                    }
+                }
             }
 
             if usage.limit != nil {
@@ -274,6 +325,12 @@ private struct UsageLine: View {
     }
 
     private var amountText: String {
+        if isSensitiveAmount && !revealsSensitiveAmount {
+            return "¥¥¥"
+        }
+        if let displayValue = usage.displayValue, !displayValue.isEmpty {
+            return displayValue
+        }
         if usage.unit == "%" {
             return "\(usage.used)%"
         }

@@ -15,6 +15,8 @@ struct ProviderFactory {
             KimiCodeUsageProvider()
         case .zhipuCode:
             ZhipuCodeUsageProvider()
+        case .deepSeek:
+            DeepSeekUsageProvider()
         case .openAI, .anthropic, .cursor:
             switch config.authMode {
             case .api:

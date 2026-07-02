@@ -61,6 +61,11 @@ final class AppState: ObservableObject {
             configs[index].usageDataPath = ""
             configs[index].username = ""
         }
+        for index in configs.indices where configs[index].providerKind == .deepSeek && configs[index].authMode == .browserLogin {
+            configs[index].apiEndpoint = ""
+            configs[index].usageDataPath = ""
+            configs[index].username = ""
+        }
         configStore.saveConfigs(configs)
     }
 

@@ -6,6 +6,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
     case cursor
     case kimiCode
     case zhipuCode
+    case deepSeek
     case genericHTTP
     case demo
 
@@ -18,8 +19,18 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         case .cursor: "Cursor"
         case .kimiCode: "Kimi Code"
         case .zhipuCode: "Zhipu Coding"
+        case .deepSeek: "DeepSeek"
         case .genericHTTP: "Generic HTTP"
         case .demo: "Demo"
+        }
+    }
+
+    var supportsWebLogin: Bool {
+        switch self {
+        case .kimiCode, .zhipuCode, .deepSeek:
+            true
+        case .openAI, .anthropic, .cursor, .genericHTTP, .demo:
+            false
         }
     }
 
@@ -27,7 +38,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .kimiCode, .zhipuCode:
             true
-        case .openAI, .anthropic, .cursor, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .deepSeek, .genericHTTP, .demo:
             false
         }
     }
@@ -109,6 +120,10 @@ struct ProviderSecrets: Equatable, Sendable {
 }
 
 enum UsageWindow: String, Codable, CaseIterable, Identifiable, Sendable {
+    case balance
+    case todayCost
+    case todayTokens
+    case todayRequests
     case fiveHours
     case week
     case mcpMonth
@@ -119,6 +134,10 @@ enum UsageWindow: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var title: String {
         switch self {
+        case .balance: "Balance"
+        case .todayCost: "Today Cost"
+        case .todayTokens: "Today Tokens"
+        case .todayRequests: "Today Requests"
         case .fiveHours: "5h"
         case .week: "Week"
         case .mcpMonth: "MCP Month"
@@ -139,6 +158,7 @@ struct TokenUsage: Codable, Equatable, Identifiable, Sendable {
     var limit: Int?
     var resetDate: Date?
     var unit: String? = nil
+    var displayValue: String? = nil
 
     var id: String {
         "\(window.rawValue):\(label ?? "")"

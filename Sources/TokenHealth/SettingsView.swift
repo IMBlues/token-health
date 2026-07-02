@@ -101,7 +101,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    if binding.wrappedValue.providerKind.usesWebSession {
+                    if usesManagedWebLogin(binding.wrappedValue) {
                         Text(apiKeyStoredValue ? "\(binding.wrappedValue.providerKind.title) web session stored locally" : "\(binding.wrappedValue.providerKind.title) web session not connected")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -121,7 +121,7 @@ struct SettingsView: View {
                     }
                 }
 
-                if !binding.wrappedValue.providerKind.usesWebSession {
+                if !usesManagedWebLogin(binding.wrappedValue), binding.wrappedValue.providerKind != .deepSeek {
                     Section {
                         TextField("Local usage JSON or folder", text: binding.usageDataPath)
                     }
@@ -226,7 +226,9 @@ struct SettingsView: View {
                 apiKey = ""
                 apiKeyStoredValue = true
                 if let index = appState.configs.firstIndex(where: { $0.id == selectedID }) {
-                    appState.configs[index].authMode = .api
+                    if appState.configs[index].providerKind.usesWebSession {
+                        appState.configs[index].authMode = .api
+                    }
                     appState.configs[index].apiEndpoint = ""
                     appState.saveConfigs()
                 }
@@ -243,9 +245,15 @@ struct SettingsView: View {
             KimiWebLoginController.shared.startLogin(completion: completion)
         case .zhipuCode:
             ZhipuWebLoginController.shared.startLogin(completion: completion)
+        case .deepSeek:
+            DeepSeekWebLoginController.shared.startLogin(completion: completion)
         case .openAI, .anthropic, .cursor, .genericHTTP, .demo:
             isKimiLoginInProgress = false
         }
+    }
+
+    private func usesManagedWebLogin(_ config: ServiceConfig) -> Bool {
+        config.providerKind.usesWebSession || (config.providerKind.supportsWebLogin && config.authMode == .browserLogin)
     }
 
     private func iconName(for provider: ProviderKind) -> String {
@@ -260,6 +268,8 @@ struct SettingsView: View {
             "moon.stars"
         case .zhipuCode:
             "brain.head.profile"
+        case .deepSeek:
+            "waveform.path.ecg"
         case .genericHTTP:
             "network"
         case .demo:
