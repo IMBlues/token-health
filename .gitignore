@@ -1,0 +1,14 @@
+.DS_Store
+
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+
+# Local app/package outputs
+dist/*.dmg
+*.xcuserstate
+
+# Python helper cache
+__pycache__/
+*.pyc
