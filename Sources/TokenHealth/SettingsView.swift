@@ -258,6 +258,8 @@ struct SettingsView: View {
             DeepSeekWebLoginController.shared.startLogin(completion: completion)
         case .miniMax:
             MiniMaxWebLoginController.shared.startLogin(completion: completion)
+        case .volcengineArk:
+            VolcengineArkWebLoginController.shared.startLogin(completion: completion)
         case .openAI, .anthropic, .cursor, .genericHTTP, .demo:
             isKimiLoginInProgress = false
         }
@@ -283,6 +285,8 @@ struct SettingsView: View {
             "waveform.path.ecg"
         case .miniMax:
             "m.circle"
+        case .volcengineArk:
+            "flame"
         case .genericHTTP:
             "network"
         case .demo:

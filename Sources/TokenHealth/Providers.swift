@@ -19,6 +19,8 @@ struct ProviderFactory {
             DeepSeekUsageProvider()
         case .miniMax:
             MiniMaxUsageProvider()
+        case .volcengineArk:
+            VolcengineArkUsageProvider()
         case .openAI, .anthropic, .cursor:
             switch config.authMode {
             case .api:

@@ -254,7 +254,7 @@ private struct UsageCard: View {
                 return true
             case .todayCost, .todayTokens, .todayRequests:
                 return isTodayTotal(usage)
-            case .fiveHours, .week, .mcpMonth, .videoGift:
+            case .fiveHours, .week, .month, .mcpMonth, .videoGift:
                 return true
             }
         }
@@ -272,7 +272,7 @@ private struct UsageCard: View {
                 return false
             case .todayCost, .todayTokens, .todayRequests:
                 return !isTodayTotal(usage)
-            case .fiveHours, .week, .mcpMonth, .videoGift:
+            case .fiveHours, .week, .month, .mcpMonth, .videoGift:
                 return false
             }
         }
@@ -332,12 +332,14 @@ private struct UsageCard: View {
             10
         case .week:
             11
-        case .mcpMonth:
+        case .month:
             12
-        case .videoGift:
+        case .mcpMonth:
             13
+        case .videoGift:
+            14
         case .sevenDaysTokens:
-            isTokenTotal(usage) ? 14 : 20
+            isTokenTotal(usage) ? 15 : 20
         case .sevenDaysTools:
             30
         }
@@ -394,6 +396,8 @@ private struct CompactUsageMetric: View {
             "5h"
         case .week:
             "Week"
+        case .month:
+            "Month"
         case .balance:
             "Balance"
         case .todayCost:
