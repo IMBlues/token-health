@@ -54,6 +54,22 @@ final class AppState: ObservableObject {
         snapshots[id] = nil
     }
 
+    func moveConfigs(fromOffsets source: IndexSet, toOffset destination: Int) {
+        guard !source.isEmpty else {
+            return
+        }
+
+        let movingConfigs = source.sorted().map { configs[$0] }
+        for index in source.sorted(by: >) {
+            configs.remove(at: index)
+        }
+
+        let removedBeforeDestination = source.filter { $0 < destination }.count
+        let insertionIndex = max(0, min(configs.count, destination - removedBeforeDestination))
+        configs.insert(contentsOf: movingConfigs, at: insertionIndex)
+        saveConfigs()
+    }
+
     func saveConfigs() {
         for index in configs.indices where configs[index].providerKind.usesWebSession {
             configs[index].authMode = .api

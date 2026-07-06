@@ -101,12 +101,13 @@ private struct EmptyStateView: View {
 private struct UsageCard: View {
     let config: ServiceConfig
     let snapshot: ProviderUsageSnapshot?
+    @State private var isExpanded = false
     @State private var showsDetails = false
     @State private var revealsSensitiveAmounts = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(config.displayName)
                         .font(.subheadline.weight(.semibold))
@@ -119,50 +120,98 @@ private struct UsageCard: View {
                 Text(statusText)
                     .font(.caption2)
                     .foregroundStyle(statusColor)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 16, height: 16)
+                }
+                .buttonStyle(.borderless)
+                .help(isExpanded ? "Collapse provider" : "Expand provider")
             }
 
-            if let snapshot, snapshot.state == .ready {
-                ForEach(primaryUsages(from: snapshot.usages)) { usage in
-                    UsageLine(
-                        usage: usage,
-                        isSensitiveAmount: isSensitiveAmount(usage),
-                        revealsSensitiveAmount: $revealsSensitiveAmounts
-                    )
-                }
-
-                let details = detailUsages(from: snapshot.usages)
-                if !details.isEmpty {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.16)) {
-                            showsDetails.toggle()
-                        }
-                    } label: {
-                        Label(showsDetails ? "Hide details" : "Show details", systemImage: showsDetails ? "chevron.up" : "chevron.down")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.borderless)
-                    .help(showsDetails ? "Hide usage details" : "Show usage details")
-
-                    if showsDetails {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(details) { usage in
-                                UsageLine(
-                                    usage: usage,
-                                    isSensitiveAmount: isSensitiveAmount(usage),
-                                    revealsSensitiveAmount: $revealsSensitiveAmounts
-                                )
-                            }
-                        }
-                    }
-                }
+            if isExpanded {
+                expandedContent
             } else {
-                Text(snapshot?.statusMessage ?? "Waiting for refresh")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                collapsedContent
             }
         }
         .padding(12)
         .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        if let snapshot, snapshot.state == .ready {
+            ForEach(primaryUsages(from: snapshot.usages)) { usage in
+                UsageLine(
+                    usage: usage,
+                    isSensitiveAmount: isSensitiveAmount(usage),
+                    revealsSensitiveAmount: $revealsSensitiveAmounts
+                )
+            }
+
+            let details = detailUsages(from: snapshot.usages)
+            if !details.isEmpty {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        showsDetails.toggle()
+                    }
+                } label: {
+                    Label(showsDetails ? "Hide details" : "Show details", systemImage: showsDetails ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .help(showsDetails ? "Hide usage details" : "Show usage details")
+
+                if showsDetails {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(details) { usage in
+                            UsageLine(
+                                usage: usage,
+                                isSensitiveAmount: isSensitiveAmount(usage),
+                                revealsSensitiveAmount: $revealsSensitiveAmounts
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            Text(snapshot?.statusMessage ?? "Waiting for refresh")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var collapsedContent: some View {
+        if let snapshot, snapshot.state == .ready {
+            let usages = compactUsages(from: snapshot.usages)
+            if usages.isEmpty {
+                Text(snapshot.statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(alignment: .top, spacing: 10) {
+                    ForEach(usages) { usage in
+                        CompactUsageMetric(
+                            usage: usage,
+                            isSensitiveAmount: isSensitiveAmount(usage),
+                            revealsSensitiveAmount: $revealsSensitiveAmounts
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+        } else {
+            Text(snapshot?.statusMessage ?? "Waiting for refresh")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var statusText: String {
@@ -205,7 +254,7 @@ private struct UsageCard: View {
                 return true
             case .todayCost, .todayTokens, .todayRequests:
                 return isTodayTotal(usage)
-            case .fiveHours, .week, .mcpMonth:
+            case .fiveHours, .week, .mcpMonth, .videoGift:
                 return true
             }
         }
@@ -223,11 +272,26 @@ private struct UsageCard: View {
                 return false
             case .todayCost, .todayTokens, .todayRequests:
                 return !isTodayTotal(usage)
-            case .fiveHours, .week, .mcpMonth:
+            case .fiveHours, .week, .mcpMonth, .videoGift:
                 return false
             }
         }
         .sorted(by: usageSort)
+    }
+
+    private func compactUsages(from usages: [TokenUsage]) -> [TokenUsage] {
+        if config.providerKind == .deepSeek {
+            return Array(usages.filter { $0.window == .balance }.sorted(by: usageSort).prefix(1))
+        }
+
+        let rollingQuota = usages
+            .filter { $0.window == .fiveHours || $0.window == .week }
+            .sorted(by: usageSort)
+        if !rollingQuota.isEmpty {
+            return Array(rollingQuota.prefix(2))
+        }
+
+        return Array(primaryUsages(from: usages).prefix(2))
     }
 
     private func isTokenTotal(_ usage: TokenUsage) -> Bool {
@@ -270,11 +334,147 @@ private struct UsageCard: View {
             11
         case .mcpMonth:
             12
+        case .videoGift:
+            13
         case .sevenDaysTokens:
-            isTokenTotal(usage) ? 13 : 20
+            isTokenTotal(usage) ? 14 : 20
         case .sevenDaysTools:
             30
         }
+    }
+}
+
+private struct CompactUsageMetric: View {
+    let usage: TokenUsage
+    let isSensitiveAmount: Bool
+    @Binding var revealsSensitiveAmount: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(labelText)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                Spacer(minLength: 4)
+                HStack(spacing: 4) {
+                    UsageAmountText(
+                        usage: usage,
+                        isSensitiveAmount: isSensitiveAmount,
+                        revealsSensitiveAmount: revealsSensitiveAmount
+                    )
+                    .layoutPriority(1)
+
+                    if isSensitiveAmount {
+                        Button {
+                            revealsSensitiveAmount.toggle()
+                        } label: {
+                            Image(systemName: revealsSensitiveAmount ? "eye.slash" : "eye")
+                                .font(.caption)
+                                .frame(width: 14, height: 14)
+                        }
+                        .buttonStyle(.borderless)
+                        .help(revealsSensitiveAmount ? "Hide amount" : "Show amount")
+                    }
+                }
+            }
+
+            if usage.limit != nil {
+                ProgressView(value: usage.ratio ?? 0)
+                    .tint(tint)
+            }
+        }
+        .help(resetHelpText)
+    }
+
+    private var labelText: String {
+        switch usage.window {
+        case .fiveHours:
+            "5h"
+        case .week:
+            "Week"
+        case .balance:
+            "Balance"
+        case .todayCost:
+            "Today Cost"
+        case .todayTokens:
+            "Today Tokens"
+        case .todayRequests:
+            "Today Requests"
+        case .mcpMonth:
+            "MCP"
+        case .videoGift:
+            "Video"
+        case .sevenDaysTokens:
+            "7d Tokens"
+        case .sevenDaysTools:
+            "7d Tools"
+        }
+    }
+
+    private var tint: Color {
+        UsageAmountFormatter.tint(for: usage)
+    }
+
+    private var resetHelpText: String {
+        guard let resetDate = usage.resetDate else {
+            return usage.label ?? usage.window.title
+        }
+        return "Resets \(resetDate.formatted(date: .abbreviated, time: .shortened))"
+    }
+}
+
+private struct UsageAmountText: View {
+    let usage: TokenUsage
+    let isSensitiveAmount: Bool
+    let revealsSensitiveAmount: Bool
+
+    var body: some View {
+        if isSensitiveAmount {
+            ZStack(alignment: .trailing) {
+                amountLabel(redactedAmountText)
+                    .hidden()
+                amountLabel(revealedAmountText)
+                    .hidden()
+                amountLabel(visibleAmountText)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+        } else {
+            amountLabel(visibleAmountText)
+        }
+    }
+
+    private var visibleAmountText: String {
+        UsageAmountFormatter.amountText(
+            usage,
+            isSensitiveAmount: isSensitiveAmount,
+            revealsSensitiveAmount: revealsSensitiveAmount
+        )
+    }
+
+    private var redactedAmountText: String {
+        UsageAmountFormatter.amountText(
+            usage,
+            isSensitiveAmount: true,
+            revealsSensitiveAmount: false
+        )
+    }
+
+    private var revealedAmountText: String {
+        UsageAmountFormatter.amountText(
+            usage,
+            isSensitiveAmount: false,
+            revealsSensitiveAmount: true
+        )
+    }
+
+    private func amountLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
     }
 }
 
@@ -290,9 +490,12 @@ private struct UsageLine: View {
                     .font(.caption.weight(.medium))
                 Spacer()
                 HStack(spacing: 6) {
-                    Text(amountText)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                    UsageAmountText(
+                        usage: usage,
+                        isSensitiveAmount: isSensitiveAmount,
+                        revealsSensitiveAmount: revealsSensitiveAmount
+                    )
+                    .layoutPriority(1)
 
                     if isSensitiveAmount {
                         Button {
@@ -300,6 +503,7 @@ private struct UsageLine: View {
                         } label: {
                             Image(systemName: revealsSensitiveAmount ? "eye.slash" : "eye")
                                 .font(.caption)
+                                .frame(width: 14, height: 14)
                         }
                         .buttonStyle(.borderless)
                         .help(revealsSensitiveAmount ? "Hide amount" : "Show amount")
@@ -324,50 +528,8 @@ private struct UsageLine: View {
         }
     }
 
-    private var amountText: String {
-        if isSensitiveAmount && !revealsSensitiveAmount {
-            return "¥¥¥"
-        }
-        if let displayValue = usage.displayValue, !displayValue.isEmpty {
-            return displayValue
-        }
-        if usage.unit == "%" {
-            return "\(usage.used)%"
-        }
-        let used = formatAmount(usage.used)
-        guard let limit = usage.limit else {
-            return unitText.map { "\(used) \($0)" } ?? used
-        }
-        let amount = "\(used) / \(formatAmount(limit))"
-        return unitText.map { "\(amount) \($0)" } ?? amount
-    }
-
-    private var unitText: String? {
-        usage.unit?.isEmpty == false ? usage.unit : nil
-    }
-
-    private func formatAmount(_ value: Int) -> String {
-        let number = Double(value)
-        if abs(value) >= 1_000_000 {
-            return String(format: "%.2fM", number / 1_000_000)
-        }
-        if abs(value) >= 10_000 {
-            return String(format: "%.1fK", number / 1_000)
-        }
-        return value.formatted()
-    }
-
     private var tint: Color {
-        guard let ratio = usage.ratio else {
-            return .accentColor
-        }
-        if ratio >= 0.9 {
-            return .red
-        }
-        if ratio >= 0.7 {
-            return .orange
-        }
-        return .green
+        UsageAmountFormatter.tint(for: usage)
     }
 
     private var resetText: String {
@@ -415,5 +577,58 @@ private struct UsageLine: View {
             return date.formatted(date: .omitted, time: .shortened)
         }
         return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+private enum UsageAmountFormatter {
+    static func amountText(
+        _ usage: TokenUsage,
+        isSensitiveAmount: Bool,
+        revealsSensitiveAmount: Bool
+    ) -> String {
+        if isSensitiveAmount && !revealsSensitiveAmount {
+            return "¥¥¥"
+        }
+        if let displayValue = usage.displayValue, !displayValue.isEmpty {
+            return displayValue
+        }
+        if usage.unit == "%" {
+            return "\(usage.used)%"
+        }
+
+        let used = formatAmount(usage.used)
+        guard let limit = usage.limit else {
+            return unitText(for: usage).map { "\(used) \($0)" } ?? used
+        }
+        let amount = "\(used) / \(formatAmount(limit))"
+        return unitText(for: usage).map { "\(amount) \($0)" } ?? amount
+    }
+
+    static func tint(for usage: TokenUsage) -> Color {
+        guard let ratio = usage.ratio else {
+            return .accentColor
+        }
+        if ratio >= 0.9 {
+            return .red
+        }
+        if ratio >= 0.7 {
+            return .orange
+        }
+        return .green
+    }
+
+    private static func unitText(for usage: TokenUsage) -> String? {
+        usage.unit?.isEmpty == false ? usage.unit : nil
+    }
+
+    private static func formatAmount(_ value: Int) -> String {
+        let number = Double(value)
+        if abs(value) >= 1_000_000 {
+            return String(format: "%.2fM", number / 1_000_000)
+        }
+        if abs(value) >= 10_000 {
+            return String(format: "%.1fK", number / 1_000)
+        }
+        return value.formatted()
     }
 }

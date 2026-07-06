@@ -5,7 +5,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="$ROOT/.build/app/TokenHealth.app"
 
 cd "$ROOT"
-python3 "$ROOT/scripts/generate-icons.py" >/dev/null
+if python3 -c "import PIL" >/dev/null 2>&1; then
+  python3 "$ROOT/scripts/generate-icons.py" >/dev/null
+elif [[ -f "$ROOT/AppSupport/TokenHealth.icns" ]]; then
+  echo "Pillow is not installed; using existing AppSupport/TokenHealth.icns"
+else
+  echo "Pillow is required to generate AppSupport/TokenHealth.icns" >&2
+  exit 1
+fi
 swift build -c release
 
 rm -rf "$APP_DIR"

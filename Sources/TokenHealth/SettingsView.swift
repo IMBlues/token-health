@@ -16,6 +16,7 @@ struct SettingsView: View {
                     ForEach(appState.configs) { config in
                         HStack {
                             Image(systemName: iconName(for: config.providerKind))
+                                .frame(width: 18)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(config.displayName)
                                     .lineLimit(1)
@@ -23,8 +24,16 @@ struct SettingsView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            Spacer(minLength: 8)
+                            Image(systemName: "line.3.horizontal")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
                         }
+                        .contentShape(Rectangle())
                         .tag(config.id)
+                    }
+                    .onMove { source, destination in
+                        appState.moveConfigs(fromOffsets: source, toOffset: destination)
                     }
                 }
 
@@ -247,6 +256,8 @@ struct SettingsView: View {
             ZhipuWebLoginController.shared.startLogin(completion: completion)
         case .deepSeek:
             DeepSeekWebLoginController.shared.startLogin(completion: completion)
+        case .miniMax:
+            MiniMaxWebLoginController.shared.startLogin(completion: completion)
         case .openAI, .anthropic, .cursor, .genericHTTP, .demo:
             isKimiLoginInProgress = false
         }
@@ -270,6 +281,8 @@ struct SettingsView: View {
             "brain.head.profile"
         case .deepSeek:
             "waveform.path.ecg"
+        case .miniMax:
+            "m.circle"
         case .genericHTTP:
             "network"
         case .demo:

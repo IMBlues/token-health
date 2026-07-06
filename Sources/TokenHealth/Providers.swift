@@ -17,6 +17,8 @@ struct ProviderFactory {
             ZhipuCodeUsageProvider()
         case .deepSeek:
             DeepSeekUsageProvider()
+        case .miniMax:
+            MiniMaxUsageProvider()
         case .openAI, .anthropic, .cursor:
             switch config.authMode {
             case .api:

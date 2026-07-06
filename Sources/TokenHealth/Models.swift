@@ -7,6 +7,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
     case kimiCode
     case zhipuCode
     case deepSeek
+    case miniMax
     case genericHTTP
     case demo
 
@@ -20,6 +21,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         case .kimiCode: "Kimi Code"
         case .zhipuCode: "Zhipu Coding"
         case .deepSeek: "DeepSeek"
+        case .miniMax: "MiniMax"
         case .genericHTTP: "Generic HTTP"
         case .demo: "Demo"
         }
@@ -27,7 +29,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var supportsWebLogin: Bool {
         switch self {
-        case .kimiCode, .zhipuCode, .deepSeek:
+        case .kimiCode, .zhipuCode, .deepSeek, .miniMax:
             true
         case .openAI, .anthropic, .cursor, .genericHTTP, .demo:
             false
@@ -36,7 +38,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var usesWebSession: Bool {
         switch self {
-        case .kimiCode, .zhipuCode:
+        case .kimiCode, .zhipuCode, .miniMax:
             true
         case .openAI, .anthropic, .cursor, .deepSeek, .genericHTTP, .demo:
             false
@@ -127,6 +129,7 @@ enum UsageWindow: String, Codable, CaseIterable, Identifiable, Sendable {
     case fiveHours
     case week
     case mcpMonth
+    case videoGift
     case sevenDaysTokens
     case sevenDaysTools
 
@@ -141,6 +144,7 @@ enum UsageWindow: String, Codable, CaseIterable, Identifiable, Sendable {
         case .fiveHours: "5h"
         case .week: "Week"
         case .mcpMonth: "MCP Month"
+        case .videoGift: "Video Gift"
         case .sevenDaysTokens: "7d Tokens"
         case .sevenDaysTools: "7d Tools"
         }
