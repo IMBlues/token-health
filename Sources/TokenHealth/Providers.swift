@@ -21,6 +21,8 @@ struct ProviderFactory {
             MiniMaxUsageProvider()
         case .volcengineArk:
             VolcengineArkUsageProvider()
+        case .codex:
+            CodexUsageProvider()
         case .openAI, .anthropic, .cursor:
             switch config.authMode {
             case .api:

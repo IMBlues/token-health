@@ -21,6 +21,7 @@ final class AppState: ObservableObject {
         configs = configStore.loadConfigs()
         nextRefreshAt = Date().addingTimeInterval(Self.refreshInterval)
 
+        clearLocalLoginSecrets()
         scheduleNextRefresh()
 
         Task {
@@ -46,12 +47,20 @@ final class AppState: ObservableObject {
         return config.id
     }
 
-    func deleteConfig(id: UUID) {
+    @discardableResult
+    func deleteConfig(id: UUID) -> Bool {
         guard let config = configs.first(where: { $0.id == id }) else {
-            return
+            return false
         }
-        configStore.deleteConfig(config, from: &configs)
-        snapshots[id] = nil
+        do {
+            try configStore.deleteConfig(config, from: &configs)
+            snapshots[id] = nil
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
     }
 
     func moveConfigs(fromOffsets source: IndexSet, toOffset destination: Int) {
@@ -71,7 +80,7 @@ final class AppState: ObservableObject {
     }
 
     func saveConfigs() {
-        for index in configs.indices where configs[index].providerKind.usesWebSession {
+        for index in configs.indices where configs[index].providerKind.usesWebSession || configs[index].providerKind.usesLocalLogin {
             configs[index].authMode = .api
             configs[index].apiEndpoint = ""
             configs[index].usageDataPath = ""
@@ -82,7 +91,18 @@ final class AppState: ObservableObject {
             configs[index].usageDataPath = ""
             configs[index].username = ""
         }
+        clearLocalLoginSecrets()
         configStore.saveConfigs(configs)
+    }
+
+    private func clearLocalLoginSecrets() {
+        for config in configs where config.providerKind.usesLocalLogin {
+            do {
+                try configStore.saveSecrets(.empty, for: config.id)
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
     }
 
     func loadSecrets(for id: UUID) -> ProviderSecrets {
@@ -109,7 +129,7 @@ final class AppState: ObservableObject {
         }
 
         for config in configs where config.isEnabled {
-            let secrets = configStore.loadSecrets(for: config.id)
+            let secrets = config.providerKind.usesLocalLogin ? ProviderSecrets.empty : configStore.loadSecrets(for: config.id)
             let provider = providerFactory.provider(for: config)
             snapshots[config.id] = await provider.fetchUsage(config: config, secrets: secrets)
         }

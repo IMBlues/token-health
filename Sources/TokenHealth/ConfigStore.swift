@@ -1,7 +1,9 @@
 import Foundation
 
 final class ConfigStore {
-    private let defaultsKey = "service.configs.v1"
+    private let defaultsKey = "service.configs.v2"
+    // Leave v1 untouched so older builds can still load their last compatible snapshot.
+    private let legacyDefaultsKey = "service.configs.v1"
     private let secretsPrefix = "service.secrets.v1"
     private let defaults: UserDefaults
     private let keychain: KeychainStore
@@ -12,10 +14,15 @@ final class ConfigStore {
     }
 
     func loadConfigs() -> [ServiceConfig] {
-        guard let data = defaults.data(forKey: defaultsKey) else {
-            return []
+        if let data = defaults.data(forKey: defaultsKey),
+           let configs = try? JSONDecoder().decode([ServiceConfig].self, from: data) {
+            return configs
         }
-        return (try? JSONDecoder().decode([ServiceConfig].self, from: data)) ?? []
+        if let data = defaults.data(forKey: legacyDefaultsKey),
+           let configs = try? JSONDecoder().decode([ServiceConfig].self, from: data) {
+            return configs
+        }
+        return []
     }
 
     func saveConfigs(_ configs: [ServiceConfig]) {
@@ -48,9 +55,9 @@ final class ConfigStore {
         removeLegacySecrets(for: configID)
     }
 
-    func deleteConfig(_ config: ServiceConfig, from configs: inout [ServiceConfig]) {
+    func deleteConfig(_ config: ServiceConfig, from configs: inout [ServiceConfig]) throws {
+        try keychain.deleteSecrets(for: config.id)
         configs.removeAll { $0.id == config.id }
-        keychain.deleteSecrets(for: config.id)
         removeLegacySecrets(for: config.id)
         saveConfigs(configs)
     }

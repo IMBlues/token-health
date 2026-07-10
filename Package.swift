@@ -17,6 +17,10 @@ let package = Package(
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit")
             ]
+        ),
+        .testTarget(
+            name: "TokenHealthTests",
+            dependencies: ["TokenHealth"]
         )
     ]
 )

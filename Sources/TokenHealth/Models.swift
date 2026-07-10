@@ -4,6 +4,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
     case openAI
     case anthropic
     case cursor
+    case codex
     case kimiCode
     case zhipuCode
     case deepSeek
@@ -19,6 +20,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         case .openAI: "OpenAI"
         case .anthropic: "Anthropic"
         case .cursor: "Cursor"
+        case .codex: "Codex"
         case .kimiCode: "Kimi Code"
         case .zhipuCode: "Zhipu Coding"
         case .deepSeek: "DeepSeek"
@@ -33,7 +35,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .kimiCode, .zhipuCode, .deepSeek, .miniMax, .volcengineArk:
             true
-        case .openAI, .anthropic, .cursor, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             false
         }
     }
@@ -42,9 +44,13 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .kimiCode, .zhipuCode, .miniMax, .volcengineArk:
             true
-        case .openAI, .anthropic, .cursor, .deepSeek, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .codex, .deepSeek, .genericHTTP, .demo:
             false
         }
+    }
+
+    var usesLocalLogin: Bool {
+        self == .codex
     }
 }
 

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/AppSupport/Info.plist")"
-APP_DIR="$ROOT/.build/app/TokenHealth.app"
+APP_DIR="$ROOT/.build/app/Token Health.app"
 STAGING="$ROOT/.build/dmg/Token Health"
 DIST="$ROOT/dist"
 DMG="$DIST/TokenHealth-$VERSION.dmg"

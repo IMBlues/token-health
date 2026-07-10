@@ -21,9 +21,9 @@ final class KeychainStore {
         try save(secrets.password, secret: .password, for: id)
     }
 
-    func deleteSecrets(for id: UUID) {
-        delete(.apiKey, for: id)
-        delete(.password, for: id)
+    func deleteSecrets(for id: UUID) throws {
+        try delete(.apiKey, for: id)
+        try delete(.password, for: id)
     }
 
     private func account(_ secret: Secret, id: UUID) -> String {
@@ -48,7 +48,7 @@ final class KeychainStore {
     }
 
     private func save(_ value: String, secret: Secret, for id: UUID) throws {
-        delete(secret, for: id)
+        try delete(secret, for: id)
         guard !value.isEmpty else {
             return
         }
@@ -70,12 +70,19 @@ final class KeychainStore {
         }
     }
 
-    private func delete(_ secret: Secret, for id: UUID) {
+    private func delete(_ secret: Secret, for id: UUID) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account(secret, id: id)
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw NSError(
+                domain: NSOSStatusErrorDomain,
+                code: Int(status),
+                userInfo: [NSLocalizedDescriptionKey: "Keychain delete failed: \(status)"]
+            )
+        }
     }
 }

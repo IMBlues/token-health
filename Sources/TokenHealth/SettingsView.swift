@@ -50,9 +50,10 @@ struct SettingsView: View {
 
                     Button {
                         if let selectedID {
-                            appState.deleteConfig(id: selectedID)
-                            self.selectedID = appState.configs.first?.id
-                            loadSecretsIfNeeded(force: true)
+                            if appState.deleteConfig(id: selectedID) {
+                                self.selectedID = appState.configs.first?.id
+                                loadSecretsIfNeeded(force: true)
+                            }
                         }
                     } label: {
                         Image(systemName: "minus")
@@ -98,7 +99,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    if !binding.wrappedValue.providerKind.usesWebSession {
+                    if !binding.wrappedValue.providerKind.usesWebSession && !binding.wrappedValue.providerKind.usesLocalLogin {
                         Picker("Auth", selection: binding.authMode) {
                             ForEach(AuthMode.allCases) { mode in
                                 Text(mode.title).tag(mode)
@@ -110,7 +111,11 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    if usesManagedWebLogin(binding.wrappedValue) {
+                    if binding.wrappedValue.providerKind.usesLocalLogin {
+                        LabeledContent("Source", value: "Official Codex app")
+                        LabeledContent("Access", value: "Quota only")
+                        LabeledContent("Status", value: codexStatusText(for: binding.wrappedValue))
+                    } else if usesManagedWebLogin(binding.wrappedValue) {
                         Text(apiKeyStoredValue ? "\(binding.wrappedValue.providerKind.title) web session stored locally" : "\(binding.wrappedValue.providerKind.title) web session not connected")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -130,7 +135,9 @@ struct SettingsView: View {
                     }
                 }
 
-                if !usesManagedWebLogin(binding.wrappedValue), binding.wrappedValue.providerKind != .deepSeek {
+                if !usesManagedWebLogin(binding.wrappedValue),
+                   !binding.wrappedValue.providerKind.usesLocalLogin,
+                   binding.wrappedValue.providerKind != .deepSeek {
                     Section {
                         TextField("Local usage JSON or folder", text: binding.usageDataPath)
                     }
@@ -168,6 +175,9 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .padding()
+            .onChange(of: binding.wrappedValue.providerKind) {
+                loadSecretsIfNeeded(force: true)
+            }
         } else {
             VStack(spacing: 12) {
                 Image(systemName: "bolt.circle")
@@ -201,6 +211,13 @@ struct SettingsView: View {
         guard force || selectedID != loadedSecretID else {
             return
         }
+        if appState.configs.first(where: { $0.id == selectedID })?.providerKind.usesLocalLogin == true {
+            apiKey = ""
+            password = ""
+            apiKeyStoredValue = false
+            loadedSecretID = selectedID
+            return
+        }
         let secrets = appState.loadSecrets(for: selectedID)
         apiKey = ""
         password = secrets.password
@@ -210,6 +227,14 @@ struct SettingsView: View {
 
     private func saveCurrentSecrets() {
         guard let selectedID else {
+            return
+        }
+        if appState.configs.first(where: { $0.id == selectedID })?.providerKind.usesLocalLogin == true {
+            appState.saveSecrets(.empty, for: selectedID)
+            apiKey = ""
+            password = ""
+            apiKeyStoredValue = false
+            loadedSecretID = selectedID
             return
         }
         let existingSecrets = appState.loadSecrets(for: selectedID)
@@ -260,13 +285,23 @@ struct SettingsView: View {
             MiniMaxWebLoginController.shared.startLogin(completion: completion)
         case .volcengineArk:
             VolcengineArkWebLoginController.shared.startLogin(completion: completion)
-        case .openAI, .anthropic, .cursor, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             isKimiLoginInProgress = false
         }
     }
 
     private func usesManagedWebLogin(_ config: ServiceConfig) -> Bool {
         config.providerKind.usesWebSession || (config.providerKind.supportsWebLogin && config.authMode == .browserLogin)
+    }
+
+    private func codexStatusText(for config: ServiceConfig) -> String {
+        if appState.isRefreshing {
+            return "Refreshing"
+        }
+        guard let snapshot = appState.snapshots[config.id], snapshot.providerTitle == ProviderKind.codex.title else {
+            return "Waiting for refresh"
+        }
+        return snapshot.statusMessage
     }
 
     private func iconName(for provider: ProviderKind) -> String {
@@ -277,6 +312,8 @@ struct SettingsView: View {
             "text.bubble"
         case .cursor:
             "cursorarrow"
+        case .codex:
+            "chevron.left.forwardslash.chevron.right"
         case .kimiCode:
             "moon.stars"
         case .zhipuCode:

@@ -200,6 +200,7 @@ private struct UsageCard: View {
                     ForEach(usages) { usage in
                         CompactUsageMetric(
                             usage: usage,
+                            labelOverride: config.providerKind == .codex ? usage.label : nil,
                             isSensitiveAmount: isSensitiveAmount(usage),
                             revealsSensitiveAmount: $revealsSensitiveAmounts
                         )
@@ -283,6 +284,17 @@ private struct UsageCard: View {
         if config.providerKind == .deepSeek {
             return Array(usages.filter { $0.window == .balance }.sorted(by: usageSort).prefix(1))
         }
+        if config.providerKind == .codex {
+            let accountQuota = usages
+                .filter {
+                    ($0.window == .fiveHours || $0.window == .week)
+                        && ($0.label == nil || $0.label?.contains(" · ") == false)
+                }
+                .sorted(by: usageSort)
+            if !accountQuota.isEmpty {
+                return Array(accountQuota.prefix(2))
+            }
+        }
 
         let rollingQuota = usages
             .filter { $0.window == .fiveHours || $0.window == .week }
@@ -319,7 +331,7 @@ private struct UsageCard: View {
     }
 
     private func usageRank(_ usage: TokenUsage) -> Int {
-        switch usage.window {
+        return switch usage.window {
         case .balance:
             0
         case .todayCost:
@@ -348,6 +360,7 @@ private struct UsageCard: View {
 
 private struct CompactUsageMetric: View {
     let usage: TokenUsage
+    let labelOverride: String?
     let isSensitiveAmount: Bool
     @Binding var revealsSensitiveAmount: Bool
 
@@ -391,7 +404,10 @@ private struct CompactUsageMetric: View {
     }
 
     private var labelText: String {
-        switch usage.window {
+        if let labelOverride, !labelOverride.isEmpty {
+            return labelOverride
+        }
+        return switch usage.window {
         case .fiveHours:
             "5h"
         case .week:
