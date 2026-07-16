@@ -221,13 +221,46 @@ struct SettingsView: View {
         Form {
             Section {
                 Toggle("Enabled", isOn: $appState.reportHookConfig.isEnabled)
-                Picker("Provider", selection: $appState.reportHookConfig.providerConfigID) {
-                    Text("Choose a provider").tag(Optional<UUID>.none)
+            }
+
+            Section("Providers") {
+                if appState.configs.isEmpty {
+                    Text("No providers configured")
+                        .foregroundStyle(.secondary)
+                } else {
                     ForEach(appState.configs) { config in
-                        Text(reportProviderLabel(config))
-                            .tag(Optional(config.id))
+                        Toggle(isOn: reportProviderSelectionBinding(for: config)) {
+                            HStack(spacing: 10) {
+                                Image(systemName: iconName(for: config.providerKind))
+                                    .frame(width: 18)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(config.displayName)
+                                        .lineLimit(1)
+                                    Text(config.providerKind.title)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 8)
+                                if !config.isEnabled {
+                                    Text("Disabled")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .frame(minWidth: 58, alignment: .trailing)
+                                }
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                        .disabled(
+                            !config.isEnabled &&
+                            !appState.reportHookConfig.providerConfigIDs.contains(config.id)
+                        )
+                        .frame(minHeight: 36)
                     }
                 }
+            }
+
+            Section {
                 TextField("Endpoint", text: $appState.reportHookConfig.endpoint)
                 TextField("Client ID", text: $appState.reportHookConfig.clientID)
                 TextField(
@@ -293,7 +326,7 @@ struct SettingsView: View {
                 .disabled(
                     appState.isReporting ||
                     !appState.reportHookConfig.isEnabled ||
-                    selectedReportProvider?.isEnabled != true ||
+                    selectedEnabledReportProviders.isEmpty ||
                     appState.reportHookConfig.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
                     appState.reportHookConfig.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 )
@@ -310,16 +343,25 @@ struct SettingsView: View {
         return $appState.configs[index]
     }
 
-    private var selectedReportProvider: ServiceConfig? {
-        guard let id = appState.reportHookConfig.providerConfigID else {
-            return nil
-        }
-        return appState.configs.first(where: { $0.id == id })
+    private var selectedEnabledReportProviders: [ServiceConfig] {
+        let selectedIDs = Set(appState.reportHookConfig.providerConfigIDs)
+        return appState.configs.filter { $0.isEnabled && selectedIDs.contains($0.id) }
     }
 
-    private func reportProviderLabel(_ config: ServiceConfig) -> String {
-        let label = "\(config.displayName) · \(config.providerKind.title)"
-        return config.isEnabled ? label : "\(label) (Disabled)"
+    private func reportProviderSelectionBinding(for config: ServiceConfig) -> Binding<Bool> {
+        Binding {
+            appState.reportHookConfig.providerConfigIDs.contains(config.id)
+        } set: { isSelected in
+            var selectedIDs = Set(appState.reportHookConfig.providerConfigIDs)
+            if isSelected {
+                selectedIDs.insert(config.id)
+            } else {
+                selectedIDs.remove(config.id)
+            }
+            appState.reportHookConfig.providerConfigIDs = appState.configs.compactMap { candidate in
+                selectedIDs.contains(candidate.id) ? candidate.id : nil
+            }
+        }
     }
 
     private func loadSecretsIfNeeded(force: Bool = false) {

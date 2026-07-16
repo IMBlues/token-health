@@ -118,7 +118,7 @@ bash scripts/build-dmg.sh
 
 ### 用量上报 Hook
 
-Settings 左侧的 `Usage reporting` 可以把指定的单个 Provider 的 `5h` / `week` 额度快照 POST 到自定义 HTTPS 端点。它支持 Bearer token、幂等键和可选的精确证书 SHA-256 pin，可随刷新自动上报，也可用 `Report now` 手动发送；上报失败不会影响本地额度刷新。
+Settings 左侧的 `Usage reporting` 可以把一个或多个指定 Provider 的 `5h` / `week` 额度快照合并到同一次 POST 中，发送到自定义 HTTPS 端点。它支持 Bearer token、幂等键和可选的精确证书 SHA-256 pin，可随刷新自动上报，也可用 `Report now` 手动发送；上报失败不会影响本地额度刷新。
 
 Provider 凭据和 Hook token 会合并保存在一个 macOS Keychain vault 中，避免安装后按 Provider 反复弹出钥匙串授权。
 

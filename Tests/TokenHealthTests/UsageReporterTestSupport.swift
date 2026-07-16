@@ -7,6 +7,7 @@ enum UsageReporterTestSupport {
         let authorization: String?
         let idempotencyKey: String?
         let contentType: String?
+        let accountCount: Int
         let bodyMatches: Bool
         let bodyUsesSnakeCase: Bool
     }
@@ -110,6 +111,75 @@ enum UsageReporterTestSupport {
         )
     }
 
+    static func multiProviderPayload() -> UsageReportPayload {
+        let kimiID = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+        let codexID = UUID(uuidString: "bbbbbbbb-cccc-dddd-eeee-ffffffffffff")!
+        let disabledID = UUID(uuidString: "cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa")!
+        let kimi = ServiceConfig(
+            id: kimiID,
+            displayName: "Kimi Code",
+            providerKind: .kimiCode,
+            authMode: .api
+        )
+        let codex = ServiceConfig(
+            id: codexID,
+            displayName: "Codex",
+            providerKind: .codex,
+            authMode: .api
+        )
+        let disabled = ServiceConfig(
+            id: disabledID,
+            displayName: "Disabled DeepSeek",
+            providerKind: .deepSeek,
+            authMode: .api,
+            isEnabled: false
+        )
+        let kimiSnapshot = ProviderUsageSnapshot(
+            id: kimiID,
+            serviceName: "Kimi Code",
+            providerTitle: "Kimi Code",
+            usages: [
+                TokenUsage(
+                    window: .fiveHours,
+                    used: 25,
+                    limit: 100,
+                    resetDate: Date(timeIntervalSince1970: 0)
+                )
+            ],
+            state: .ready,
+            statusMessage: "Updated",
+            updatedAt: Date()
+        )
+        let codexSnapshot = ProviderUsageSnapshot(
+            id: codexID,
+            serviceName: "Codex",
+            providerTitle: "Codex",
+            usages: [TokenUsage(window: .week, used: 50, limit: 100, resetDate: nil)],
+            state: .unavailable,
+            statusMessage: "Unavailable",
+            updatedAt: Date()
+        )
+        let disabledSnapshot = ProviderUsageSnapshot(
+            id: disabledID,
+            serviceName: "Disabled DeepSeek",
+            providerTitle: "DeepSeek",
+            usages: [TokenUsage(window: .week, used: 10, limit: 100, resetDate: nil)],
+            state: .ready,
+            statusMessage: "Updated",
+            updatedAt: Date()
+        )
+
+        return UsageReportBuilder().build(
+            clientID: "test-client",
+            providers: [
+                (config: kimi, snapshot: kimiSnapshot),
+                (config: disabled, snapshot: disabledSnapshot),
+                (config: codex, snapshot: codexSnapshot),
+                (config: kimi, snapshot: kimiSnapshot)
+            ]
+        )
+    }
+
     static func disabledProviderPayload() -> UsageReportPayload {
         let id = UUID()
         var config = ServiceConfig(
@@ -137,16 +207,17 @@ enum UsageReporterTestSupport {
             endpoint: "https://quota.example.com/api/v1/reports",
             clientID: "test-client"
         )
-        let payload = accountQuotaPayload()
+        let payload = multiProviderPayload()
         let request = try UsageReporter().makeRequest(
             config: hook,
             bearerToken: "secret-token",
             payload: payload,
             now: Date(timeIntervalSince1970: 1_234.567)
         )
-        let bodyMatches = try request.httpBody.map {
-            try JSONDecoder().decode(UsageReportPayload.self, from: $0) == payload
-        } ?? false
+        let decodedPayload = try request.httpBody.map {
+            try JSONDecoder().decode(UsageReportPayload.self, from: $0)
+        }
+        let bodyMatches = decodedPayload == payload
         let bodyUsesSnakeCase = try request.httpBody.map { data in
             guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   root["client_id"] != nil,
@@ -164,6 +235,7 @@ enum UsageReporterTestSupport {
             authorization: request.value(forHTTPHeaderField: "Authorization"),
             idempotencyKey: request.value(forHTTPHeaderField: "Idempotency-Key"),
             contentType: request.value(forHTTPHeaderField: "Content-Type"),
+            accountCount: decodedPayload?.accounts.count ?? 0,
             bodyMatches: bodyMatches,
             bodyUsesSnakeCase: bodyUsesSnakeCase
         )
@@ -176,16 +248,24 @@ enum UsageReporterTestSupport {
         }
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let store = ConfigStore(defaults: defaults)
+        let providerIDs = [
+            UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            UUID(uuidString: "66666666-7777-8888-9999-000000000000")!
+        ]
         let config = ReportHookConfig(
             isEnabled: true,
             endpoint: "https://example.com/report",
             clientID: "test-client",
-            providerConfigID: UUID(uuidString: "11111111-2222-3333-4444-555555555555"),
+            providerConfigIDs: providerIDs,
             pinnedCertificateSHA256: String(repeating: "a", count: 64)
         )
 
         store.saveReportHookConfig(config)
-        return store.loadReportHookConfig() == config
+        let encoded = try JSONEncoder().encode(config)
+        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        return store.loadReportHookConfig() == config &&
+            object?["providerConfigIDs"] != nil &&
+            object?["providerConfigID"] == nil
     }
 
     static func decodesLegacyHookConfiguration() throws -> Bool {
@@ -196,8 +276,27 @@ enum UsageReporterTestSupport {
         return config.isEnabled &&
             config.endpoint == "https://example.com/report" &&
             config.clientID == "legacy-client" &&
-            config.providerConfigID == nil &&
+            config.providerConfigIDs.isEmpty &&
             config.pinnedCertificateSHA256.isEmpty
+    }
+
+    static func migratesLegacySingleProviderSelection() throws -> Bool {
+        let providerID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+        let data = Data(
+            #"{"isEnabled":true,"endpoint":"https://example.com/report","clientID":"legacy-client","providerConfigID":"11111111-2222-3333-4444-555555555555"}"#.utf8
+        )
+        let config = try JSONDecoder().decode(ReportHookConfig.self, from: data)
+        return config.providerConfigIDs == [providerID]
+    }
+
+    static func prefersAndDeduplicatesMultiProviderSelection() throws -> Bool {
+        let firstID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+        let secondID = UUID(uuidString: "66666666-7777-8888-9999-000000000000")!
+        let data = Data(
+            #"{"isEnabled":true,"endpoint":"https://example.com/report","clientID":"test-client","providerConfigIDs":["11111111-2222-3333-4444-555555555555","11111111-2222-3333-4444-555555555555","66666666-7777-8888-9999-000000000000"],"providerConfigID":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}"#.utf8
+        )
+        let config = try JSONDecoder().decode(ReportHookConfig.self, from: data)
+        return config.providerConfigIDs == [firstID, secondID]
     }
 
     static func normalizesCertificateFingerprint() -> Bool {

@@ -27,11 +27,7 @@ final class AppState: ObservableObject {
         configs = configStore.loadConfigs()
         reportHookConfig = configStore.loadReportHookConfig()
         nextRefreshAt = Date().addingTimeInterval(Self.refreshInterval)
-        if let selectedID = reportHookConfig.providerConfigID,
-           !configs.contains(where: { $0.id == selectedID }) {
-            reportHookConfig.providerConfigID = nil
-            configStore.saveReportHookConfig(reportHookConfig)
-        }
+        normalizeReportProviderSelection()
         do {
             try configStore.migrateLegacySecrets(for: configs)
         } catch {
@@ -71,10 +67,7 @@ final class AppState: ObservableObject {
         do {
             try configStore.deleteConfig(config, from: &configs)
             snapshots[id] = nil
-            if reportHookConfig.providerConfigID == id {
-                reportHookConfig.providerConfigID = nil
-                configStore.saveReportHookConfig(reportHookConfig)
-            }
+            normalizeReportProviderSelection()
             lastError = nil
             return true
         } catch {
@@ -113,6 +106,7 @@ final class AppState: ObservableObject {
         }
         clearLocalLoginSecrets()
         configStore.saveConfigs(configs)
+        normalizeReportProviderSelection()
     }
 
     private func clearLocalLoginSecrets() {
@@ -166,31 +160,39 @@ final class AppState: ObservableObject {
             return
         }
 
-        guard let providerConfigID = reportHookConfig.providerConfigID else {
+        let selectedIDs = Set(reportHookConfig.providerConfigIDs)
+        guard !selectedIDs.isEmpty else {
             lastReportSucceeded = false
-            lastReportMessage = "Select a provider to report"
+            lastReportMessage = "Select one or more providers to report"
             return
         }
-        guard let config = configs.first(where: { $0.id == providerConfigID }) else {
+        let selectedConfigs = configs.filter { selectedIDs.contains($0.id) }
+        guard !selectedConfigs.isEmpty else {
             lastReportSucceeded = false
-            lastReportMessage = "Selected provider no longer exists"
+            lastReportMessage = "Selected providers no longer exist"
             return
         }
-        guard config.isEnabled else {
+        let enabledConfigs = selectedConfigs.filter(\.isEnabled)
+        guard !enabledConfigs.isEmpty else {
             lastReportSucceeded = false
-            lastReportMessage = "Selected provider is disabled"
+            lastReportMessage = "Selected providers are disabled"
             return
         }
-        guard let snapshot = snapshots[providerConfigID] else {
+        let providers = enabledConfigs.compactMap { config -> (config: ServiceConfig, snapshot: ProviderUsageSnapshot)? in
+            guard let snapshot = snapshots[config.id] else {
+                return nil
+            }
+            return (config: config, snapshot: snapshot)
+        }
+        guard !providers.isEmpty else {
             lastReportSucceeded = false
-            lastReportMessage = "No usage snapshot available for \(config.displayName)"
+            lastReportMessage = "No selected providers have usage snapshots yet"
             return
         }
 
         let payload = UsageReportBuilder().build(
             clientID: reportHookConfig.clientID.trimmingCharacters(in: .whitespacesAndNewlines),
-            config: config,
-            snapshot: snapshot
+            providers: providers
         )
         guard !payload.accounts.isEmpty else {
             lastReportSucceeded = false
@@ -207,7 +209,15 @@ final class AppState: ObservableObject {
                 payload: payload
             )
             lastReportSucceeded = true
-            lastReportMessage = "Reported \(config.displayName) · HTTP \(statusCode)"
+            let reportedLabel: String
+            if let provider = providers.first, providers.count == 1 {
+                reportedLabel = provider.config.displayName
+            } else {
+                reportedLabel = "\(providers.count) providers"
+            }
+            let skippedCount = selectedConfigs.count - providers.count
+            let skippedLabel = skippedCount > 0 ? " · skipped \(skippedCount)" : ""
+            lastReportMessage = "Reported \(reportedLabel)\(skippedLabel) · HTTP \(statusCode)"
         } catch {
             lastReportSucceeded = false
             lastReportMessage = error.localizedDescription
@@ -233,5 +243,17 @@ final class AppState: ObservableObject {
         if reportHookConfig.isEnabled {
             await reportUsage()
         }
+    }
+
+    private func normalizeReportProviderSelection() {
+        let selectedIDs = Set(reportHookConfig.providerConfigIDs)
+        let normalizedIDs = configs.compactMap { config in
+            selectedIDs.contains(config.id) ? config.id : nil
+        }
+        guard normalizedIDs != reportHookConfig.providerConfigIDs else {
+            return
+        }
+        reportHookConfig.providerConfigIDs = normalizedIDs
+        configStore.saveReportHookConfig(reportHookConfig)
     }
 }

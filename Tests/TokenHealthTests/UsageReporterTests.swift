@@ -32,6 +32,14 @@ struct UsageReporterTests {
     }
 
     @Test
+    func buildsMultipleAccountsInOnePayload() {
+        let payload = UsageReporterTestSupport.multiProviderPayload()
+
+        #expect(payload.accounts.map(\.provider) == ["kimi-code", "codex"])
+        #expect(payload.accounts.map(\.status) == ["ok", "unavailable"])
+    }
+
+    @Test
     func refusesToBuildAnAccountForDisabledProvider() {
         #expect(UsageReporterTestSupport.disabledProviderPayload().accounts.isEmpty)
     }
@@ -44,6 +52,7 @@ struct UsageReporterTests {
         #expect(summary.authorization == "Bearer secret-token")
         #expect(summary.idempotencyKey == "local-1234567")
         #expect(summary.contentType == "application/json")
+        #expect(summary.accountCount == 2)
         #expect(summary.bodyMatches)
         #expect(summary.bodyUsesSnakeCase)
     }
@@ -56,6 +65,16 @@ struct UsageReporterTests {
     @Test
     func migratesConfigurationWithoutCertificatePin() throws {
         #expect(try UsageReporterTestSupport.decodesLegacyHookConfiguration())
+    }
+
+    @Test
+    func migratesLegacySingleProviderSelection() throws {
+        #expect(try UsageReporterTestSupport.migratesLegacySingleProviderSelection())
+    }
+
+    @Test
+    func prefersAndDeduplicatesMultiProviderSelection() throws {
+        #expect(try UsageReporterTestSupport.prefersAndDeduplicatesMultiProviderSelection())
     }
 
     @Test

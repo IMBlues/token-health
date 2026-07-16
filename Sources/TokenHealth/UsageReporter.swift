@@ -5,20 +5,20 @@ struct ReportHookConfig: Codable, Equatable, Sendable {
     var isEnabled: Bool
     var endpoint: String
     var clientID: String
-    var providerConfigID: UUID?
+    var providerConfigIDs: [UUID]
     var pinnedCertificateSHA256: String
 
     init(
         isEnabled: Bool,
         endpoint: String,
         clientID: String,
-        providerConfigID: UUID? = nil,
+        providerConfigIDs: [UUID] = [],
         pinnedCertificateSHA256: String = ""
     ) {
         self.isEnabled = isEnabled
         self.endpoint = endpoint
         self.clientID = clientID
-        self.providerConfigID = providerConfigID
+        self.providerConfigIDs = providerConfigIDs
         self.pinnedCertificateSHA256 = pinnedCertificateSHA256
     }
 
@@ -26,6 +26,7 @@ struct ReportHookConfig: Codable, Equatable, Sendable {
         case isEnabled
         case endpoint
         case clientID
+        case providerConfigIDs
         case providerConfigID
         case pinnedCertificateSHA256
     }
@@ -35,11 +36,29 @@ struct ReportHookConfig: Codable, Equatable, Sendable {
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         endpoint = try container.decode(String.self, forKey: .endpoint)
         clientID = try container.decode(String.self, forKey: .clientID)
-        providerConfigID = try container.decodeIfPresent(UUID.self, forKey: .providerConfigID)
+        let decodedIDs: [UUID]
+        if container.contains(.providerConfigIDs) {
+            decodedIDs = try container.decodeIfPresent([UUID].self, forKey: .providerConfigIDs) ?? []
+        } else if let legacyID = try container.decodeIfPresent(UUID.self, forKey: .providerConfigID) {
+            decodedIDs = [legacyID]
+        } else {
+            decodedIDs = []
+        }
+        var seenIDs = Set<UUID>()
+        providerConfigIDs = decodedIDs.filter { seenIDs.insert($0).inserted }
         pinnedCertificateSHA256 = try container.decodeIfPresent(
             String.self,
             forKey: .pinnedCertificateSHA256
         ) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(endpoint, forKey: .endpoint)
+        try container.encode(clientID, forKey: .clientID)
+        try container.encode(providerConfigIDs, forKey: .providerConfigIDs)
+        try container.encode(pinnedCertificateSHA256, forKey: .pinnedCertificateSHA256)
     }
 
     static var defaultValue: ReportHookConfig {
@@ -47,7 +66,7 @@ struct ReportHookConfig: Codable, Equatable, Sendable {
             isEnabled: false,
             endpoint: "",
             clientID: defaultClientID(),
-            providerConfigID: nil,
+            providerConfigIDs: [],
             pinnedCertificateSHA256: ""
         )
     }
@@ -141,10 +160,26 @@ struct UsageReportBuilder {
         config: ServiceConfig,
         snapshot: ProviderUsageSnapshot
     ) -> UsageReportPayload {
-        guard config.isEnabled else {
-            return UsageReportPayload(clientID: clientID, accounts: [])
+        build(clientID: clientID, providers: [(config: config, snapshot: snapshot)])
+    }
+
+    func build(
+        clientID: String,
+        providers: [(config: ServiceConfig, snapshot: ProviderUsageSnapshot)]
+    ) -> UsageReportPayload {
+        var includedConfigIDs = Set<UUID>()
+        let accounts = providers.compactMap { provider -> UsageReportAccount? in
+            guard provider.config.isEnabled,
+                  includedConfigIDs.insert(provider.config.id).inserted else {
+                return nil
+            }
+            return account(config: provider.config, snapshot: provider.snapshot)
         }
-        let account = UsageReportAccount(
+        return UsageReportPayload(clientID: clientID, accounts: accounts)
+    }
+
+    private func account(config: ServiceConfig, snapshot: ProviderUsageSnapshot) -> UsageReportAccount {
+        UsageReportAccount(
             provider: providerIdentifier(config.providerKind),
             accountRef: accountReference(for: config.displayName),
             displayName: displayName(for: snapshot),
@@ -152,7 +187,6 @@ struct UsageReportBuilder {
             status: status(for: snapshot.state),
             windows: reportWindows(snapshot.usages)
         )
-        return UsageReportPayload(clientID: clientID, accounts: [account])
     }
 
     private func reportWindows(_ usages: [TokenUsage]) -> [UsageReportWindow] {
