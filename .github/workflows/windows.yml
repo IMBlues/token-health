@@ -1,0 +1,76 @@
+name: Windows Electron MVP
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches-ignore:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      - name: Build Electron bundles
+        run: npm run build
+
+      - name: Verify CommonJS preload artifact
+        run: npm run smoke:build
+
+      - name: Smoke launch Electron executable
+        run: npm run smoke:electron
+
+      - name: Build NSIS x64 installer
+        run: npx electron-builder --win nsis --x64
+
+      - name: Resolve package artifact metadata and checksum
+        id: artifact
+        shell: pwsh
+        run: |
+          $package = Get-Content package.json | ConvertFrom-Json
+          $version = $package.version
+          $installer = Get-Item "dist/TokenHealth-Windows-$version-x64-Setup.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content -Encoding ascii "dist/$($installer.Name).sha256"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "installer=$($installer.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TokenHealth-Windows-${{ steps.artifact.outputs.version }}-x64
+          path: |
+            windows/dist/${{ steps.artifact.outputs.installer }}
+            windows/dist/${{ steps.artifact.outputs.installer }}.sha256
+          retention-days: 14
+          if-no-files-found: error

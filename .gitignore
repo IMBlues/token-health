@@ -8,6 +8,15 @@ Package.resolved
 # Local app/package outputs
 dist/*.dmg
 *.xcuserstate
+.playwright-mcp/
+
+# Windows Electron
+windows/node_modules/
+windows/dist/
+windows/out/
+windows/coverage/
+windows/.vite/
+windows/*.log
 
 # Python helper cache
 __pycache__/
