@@ -116,6 +116,12 @@ bash scripts/build-dmg.sh
 
 在 Settings 左侧列表里拖动 Provider 行右侧的排序柄，可以手动调整菜单面板中的展示顺序。排序会保存到本机配置。
 
+### 用量上报 Hook
+
+Settings 左侧的 `Usage reporting` 可以把指定的单个 Provider 的 `5h` / `week` 额度快照 POST 到自定义 HTTPS 端点。它支持 Bearer token、幂等键和可选的精确证书 SHA-256 pin，可随刷新自动上报，也可用 `Report now` 手动发送；上报失败不会影响本地额度刷新。
+
+Provider 凭据和 Hook token 会合并保存在一个 macOS Keychain vault 中，避免安装后按 Provider 反复弹出钥匙串授权。
+
 ### Generic HTTP
 
 如果你有自己的用量服务，可以让它返回下面这种 JSON：
@@ -140,7 +146,7 @@ bash scripts/build-dmg.sh
 ## 隐私和安全
 
 - Token Health 没有自己的后端服务。
-- 请求只会发往对应 Provider 官方接口，或你在 Generic HTTP 中配置的 endpoint。
+- 请求只会发往对应 Provider 官方接口、你在 Generic HTTP 中配置的 endpoint，或你显式启用的用量上报 Hook。
 - Codex Provider 通过本机官方 App Server 的私有 stdio 通道发送初始化与额度读取 RPC，并显式关闭该子进程的插件、Apps 和 analytics 功能；Codex 自身仍负责会话加载和必要刷新。
 - API key、Cookie、Web session 等凭证存放在 macOS Keychain。
 - Codex App Server 协议以及其他 Provider 的上游网页和内部接口都可能演进；这些适配器属于 best effort，失效时欢迎提 issue 或 PR。
@@ -157,6 +163,7 @@ swift run TokenHealth
 - `StatusMenuView.swift`：菜单栏面板 UI。
 - `SettingsView.swift`：Provider 配置 UI。
 - `Providers.swift`：各 Provider 拉取和解析逻辑。
+- `UsageReporter.swift`：可配置用量上报 Hook、payload 映射和 HTTP 请求。
 - `ConfigStore.swift` / `KeychainStore.swift`：本地配置和凭证存储。
 
 ## License

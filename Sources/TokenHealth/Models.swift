@@ -122,7 +122,7 @@ struct ServiceConfig: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-struct ProviderSecrets: Equatable, Sendable {
+struct ProviderSecrets: Codable, Equatable, Sendable {
     var apiKey: String
     var password: String
 

@@ -11,17 +11,33 @@ final class AppState: ObservableObject {
     @Published var lastError: String?
     @Published var settingsSelectedID: UUID?
     @Published var nextRefreshAt: Date
+    @Published var reportHookConfig: ReportHookConfig
+    @Published var isReporting = false
+    @Published var lastReportMessage: String?
+    @Published var lastReportSucceeded: Bool?
 
     private let configStore: ConfigStore
     private let providerFactory = ProviderFactory()
+    private let usageReporter: UsageReporter
     private var refreshTimer: Timer?
 
-    init(configStore: ConfigStore = ConfigStore()) {
+    init(configStore: ConfigStore = ConfigStore(), usageReporter: UsageReporter = UsageReporter()) {
         self.configStore = configStore
+        self.usageReporter = usageReporter
         configs = configStore.loadConfigs()
+        reportHookConfig = configStore.loadReportHookConfig()
         nextRefreshAt = Date().addingTimeInterval(Self.refreshInterval)
+        if let selectedID = reportHookConfig.providerConfigID,
+           !configs.contains(where: { $0.id == selectedID }) {
+            reportHookConfig.providerConfigID = nil
+            configStore.saveReportHookConfig(reportHookConfig)
+        }
+        do {
+            try configStore.migrateLegacySecrets(for: configs)
+        } catch {
+            lastError = error.localizedDescription
+        }
 
-        clearLocalLoginSecrets()
         scheduleNextRefresh()
 
         Task {
@@ -55,6 +71,10 @@ final class AppState: ObservableObject {
         do {
             try configStore.deleteConfig(config, from: &configs)
             snapshots[id] = nil
+            if reportHookConfig.providerConfigID == id {
+                reportHookConfig.providerConfigID = nil
+                configStore.saveReportHookConfig(reportHookConfig)
+            }
             lastError = nil
             return true
         } catch {
@@ -109,12 +129,88 @@ final class AppState: ObservableObject {
         configStore.loadSecrets(for: id)
     }
 
-    func saveSecrets(_ secrets: ProviderSecrets, for id: UUID) {
+    @discardableResult
+    func saveSecrets(_ secrets: ProviderSecrets, for id: UUID) -> Bool {
         do {
             try configStore.saveSecrets(secrets, for: id)
             lastError = nil
+            return true
         } catch {
             lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    func loadReportHookToken() -> String {
+        configStore.loadReportHookToken()
+    }
+
+    @discardableResult
+    func saveReportHookConfig(bearerToken: String? = nil) -> Bool {
+        configStore.saveReportHookConfig(reportHookConfig)
+        guard let bearerToken else {
+            return true
+        }
+        do {
+            try configStore.saveReportHookToken(bearerToken)
+            lastError = nil
+            return true
+        } catch {
+            lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    func reportUsage() async {
+        guard reportHookConfig.isEnabled, !isReporting else {
+            return
+        }
+
+        guard let providerConfigID = reportHookConfig.providerConfigID else {
+            lastReportSucceeded = false
+            lastReportMessage = "Select a provider to report"
+            return
+        }
+        guard let config = configs.first(where: { $0.id == providerConfigID }) else {
+            lastReportSucceeded = false
+            lastReportMessage = "Selected provider no longer exists"
+            return
+        }
+        guard config.isEnabled else {
+            lastReportSucceeded = false
+            lastReportMessage = "Selected provider is disabled"
+            return
+        }
+        guard let snapshot = snapshots[providerConfigID] else {
+            lastReportSucceeded = false
+            lastReportMessage = "No usage snapshot available for \(config.displayName)"
+            return
+        }
+
+        let payload = UsageReportBuilder().build(
+            clientID: reportHookConfig.clientID.trimmingCharacters(in: .whitespacesAndNewlines),
+            config: config,
+            snapshot: snapshot
+        )
+        guard !payload.accounts.isEmpty else {
+            lastReportSucceeded = false
+            lastReportMessage = "No usage snapshots available to report"
+            return
+        }
+
+        isReporting = true
+        defer { isReporting = false }
+        do {
+            let statusCode = try await usageReporter.report(
+                config: reportHookConfig,
+                bearerToken: configStore.loadReportHookToken(),
+                payload: payload
+            )
+            lastReportSucceeded = true
+            lastReportMessage = "Reported \(config.displayName) · HTTP \(statusCode)"
+        } catch {
+            lastReportSucceeded = false
+            lastReportMessage = error.localizedDescription
         }
     }
 
@@ -132,6 +228,10 @@ final class AppState: ObservableObject {
             let secrets = config.providerKind.usesLocalLogin ? ProviderSecrets.empty : configStore.loadSecrets(for: config.id)
             let provider = providerFactory.provider(for: config)
             snapshots[config.id] = await provider.fetchUsage(config: config, secrets: secrets)
+        }
+
+        if reportHookConfig.isEnabled {
+            await reportUsage()
         }
     }
 }

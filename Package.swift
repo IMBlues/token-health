@@ -14,6 +14,8 @@ let package = Package(
         .executableTarget(
             name: "TokenHealth",
             linkerSettings: [
+                .linkedFramework("LocalAuthentication"),
+                .linkedFramework("Network"),
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit")
             ]

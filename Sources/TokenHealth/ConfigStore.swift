@@ -4,6 +4,7 @@ final class ConfigStore {
     private let defaultsKey = "service.configs.v2"
     // Leave v1 untouched so older builds can still load their last compatible snapshot.
     private let legacyDefaultsKey = "service.configs.v1"
+    private let reportHookDefaultsKey = "usage-report-hook.config.v1"
     private let secretsPrefix = "service.secrets.v1"
     private let defaults: UserDefaults
     private let keychain: KeychainStore
@@ -30,6 +31,33 @@ final class ConfigStore {
             return
         }
         defaults.set(data, forKey: defaultsKey)
+    }
+
+    func loadReportHookConfig() -> ReportHookConfig {
+        guard let data = defaults.data(forKey: reportHookDefaultsKey),
+              let config = try? JSONDecoder().decode(ReportHookConfig.self, from: data) else {
+            return .defaultValue
+        }
+        return config
+    }
+
+    func saveReportHookConfig(_ config: ReportHookConfig) {
+        guard let data = try? JSONEncoder().encode(config) else {
+            return
+        }
+        defaults.set(data, forKey: reportHookDefaultsKey)
+    }
+
+    func loadReportHookToken() -> String {
+        keychain.loadReportHookToken()
+    }
+
+    func saveReportHookToken(_ token: String) throws {
+        try keychain.saveReportHookToken(token)
+    }
+
+    func migrateLegacySecrets(for configs: [ServiceConfig]) throws {
+        try keychain.migrateLegacyItems(for: Set(configs.map(\.id)))
     }
 
     func loadSecrets(for configID: UUID) -> ProviderSecrets {

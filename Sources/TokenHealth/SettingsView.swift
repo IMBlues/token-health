@@ -1,13 +1,17 @@
 import SwiftUI
 
 struct SettingsView: View {
+    private static let reportingSelectionID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+
     @EnvironmentObject private var appState: AppState
     @State private var selectedID: UUID?
     @State private var apiKey = ""
     @State private var password = ""
+    @State private var reportBearerToken = ""
     @State private var loadedSecretID: UUID?
     @State private var isKimiLoginInProgress = false
     @State private var apiKeyStoredValue = false
+    @State private var reportTokenStoredValue = false
 
     var body: some View {
         NavigationSplitView {
@@ -35,6 +39,21 @@ struct SettingsView: View {
                     .onMove { source, destination in
                         appState.moveConfigs(fromOffsets: source, toOffset: destination)
                     }
+
+                    Section("Integrations") {
+                        HStack {
+                            Image(systemName: "arrow.up.forward.app")
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Usage reporting")
+                                Text("HTTPS hook")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .tag(Self.reportingSelectionID)
+                    }
                 }
 
                 Divider()
@@ -51,14 +70,14 @@ struct SettingsView: View {
                     Button {
                         if let selectedID {
                             if appState.deleteConfig(id: selectedID) {
-                                self.selectedID = appState.configs.first?.id
+                                self.selectedID = appState.configs.first?.id ?? Self.reportingSelectionID
                                 loadSecretsIfNeeded(force: true)
                             }
                         }
                     } label: {
                         Image(systemName: "minus")
                     }
-                    .disabled(selectedID == nil)
+                    .disabled(selectedID == nil || selectedID == Self.reportingSelectionID)
                     .help("Remove plan")
 
                     Spacer()
@@ -76,7 +95,9 @@ struct SettingsView: View {
             loadSecretsIfNeeded(force: true)
         }
         .onChange(of: selectedID) {
-            appState.settingsSelectedID = selectedID
+            if selectedID != Self.reportingSelectionID {
+                appState.settingsSelectedID = selectedID
+            }
             loadSecretsIfNeeded(force: true)
         }
         .onChange(of: appState.settingsSelectedID) {
@@ -88,7 +109,9 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let binding = selectedConfigBinding {
+        if selectedID == Self.reportingSelectionID {
+            reportHookDetail
+        } else if let binding = selectedConfigBinding {
             Form {
                 Section {
                     TextField("Name", text: binding.displayName)
@@ -194,6 +217,92 @@ struct SettingsView: View {
         }
     }
 
+    private var reportHookDetail: some View {
+        Form {
+            Section {
+                Toggle("Enabled", isOn: $appState.reportHookConfig.isEnabled)
+                Picker("Provider", selection: $appState.reportHookConfig.providerConfigID) {
+                    Text("Choose a provider").tag(Optional<UUID>.none)
+                    ForEach(appState.configs) { config in
+                        Text(reportProviderLabel(config))
+                            .tag(Optional(config.id))
+                    }
+                }
+                TextField("Endpoint", text: $appState.reportHookConfig.endpoint)
+                TextField("Client ID", text: $appState.reportHookConfig.clientID)
+                TextField(
+                    "Pinned certificate SHA-256 (optional)",
+                    text: $appState.reportHookConfig.pinnedCertificateSHA256
+                )
+                .font(.system(.body, design: .monospaced))
+            }
+
+            Section {
+                SecureField(reportTokenStoredValue ? "Bearer token stored" : "Bearer token", text: $reportBearerToken)
+
+                if reportTokenStoredValue {
+                    HStack {
+                        LabeledContent("Authorization", value: "Stored in Keychain")
+                        Button {
+                            if appState.saveReportHookConfig(bearerToken: "") {
+                                reportBearerToken = ""
+                                reportTokenStoredValue = false
+                            }
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Clear bearer token")
+                    }
+                }
+            }
+
+            if let message = appState.lastReportMessage {
+                Section {
+                    LabeledContent("Last report") {
+                        HStack(spacing: 6) {
+                            Image(systemName: appState.lastReportSucceeded == true ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .foregroundStyle(appState.lastReportSucceeded == true ? .green : .orange)
+                            Text(message)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if let error = appState.lastError {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+            }
+
+            HStack {
+                Button("Save") {
+                    saveReportHookSettings()
+                }
+                .keyboardShortcut(.defaultAction)
+
+                Button {
+                    saveReportHookSettings()
+                    Task {
+                        await appState.reportUsage()
+                    }
+                } label: {
+                    Label(appState.isReporting ? "Reporting" : "Report now", systemImage: "paperplane")
+                }
+                .disabled(
+                    appState.isReporting ||
+                    !appState.reportHookConfig.isEnabled ||
+                    selectedReportProvider?.isEnabled != true ||
+                    appState.reportHookConfig.endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    appState.reportHookConfig.clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
     private var selectedConfigBinding: Binding<ServiceConfig>? {
         guard let selectedID, let index = appState.configs.firstIndex(where: { $0.id == selectedID }) else {
             return nil
@@ -201,11 +310,32 @@ struct SettingsView: View {
         return $appState.configs[index]
     }
 
+    private var selectedReportProvider: ServiceConfig? {
+        guard let id = appState.reportHookConfig.providerConfigID else {
+            return nil
+        }
+        return appState.configs.first(where: { $0.id == id })
+    }
+
+    private func reportProviderLabel(_ config: ServiceConfig) -> String {
+        let label = "\(config.displayName) · \(config.providerKind.title)"
+        return config.isEnabled ? label : "\(label) (Disabled)"
+    }
+
     private func loadSecretsIfNeeded(force: Bool = false) {
         guard let selectedID else {
             apiKey = ""
             password = ""
             loadedSecretID = nil
+            return
+        }
+        if selectedID == Self.reportingSelectionID {
+            apiKey = ""
+            password = ""
+            apiKeyStoredValue = false
+            reportBearerToken = ""
+            reportTokenStoredValue = !appState.loadReportHookToken().isEmpty
+            loadedSecretID = selectedID
             return
         }
         guard force || selectedID != loadedSecretID else {
@@ -225,6 +355,21 @@ struct SettingsView: View {
         loadedSecretID = selectedID
     }
 
+    private func saveReportHookSettings() {
+        let rawPin = appState.reportHookConfig.pinnedCertificateSHA256
+        if let normalizedPin = TLSCertificatePin.normalizedSHA256(rawPin) {
+            appState.reportHookConfig.pinnedCertificateSHA256 = normalizedPin
+        }
+        if reportBearerToken.isEmpty {
+            appState.saveReportHookConfig()
+        } else {
+            if appState.saveReportHookConfig(bearerToken: reportBearerToken) {
+                reportTokenStoredValue = true
+                reportBearerToken = ""
+            }
+        }
+    }
+
     private func saveCurrentSecrets() {
         guard let selectedID else {
             return
@@ -239,7 +384,13 @@ struct SettingsView: View {
         }
         let existingSecrets = appState.loadSecrets(for: selectedID)
         let nextAPIKey = apiKey.isEmpty ? existingSecrets.apiKey : apiKey
-        appState.saveSecrets(ProviderSecrets(apiKey: nextAPIKey, password: password), for: selectedID)
+        guard appState.saveSecrets(
+            ProviderSecrets(apiKey: nextAPIKey, password: password),
+            for: selectedID
+        ) else {
+            apiKeyStoredValue = false
+            return
+        }
         apiKey = ""
         apiKeyStoredValue = !nextAPIKey.isEmpty
         loadedSecretID = selectedID
@@ -256,7 +407,14 @@ struct SettingsView: View {
 
             switch result {
             case let .success(credential):
-                appState.saveSecrets(ProviderSecrets(apiKey: credential, password: password), for: selectedID)
+                guard appState.saveSecrets(
+                    ProviderSecrets(apiKey: credential, password: password),
+                    for: selectedID
+                ) else {
+                    apiKey = credential
+                    apiKeyStoredValue = false
+                    return
+                }
                 apiKey = ""
                 apiKeyStoredValue = true
                 if let index = appState.configs.firstIndex(where: { $0.id == selectedID }) {
