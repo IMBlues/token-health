@@ -1,8 +1,111 @@
+import Foundation
 import Testing
 @testable import TokenHealth
 
 @Suite
 struct CodexUsageProviderTests {
+    @Test
+    func testGenericHTTPParsesWrappedTotalTokenQuota() throws {
+        let data = Data(
+            """
+            {
+              "code": true,
+              "data": {
+                "expires_at": 0,
+                "name": "Example User",
+                "object": "token_usage",
+                "total_available": 298665817,
+                "total_granted": 300803492,
+                "total_used": 2137675,
+                "unlimited_quota": false
+              },
+              "message": "ok"
+            }
+            """.utf8
+        )
+
+        let payload = try UsageJSONParser().parsePayload(data: data)
+
+        #expect(payload.planName == "Example User")
+        #expect(payload.usages.count == 1)
+        #expect(payload.usages[0].window == .tokenQuota)
+        #expect(payload.usages[0].label == "Usage")
+        #expect(payload.usages[0].used == 2_137_675)
+        #expect(payload.usages[0].limit == 300_803_492)
+        #expect(payload.usages[0].resetDate == nil)
+        #expect(payload.usages[0].unit == "tokens")
+    }
+
+    @Test
+    func testGenericHTTPInfersTotalFromUsedAndAvailable() throws {
+        let data = Data(
+            """
+            {
+              "data": {
+                "total_available": 80,
+                "total_used": 20,
+                "unlimited_quota": false
+              }
+            }
+            """.utf8
+        )
+
+        let usage = try #require(UsageJSONParser().parse(data: data).first)
+
+        #expect(usage.used == 20)
+        #expect(usage.limit == 100)
+    }
+
+    @Test
+    func testTokenQuotaUsesPercentageAndExactAmountHelp() {
+        let usage = TokenUsage(
+            window: .tokenQuota,
+            used: 2_137_675,
+            limit: 300_803_492,
+            resetDate: nil,
+            unit: "tokens"
+        )
+
+        #expect(UsageAmountFormatter.amountText(
+            usage,
+            isSensitiveAmount: false,
+            revealsSensitiveAmount: false
+        ) == "0.71%")
+        #expect(
+            UsageAmountFormatter.exactAmountText(usage)
+                == "2,137,675 / 300,803,492 tokens"
+        )
+    }
+
+    @Test
+    func testTokenQuotaWithoutValidLimitUsesTokenAmount() {
+        let missingLimit = TokenUsage(
+            window: .tokenQuota,
+            used: 2_137_675,
+            limit: nil,
+            resetDate: nil,
+            unit: "tokens"
+        )
+        let zeroLimit = TokenUsage(
+            window: .tokenQuota,
+            used: 2_137_675,
+            limit: 0,
+            resetDate: nil,
+            unit: "tokens"
+        )
+
+        #expect(UsageAmountFormatter.amountText(
+            missingLimit,
+            isSensitiveAmount: false,
+            revealsSensitiveAmount: false
+        ) == "2.14M tokens")
+        #expect(UsageAmountFormatter.amountText(
+            zeroLimit,
+            isSensitiveAmount: false,
+            revealsSensitiveAmount: false
+        ) == "2.14M tokens")
+    }
+
     @Test
     func testQuotaRPCUsesOnlyTheReadOnlyAllowlist() throws {
         let summary = try CodexTestSupport.rpcSummary(version: "test")
