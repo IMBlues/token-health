@@ -217,7 +217,7 @@ struct UsageReportBuilder {
             "5h"
         case .week:
             "week"
-        case .balance, .todayCost, .todayTokens, .todayRequests, .month, .mcpMonth, .videoGift, .sevenDaysTokens, .sevenDaysTools:
+        case .balance, .tokenQuota, .todayCost, .todayTokens, .todayRequests, .month, .mcpMonth, .videoGift, .sevenDaysTokens, .sevenDaysTools:
             nil
         }
     }
