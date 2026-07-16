@@ -131,6 +131,7 @@ struct ProviderSecrets: Codable, Equatable, Sendable {
 
 enum UsageWindow: String, Codable, CaseIterable, Identifiable, Sendable {
     case balance
+    case tokenQuota
     case todayCost
     case todayTokens
     case todayRequests
@@ -147,6 +148,7 @@ enum UsageWindow: String, Codable, CaseIterable, Identifiable, Sendable {
     var title: String {
         switch self {
         case .balance: "Balance"
+        case .tokenQuota: "Usage"
         case .todayCost: "Today Cost"
         case .todayTokens: "Today Tokens"
         case .todayRequests: "Today Requests"

@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct StatusMenuView: View {
@@ -251,7 +252,7 @@ private struct UsageCard: View {
                 return isTokenTotal(usage)
             case .sevenDaysTools:
                 return false
-            case .balance:
+            case .balance, .tokenQuota:
                 return true
             case .todayCost, .todayTokens, .todayRequests:
                 return isTodayTotal(usage)
@@ -269,7 +270,7 @@ private struct UsageCard: View {
                 return !isTokenTotal(usage)
             case .sevenDaysTools:
                 return true
-            case .balance:
+            case .balance, .tokenQuota:
                 return false
             case .todayCost, .todayTokens, .todayRequests:
                 return !isTodayTotal(usage)
@@ -334,6 +335,8 @@ private struct UsageCard: View {
         return switch usage.window {
         case .balance:
             0
+        case .tokenQuota:
+            4
         case .todayCost:
             1
         case .todayTokens:
@@ -395,12 +398,12 @@ private struct CompactUsageMetric: View {
                 }
             }
 
-            if usage.limit != nil {
-                ProgressView(value: usage.ratio ?? 0)
+            if let ratio = usage.ratio {
+                ProgressView(value: ratio)
                     .tint(tint)
             }
         }
-        .help(resetHelpText)
+        .help(metricHelpText)
     }
 
     private var labelText: String {
@@ -416,6 +419,8 @@ private struct CompactUsageMetric: View {
             "Month"
         case .balance:
             "Balance"
+        case .tokenQuota:
+            "Usage"
         case .todayCost:
             "Today Cost"
         case .todayTokens:
@@ -437,11 +442,19 @@ private struct CompactUsageMetric: View {
         UsageAmountFormatter.tint(for: usage)
     }
 
-    private var resetHelpText: String {
+    private var metricHelpText: String {
+        let amount = amountHelpText
         guard let resetDate = usage.resetDate else {
-            return usage.label ?? usage.window.title
+            return amount
         }
-        return "Resets \(resetDate.formatted(date: .abbreviated, time: .shortened))"
+        return "\(amount)\nResets \(resetDate.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private var amountHelpText: String {
+        if isSensitiveAmount && !revealsSensitiveAmount {
+            return "Amount hidden"
+        }
+        return UsageAmountFormatter.exactAmountText(usage)
     }
 }
 
@@ -451,18 +464,21 @@ private struct UsageAmountText: View {
     let revealsSensitiveAmount: Bool
 
     var body: some View {
-        if isSensitiveAmount {
-            ZStack(alignment: .trailing) {
-                amountLabel(redactedAmountText)
-                    .hidden()
-                amountLabel(revealedAmountText)
-                    .hidden()
+        Group {
+            if isSensitiveAmount {
+                ZStack(alignment: .trailing) {
+                    amountLabel(redactedAmountText)
+                        .hidden()
+                    amountLabel(revealedAmountText)
+                        .hidden()
+                    amountLabel(visibleAmountText)
+                }
+                .fixedSize(horizontal: true, vertical: false)
+            } else {
                 amountLabel(visibleAmountText)
             }
-            .fixedSize(horizontal: true, vertical: false)
-        } else {
-            amountLabel(visibleAmountText)
         }
+        .help(helpText)
     }
 
     private var visibleAmountText: String {
@@ -487,6 +503,13 @@ private struct UsageAmountText: View {
             isSensitiveAmount: false,
             revealsSensitiveAmount: true
         )
+    }
+
+    private var helpText: String {
+        if isSensitiveAmount && !revealsSensitiveAmount {
+            return "Amount hidden"
+        }
+        return UsageAmountFormatter.exactAmountText(usage)
     }
 
     private func amountLabel(_ text: String) -> some View {
@@ -531,10 +554,18 @@ private struct UsageLine: View {
                 }
             }
 
-            if usage.limit != nil {
-                ProgressView(value: usage.ratio ?? 0)
+            if let ratio = usage.ratio {
+                ProgressView(value: ratio)
                     .tint(tint)
                     .help(resetText)
+            }
+
+            if usage.window == .tokenQuota {
+                Text(exactAmountText)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
 
             if usage.resetDate != nil {
@@ -546,6 +577,13 @@ private struct UsageLine: View {
                 }
             }
         }
+    }
+
+    private var exactAmountText: String {
+        if isSensitiveAmount && !revealsSensitiveAmount {
+            return "Amount hidden"
+        }
+        return UsageAmountFormatter.exactAmountText(usage)
     }
 
     private var tint: Color {
@@ -600,7 +638,7 @@ private struct UsageLine: View {
     }
 }
 
-private enum UsageAmountFormatter {
+enum UsageAmountFormatter {
     static func amountText(
         _ usage: TokenUsage,
         isSensitiveAmount: Bool,
@@ -612,6 +650,13 @@ private enum UsageAmountFormatter {
         if let displayValue = usage.displayValue, !displayValue.isEmpty {
             return displayValue
         }
+        if usage.window == .tokenQuota {
+            if let ratio = usage.ratio {
+                return "\(trimmedDecimal(ratio * 100))%"
+            }
+            let used = formatAmount(usage.used)
+            return unitText(for: usage).map { "\(used) \($0)" } ?? used
+        }
         if usage.unit == "%" {
             return "\(usage.used)%"
         }
@@ -621,6 +666,22 @@ private enum UsageAmountFormatter {
             return unitText(for: usage).map { "\(used) \($0)" } ?? used
         }
         let amount = "\(used) / \(formatAmount(limit))"
+        return unitText(for: usage).map { "\(amount) \($0)" } ?? amount
+    }
+
+    static func exactAmountText(_ usage: TokenUsage) -> String {
+        if let displayValue = usage.displayValue, !displayValue.isEmpty {
+            return displayValue
+        }
+        if usage.unit == "%" {
+            return "\(usage.used)%"
+        }
+
+        let used = formatExactAmount(usage.used)
+        guard let limit = usage.limit else {
+            return unitText(for: usage).map { "\(used) \($0)" } ?? used
+        }
+        let amount = "\(used) / \(formatExactAmount(limit))"
         return unitText(for: usage).map { "\(amount) \($0)" } ?? amount
     }
 
@@ -643,12 +704,40 @@ private enum UsageAmountFormatter {
 
     private static func formatAmount(_ value: Int) -> String {
         let number = Double(value)
-        if abs(value) >= 1_000_000 {
-            return String(format: "%.2fM", number / 1_000_000)
+        let magnitude = abs(number)
+        if magnitude >= 1_000_000_000 {
+            return "\(trimmedDecimal(number / 1_000_000_000))B"
         }
-        if abs(value) >= 10_000 {
-            return String(format: "%.1fK", number / 1_000)
+        if magnitude >= 1_000_000 {
+            return "\(trimmedDecimal(number / 1_000_000))M"
         }
-        return value.formatted()
+        if magnitude >= 1_000 {
+            return "\(trimmedDecimal(number / 1_000))K"
+        }
+        return formatExactAmount(value)
+    }
+
+    private static func trimmedDecimal(_ value: Double) -> String {
+        var result = String(
+            format: "%.2f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            value
+        )
+        while result.last == "0" {
+            result.removeLast()
+        }
+        if result.last == "." {
+            result.removeLast()
+        }
+        return result
+    }
+
+    private static func formatExactAmount(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        formatter.usesGroupingSeparator = true
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
     }
 }

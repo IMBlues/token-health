@@ -1114,12 +1114,13 @@ struct GenericHTTPUsageProvider: UsageProvider {
                 )
             }
 
-            let usages = try UsageJSONParser().parse(data: data)
+            let payload = try UsageJSONParser().parsePayload(data: data)
             return ProviderUsageSnapshot(
                 id: config.id,
                 serviceName: config.displayName,
                 providerTitle: config.providerKind.title,
-                usages: usages,
+                planName: payload.planName,
+                usages: payload.usages,
                 state: .ready,
                 statusMessage: "Updated",
                 updatedAt: Date()
@@ -1135,11 +1136,19 @@ struct GenericHTTPUsageProvider: UsageProvider {
 
 struct UsageJSONParser {
     func parse(data: Data) throws -> [TokenUsage] {
+        try parsePayload(data: data).usages
+    }
+
+    func parsePayload(data: Data) throws -> (usages: [TokenUsage], planName: String?) {
         let object = try JSONSerialization.jsonObject(with: data)
         guard let root = object as? [String: Any] else {
             throw ParserError.invalidShape
         }
 
+        return (try parse(root: root), planName(from: root))
+    }
+
+    private func parse(root: [String: Any]) throws -> [TokenUsage] {
         let direct: [TokenUsage] = UsageWindow.quotaWindows.compactMap { window in
             let key = window == .fiveHours ? "fiveHours" : "week"
             let snakeKey = window == .fiveHours ? "five_hours" : "week"
@@ -1191,8 +1200,12 @@ struct UsageJSONParser {
             )
         }
 
-        if !direct.isEmpty {
-            return direct
+        var usages = direct
+        if let totalQuota = totalTokenQuota(from: root) {
+            usages.append(totalQuota)
+        }
+        if !usages.isEmpty {
+            return usages
         }
 
         let inferred = inferWindowUsage(from: root)
@@ -1201,6 +1214,112 @@ struct UsageJSONParser {
         }
 
         throw ParserError.noUsage
+    }
+
+    private func totalTokenQuota(from root: [String: Any]) -> TokenUsage? {
+        let payloads = [root["data"] as? [String: Any], root].compactMap { $0 }
+        for payload in payloads {
+            guard let used = firstInt(payload, keys: [
+                "total_used",
+                "totalUsed",
+                "used_tokens",
+                "usedTokens"
+            ]) else {
+                continue
+            }
+
+            let granted = firstInt(payload, keys: [
+                "total_granted",
+                "totalGranted",
+                "token_limit",
+                "tokenLimit"
+            ])
+            let available = firstInt(payload, keys: [
+                "total_available",
+                "totalAvailable",
+                "available_tokens",
+                "availableTokens"
+            ])
+            let unlimited = firstBool(payload, keys: ["unlimited_quota", "unlimitedQuota"]) ?? false
+            let limit = unlimited ? nil : (granted ?? safeSum(used, available))
+            let resetDate = firstDate(payload, keys: ["expires_at", "expiresAt"])
+
+            return TokenUsage(
+                window: .tokenQuota,
+                label: "Usage",
+                used: used,
+                limit: limit,
+                resetDate: resetDate,
+                unit: "tokens"
+            )
+        }
+        return nil
+    }
+
+    private func planName(from root: [String: Any]) -> String? {
+        let payloads = [root["data"] as? [String: Any], root].compactMap { $0 }
+        for payload in payloads {
+            if let name = firstString(payload, keys: [
+                "name",
+                "plan_name",
+                "planName",
+                "display_name",
+                "displayName"
+            ])?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                return name
+            }
+        }
+        return nil
+    }
+
+    private func safeSum(_ lhs: Int, _ rhs: Int?) -> Int? {
+        guard let rhs else {
+            return nil
+        }
+        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+        return overflow ? nil : sum
+    }
+
+    private func firstBool(_ dictionary: [String: Any], keys: [String]) -> Bool? {
+        for key in keys {
+            if let bool = dictionary[key] as? Bool {
+                return bool
+            }
+            if let string = dictionary[key] as? String {
+                switch string.lowercased() {
+                case "true", "1":
+                    return true
+                case "false", "0":
+                    return false
+                default:
+                    continue
+                }
+            }
+        }
+        return nil
+    }
+
+    private func firstDate(_ dictionary: [String: Any], keys: [String]) -> Date? {
+        for key in keys {
+            guard let value = dictionary[key] else {
+                continue
+            }
+            if let timestamp = value as? Int, timestamp > 0 {
+                return Date(timeIntervalSince1970: TimeInterval(timestamp))
+            }
+            if let timestamp = value as? Double, timestamp > 0 {
+                return Date(timeIntervalSince1970: timestamp)
+            }
+            if let string = value as? String {
+                if let timestamp = Double(string), timestamp > 0 {
+                    return Date(timeIntervalSince1970: timestamp)
+                }
+                if let date = ISO8601DateFormatter().date(from: string) {
+                    return date
+                }
+            }
+        }
+        return nil
     }
 
     private func firstIntValue(_ root: [String: Any], paths: [[String]]) -> Int? {
@@ -1387,7 +1506,7 @@ struct UsageJSONParser {
             case .invalidShape:
                 "Expected a JSON object"
             case .noUsage:
-                "No 5-hour or weekly usage fields found"
+                "No supported usage fields found"
             }
         }
     }
