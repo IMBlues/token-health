@@ -63,6 +63,7 @@ export const codexDiagnosticSchema = z.object({
   source: z.enum(['automatic', 'manual']).optional(),
   status: z.enum(['not-found', 'unsupported-platform', 'invalid-signature', 'unapproved-signer', 'trusted', 'changed', 'error']),
   signerSubject: z.string().optional(),
+  signerThumbprint: z.string().optional(),
   signatureStatus: z.string().optional(),
   identity: codexExecutableIdentitySchema.optional(),
   message: z.string()

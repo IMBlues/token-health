@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { resolve } from 'node:path'
+import { mkdtemp, mkdir, rm, utimes, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  APPROVED_CODEX_SIGNER_SUBJECTS, CODEX_ARGUMENTS, CODEX_OUTBOUND_METHODS, CodexProcessManager,
-  clearCodexCache, codexRequestData, fetchCodexUsage, mapCodexRateLimits, rateLimitsResponseSchema,
+  APPROVED_CODEX_SIGNER_SUBJECTS, AUTHENTICODE_SCRIPT, CODEX_ARGUMENTS, CODEX_OUTBOUND_METHODS, CodexProcessManager,
+  clearCodexCache, codexCandidatePaths, codexRequestData, fetchCodexUsage, mapCodexRateLimits, rateLimitsResponseSchema,
   reverifyCodexExecutable, runCodexRPC, verifyCodexExecutable, type SpawnedProcess
 } from '../src/main/codex'
 import type { CodexDiagnostic, CodexExecutableIdentity } from '../src/shared/contracts'
@@ -100,11 +102,56 @@ describe('Codex RPC and mapper', () => {
   })
 })
 
+describe('Codex executable discovery', () => {
+  it('enumerates versioned bin directories and prefers the newest codex.exe', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'token-health-codex-'))
+    try {
+      const local = join(root, 'LocalAppData')
+      const bin = join(local, 'OpenAI', 'Codex', 'bin')
+      const older = join(bin, '111aaa')
+      const newer = join(bin, '222bbb')
+      const withoutExe = join(bin, 'not-a-version')
+      await mkdir(older, { recursive: true })
+      await mkdir(newer, { recursive: true })
+      await mkdir(withoutExe, { recursive: true })
+      const olderExe = join(older, 'codex.exe')
+      const newerExe = join(newer, 'codex.exe')
+      await writeFile(olderExe, 'x')
+      await writeFile(newerExe, 'x')
+      await writeFile(join(withoutExe, 'codex-command-runner.exe'), 'x')
+      await utimes(olderExe, new Date(1_000), new Date(1_000))
+      await utimes(newerExe, new Date(2_000), new Date(2_000))
+
+      const candidates = await codexCandidatePaths({ LOCALAPPDATA: local } as NodeJS.ProcessEnv)
+      expect(candidates).toEqual([resolve(newerExe), resolve(olderExe)])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns no candidates when the official bin directory is absent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'token-health-codex-'))
+    try {
+      await expect(codexCandidatePaths({ LOCALAPPDATA: join(root, 'LocalAppData') } as NodeJS.ProcessEnv)).resolves.toEqual([])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('Codex Authenticode and identity policy', () => {
-  it('ships an exact reviewed official signer subject', () => {
+  it('ships the exact reviewed official signer subject (RFC 2253)', () => {
     expect([...APPROVED_CODEX_SIGNER_SUBJECTS]).toEqual([
-      'CN=OpenAI OpCo, LLC, O=OpenAI OpCo, LLC, L=San Francisco, S=California, C=US'
+      'CN="OpenAI OpCo, LLC", O="OpenAI OpCo, LLC", L=San Francisco, S=California, C=US'
     ])
+  })
+
+  it('wraps the signature script in & { } so the exe path binds to $args', () => {
+    // `-Command <script> <path>` only passes the path into $args when the script is a call to a
+    // script block. A bare script would see $args[0] as empty and the check would fail.
+    expect(AUTHENTICODE_SCRIPT).toMatch(/^& \{/)
+    expect(AUTHENTICODE_SCRIPT).toContain('$args[0]')
+    expect(AUTHENTICODE_SCRIPT).toContain('Get-AuthenticodeSignature')
   })
 
   it('diagnoses an unapproved signer and binds trusted verification to identity', async () => {

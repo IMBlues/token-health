@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { access, stat } from 'node:fs/promises'
+import { access, readdir, stat } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { z } from 'zod'
@@ -15,10 +15,11 @@ export const CODEX_MAX_OUTPUT_BYTES = 2_097_152
 export const CODEX_TIMEOUT_MS = 30_000
 export const CODEX_CACHE_MS = 60_000
 
-// Exact leaf subject observed on official openai/codex Windows release executables.
+// Exact leaf signer subject (RFC 2253, as returned by PowerShell X509Certificate2.Subject)
+// verified on the official OpenAI.Codex MSIX (codex-cli 0.144.5) on 2026-07-16.
 // Keep exact matching and Authenticode Status=Valid; never use substring/wildcard matching.
 export const APPROVED_CODEX_SIGNER_SUBJECTS = new Set<string>([
-  'CN=OpenAI OpCo, LLC, O=OpenAI OpCo, LLC, L=San Francisco, S=California, C=US'
+  'CN="OpenAI OpCo, LLC", O="OpenAI OpCo, LLC", L=San Francisco, S=California, C=US'
 ])
 
 const strictInteger = z.union([z.number(), z.string()]).transform((value, context) => {
@@ -257,27 +258,53 @@ export async function runCodexRPC(executable: string, options: {
   })
 }
 
-export function codexCandidatePaths(environment: NodeJS.ProcessEnv = process.env): string[] {
-  const local = environment.LOCALAPPDATA
-  const programFiles = environment.ProgramFiles
-  return [
-    ...(local ? [
-      join(local, 'Programs', 'ChatGPT', 'resources', 'codex.exe'),
-      join(local, 'Programs', 'Codex', 'resources', 'codex.exe'),
-      join(local, 'OpenAI', 'ChatGPT', 'resources', 'codex.exe'),
-      join(local, 'OpenAI', 'Codex', 'resources', 'codex.exe')
-    ] : []),
-    ...(programFiles ? [
-      join(programFiles, 'OpenAI', 'ChatGPT', 'resources', 'codex.exe'),
-      join(programFiles, 'OpenAI', 'Codex', 'resources', 'codex.exe')
-    ] : [])
-  ].map((path) => resolve(path))
+// Official desktop install layout, verified on the OpenAI.Codex MSIX (codex-cli 0.144.5):
+//   %LOCALAPPDATA%\OpenAI\Codex\bin\<version-hash>\codex.exe
+// Each update creates a new <version-hash> directory, so enumerate them and prefer the newest.
+async function enumerateVersionedCodexBin(binRoot: string): Promise<string[]> {
+  let entries
+  try {
+    entries = await readdir(binRoot, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const candidates: { path: string; mtimeMs: number }[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const executable = join(binRoot, entry.name, 'codex.exe')
+    try {
+      const info = await stat(executable)
+      if (info.isFile()) candidates.push({ path: executable, mtimeMs: info.mtimeMs })
+    } catch {
+      continue
+    }
+  }
+  candidates.sort((left, right) => right.mtimeMs - left.mtimeMs)
+  return candidates.map((candidate) => resolve(candidate.path))
 }
 
-const AUTHENTICODE_SCRIPT = [
-  "$ErrorActionPreference='Stop'",
-  '$signature=Get-AuthenticodeSignature -LiteralPath $args[0]',
-  '[pscustomobject]@{Status=$signature.Status.ToString();SignerSubject=if($signature.SignerCertificate){$signature.SignerCertificate.Subject}else{$null}} | ConvertTo-Json -Compress'
+export async function codexCandidatePaths(environment: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+  const candidates: string[] = []
+  const local = environment.LOCALAPPDATA
+  if (local) {
+    candidates.push(...await enumerateVersionedCodexBin(join(local, 'OpenAI', 'Codex', 'bin')))
+  }
+  return candidates
+}
+
+// The path is passed as a trailing argument, so the script must be wrapped in `& { ... }`
+// for PowerShell -Command to bind it into the script block's $args.
+export const AUTHENTICODE_SCRIPT = [
+  '& {',
+  "  $ErrorActionPreference='Stop'",
+  '  $signature=Get-AuthenticodeSignature -LiteralPath $args[0]',
+  '  [pscustomobject]@{',
+  '    Status=$signature.Status.ToString()',
+  '    SignerSubject=if($signature.SignerCertificate){$signature.SignerCertificate.Subject}else{$null}',
+  '    SignerThumbprint=if($signature.SignerCertificate){$signature.SignerCertificate.Thumbprint}else{$null}',
+  '    SignerIssuer=if($signature.SignerCertificate){$signature.SignerCertificate.Issuer}else{$null}',
+  '  } | ConvertTo-Json -Compress',
+  '}'
 ].join(';')
 
 function hashFile(path: string): Promise<string> {
@@ -318,14 +345,24 @@ export async function verifyCodexExecutable(path: string, options: {
     const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'AllSigned', '-Command', AUTHENTICODE_SCRIPT, path]
     const output = options.runPowerShell ? await options.runPowerShell(powershell, args) : await captureProcess(powershell, args)
-    const result = z.object({ Status: z.string(), SignerSubject: z.string().nullable() }).parse(JSON.parse(output))
-    if (result.Status !== 'Valid') return { path, status: 'invalid-signature', signatureStatus: result.Status, signerSubject: result.SignerSubject ?? undefined, message: `Authenticode status is ${result.Status}` }
+    const result = z.object({
+      Status: z.string(),
+      SignerSubject: z.string().nullable(),
+      SignerThumbprint: z.string().nullable().optional(),
+      SignerIssuer: z.string().nullable().optional()
+    }).parse(JSON.parse(output))
+    const signer = {
+      signatureStatus: result.Status,
+      signerSubject: result.SignerSubject ?? undefined,
+      signerThumbprint: result.SignerThumbprint ?? undefined
+    }
+    if (result.Status !== 'Valid') return { path, status: 'invalid-signature', ...signer, message: `Authenticode status is ${result.Status}` }
     const approved = options.signerAllowlist ?? APPROVED_CODEX_SIGNER_SUBJECTS
     if (!result.SignerSubject || !approved.has(result.SignerSubject)) {
-      return { path, status: 'unapproved-signer', signatureStatus: result.Status, signerSubject: result.SignerSubject ?? undefined, message: 'Signature is valid, but signer is not yet approved by Token Health' }
+      return { path, status: 'unapproved-signer', ...signer, message: 'Signature is valid, but signer is not yet approved by Token Health' }
     }
     const identity = await (options.identity ?? codexExecutableIdentity)(path)
-    return { path, status: 'trusted', signatureStatus: result.Status, signerSubject: result.SignerSubject, identity, message: 'Official signer and executable identity approved' }
+    return { path, status: 'trusted', ...signer, identity, message: 'Official signer and executable identity approved' }
   } catch (error) {
     return { path, status: 'error', message: error instanceof Error ? error.message : 'Authenticode verification failed' }
   }
@@ -367,7 +404,7 @@ function captureProcess(executable: string, args: string[]): Promise<string> {
 }
 
 export async function discoverCodex(manualPath?: string): Promise<CodexDiagnostic> {
-  const candidates = manualPath ? [manualPath] : codexCandidatePaths()
+  const candidates = manualPath ? [manualPath] : await codexCandidatePaths()
   let lastDiagnostic: CodexDiagnostic | undefined
   for (const candidate of candidates) {
     try {
@@ -380,7 +417,7 @@ export async function discoverCodex(manualPath?: string): Promise<CodexDiagnosti
     if (diagnostic.status === 'trusted') return diagnostic
     lastDiagnostic = diagnostic
   }
-  return lastDiagnostic ?? { status: 'not-found', message: 'No Codex executable was found in the conservative official path set' }
+  return lastDiagnostic ?? { status: 'not-found', message: 'No Codex executable was found under %LOCALAPPDATA%\\OpenAI\\Codex\\bin' }
 }
 
 export async function reverifyCodexExecutable(diagnostic: CodexDiagnostic): Promise<CodexDiagnostic> {

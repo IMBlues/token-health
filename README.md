@@ -97,12 +97,14 @@ npm run build:installer
 
 当前实现和纯测试可在 macOS 验证，但**不宣称已经在 Windows 实机验证**。Windows 安装器目前未做生产代码签名，下载或启动时可能出现 Microsoft Defender SmartScreen 警告。
 
-Codex 的安全策略要求 Authenticode `Status=Valid`，并对 signer subject 做精确 allowlist。签名通过后记录 SHA-256 与 size/mtime/ctime identity，在 spawn 前立即重新检查 Authenticode 和 identity；自动路径与手工路径使用同一策略。该双检显著缩小 TOCTOU 窗口，但无法完全消除 Windows 路径替换竞争；完全绑定验证对象与启动对象需要额外的 Win32 file handle/helper，MVP 暂接受 fail-closed 双检并把实机竞争测试列为后续加固项。0.1.0 的 exact allowlist 来自 2026-07-16 对 OpenAI 官方 GitHub `openai/codex` Windows x64 release（复核 `rust-v0.104.0` 与当日 latest `rust-v0.144.5`）内嵌签名证书的核验；不使用模糊或子串匹配。Windows 实机仍应确认 PowerShell 返回的 subject 格式及执行行为：
+Codex 的安全策略要求 Authenticode `Status=Valid`，并对 signer subject 做精确 allowlist。签名通过后记录 SHA-256 与 size/mtime/ctime identity，在 spawn 前立即重新检查 Authenticode 和 identity；自动路径与手工路径使用同一策略。该双检显著缩小 TOCTOU 窗口，但无法完全消除 Windows 路径替换竞争；完全绑定验证对象与启动对象需要额外的 Win32 file handle/helper，MVP 暂接受 fail-closed 双检并把实机竞争测试列为后续加固项。0.1.0 的 exact allowlist 已在实机核验：官方 `OpenAI.Codex` MSIX(`codex-cli 0.144.5`）的 `codex.exe` Authenticode 状态为 `Valid`,subject(RFC 2253，含引号）为 `CN="OpenAI OpCo, LLC", O="OpenAI OpCo, LLC", L=San Francisco, S=California, C=US`，颁发者为 `CN=Microsoft ID Verified CS EOC CA 04, O=Microsoft Corporation, C=US`；不使用模糊或子串匹配。
+
+Windows 桌面版把 `codex.exe` 放在版本化目录 `%LOCALAPPDATA%\OpenAI\Codex\bin\<版本哈希>\codex.exe`，每次升级会新建一个哈希目录。客户端会枚举该 `bin` 目录下含 `codex.exe` 的子目录并优先最新版本，不搜索 `PATH`，也不误选同目录下的 `codex-command-runner.exe` 等辅助程序。实机验收请确认：
 
 1. 在干净的 Windows 10 22H2 或 Windows 11 x64 上安装 OpenAI 官方 Codex 并登录。
 2. 从 Actions 下载安装器和 `.sha256`，运行 `Get-FileHash -Algorithm SHA256` 对照校验后安装。
-3. 打开 Settings，添加 Codex；如未自动发现，点 `Select official codex.exe` 选择官方安装目录内文件。
-4. 记录 UI 中完整的 `Authenticode` 状态、`Signer subject` 和 exe 路径（可同时运行 `Get-AuthenticodeSignature -LiteralPath '<path>' | Format-List Status,SignerCertificate` 交叉核验）。
+3. 打开 Settings，添加 Codex，应能自动发现上述 `bin\<版本哈希>\codex.exe`；如未自动发现，点 `Select official codex.exe` 选择该文件。
+4. 核对 UI 中 `Authenticode` 状态、`Signer subject` 和 `Signer fingerprint`（可用 `Get-AuthenticodeSignature -LiteralPath '<path>' | Format-List Status,SignerCertificate` 交叉核验）。
 5. 如 subject 或行为与当前策略不一致，将完整结果反馈给维护者，先审核并精确更新 `windows/src/main/codex.ts` 的 `APPROVED_CODEX_SIGNER_SUBJECTS`，不可降级执行；随后验证额度、60 秒缓存、自动刷新、tray、开机启动、close-to-tray 和卸载流程。
 
 Windows 手工验收还应覆盖 Generic HTTPS/HTTP、Bearer 保存后重启、DPAPI 正常与不可用诊断、重定向、超限响应、单实例、左/右键 tray 菜单，以及 Windows 10/11 各一台 x64 环境。

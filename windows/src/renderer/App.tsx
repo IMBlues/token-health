@@ -124,6 +124,7 @@ function CodexSettings({ state, update, reportError }: { state: AppState; update
     {diagnostic?.path && <code>{diagnostic.path}</code>}
     {diagnostic?.signatureStatus && <p>Authenticode: {diagnostic.signatureStatus}</p>}
     {diagnostic?.signerSubject && <><p>Signer subject (copy this for policy review):</p><code>{diagnostic.signerSubject}</code></>}
+    {diagnostic?.signerThumbprint && <p>Signer fingerprint: <code>{diagnostic.signerThumbprint}</code></p>}
     <button onClick={() => {
       reportError('')
       void window.tokenHealth.selectCodexExecutable().then(update).catch((reason) => reportError(errorMessage(reason, 'Codex selection failed')))
