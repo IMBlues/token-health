@@ -146,12 +146,13 @@ describe('Codex Authenticode and identity policy', () => {
     ])
   })
 
-  it('wraps the signature script in & { } so the exe path binds to $args', () => {
-    // `-Command <script> <path>` only passes the path into $args when the script is a call to a
-    // script block. A bare script would see $args[0] as empty and the check would fail.
-    expect(AUTHENTICODE_SCRIPT).toMatch(/^& \{/)
-    expect(AUTHENTICODE_SCRIPT).toContain('$args[0]')
+  it('passes the exe path via environment variable, not fragile -Command args', () => {
+    // Windows PowerShell 5.1 binds `-Command <script> <path>` arguments into $args unreliably,
+    // so the path is supplied via an environment variable and the script reads it directly.
+    expect(AUTHENTICODE_SCRIPT).toContain('$env:TOKEN_HEALTH_CODEXE')
     expect(AUTHENTICODE_SCRIPT).toContain('Get-AuthenticodeSignature')
+    expect(AUTHENTICODE_SCRIPT).toContain('ConvertTo-Json')
+    expect(AUTHENTICODE_SCRIPT).not.toContain('$args')
   })
 
   it('diagnoses an unapproved signer and binds trusted verification to identity', async () => {

@@ -292,18 +292,21 @@ export async function codexCandidatePaths(environment: NodeJS.ProcessEnv = proce
   return candidates
 }
 
-// The path is passed as a trailing argument, so the script must be wrapped in `& { ... }`
-// for PowerShell -Command to bind it into the script block's $args.
+// The executable path is passed via the TOKEN_HEALTH_CODEXE environment variable rather than
+// as a -Command argument, because argument binding into $args is unreliable on Windows
+// PowerShell 5.1. stderr is captured by captureProcess so the real failure is surfaced.
 export const AUTHENTICODE_SCRIPT = [
-  '& {',
-  "  $ErrorActionPreference='Stop'",
-  '  $signature=Get-AuthenticodeSignature -LiteralPath $args[0]',
-  '  [pscustomobject]@{',
-  '    Status=$signature.Status.ToString()',
-  '    SignerSubject=if($signature.SignerCertificate){$signature.SignerCertificate.Subject}else{$null}',
-  '    SignerThumbprint=if($signature.SignerCertificate){$signature.SignerCertificate.Thumbprint}else{$null}',
-  '    SignerIssuer=if($signature.SignerCertificate){$signature.SignerCertificate.Issuer}else{$null}',
-  '  } | ConvertTo-Json -Compress',
+  '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+  "$ErrorActionPreference='Stop'",
+  'try {',
+  '  $signature = Get-AuthenticodeSignature -LiteralPath $env:TOKEN_HEALTH_CODEXE',
+  '  $cert = $signature.SignerCertificate',
+  '  $result = [pscustomobject]@{ Status = $signature.Status.ToString(); SignerSubject = $null; SignerThumbprint = $null; SignerIssuer = $null }',
+  '  if ($cert) { $result.SignerSubject = $cert.Subject; $result.SignerThumbprint = $cert.Thumbprint; $result.SignerIssuer = $cert.Issuer }',
+  '  $result | ConvertTo-Json -Compress',
+  '} catch {',
+  '  Write-Error $_',
+  '  exit 1',
   '}'
 ].join(';')
 
@@ -335,7 +338,7 @@ function sameIdentity(left: CodexExecutableIdentity, right: CodexExecutableIdent
 export async function verifyCodexExecutable(path: string, options: {
   platform?: NodeJS.Platform
   signerAllowlist?: ReadonlySet<string>
-  runPowerShell?: (executable: string, args: string[]) => Promise<string>
+  runPowerShell?: (executable: string, args: string[], env?: NodeJS.ProcessEnv) => Promise<string>
   identity?: (path: string) => Promise<CodexExecutableIdentity>
 } = {}): Promise<CodexDiagnostic> {
   const platform = options.platform ?? process.platform
@@ -343,8 +346,9 @@ export async function verifyCodexExecutable(path: string, options: {
   try {
     await access(path, fsConstants.X_OK)
     const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-    const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'AllSigned', '-Command', AUTHENTICODE_SCRIPT, path]
-    const output = options.runPowerShell ? await options.runPowerShell(powershell, args) : await captureProcess(powershell, args)
+    const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', AUTHENTICODE_SCRIPT]
+    const env = { ...process.env, TOKEN_HEALTH_CODEXE: path }
+    const output = options.runPowerShell ? await options.runPowerShell(powershell, args, env) : await captureProcess(powershell, args, env)
     const result = z.object({
       Status: z.string(),
       SignerSubject: z.string().nullable(),
@@ -368,10 +372,11 @@ export async function verifyCodexExecutable(path: string, options: {
   }
 }
 
-function captureProcess(executable: string, args: string[]): Promise<string> {
+function captureProcess(executable: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(executable, args, { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+    const child = spawn(executable, args, { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env })
     const chunks: Buffer[] = []
+    const errChunks: Buffer[] = []
     let total = 0
     let exceeded = false
     let settled = false
@@ -394,11 +399,15 @@ function captureProcess(executable: string, args: string[]): Promise<string> {
         child.kill()
       }
     })
-    child.once('error', () => finish(new Error('PowerShell signature check failed')))
+    child.stderr.on('data', (chunk: Buffer) => {
+      if (Buffer.concat(errChunks).byteLength <= 64 * 1024) errChunks.push(chunk)
+    })
+    child.once('error', () => finish(new Error('PowerShell could not be started')))
     child.once('exit', (code) => {
+      const detail = Buffer.concat(errChunks).toString('utf8').trim()
       if (exceeded) finish(new Error('PowerShell signature output exceeded the safety limit'))
       else if (code === 0) finish(undefined, Buffer.concat(chunks).toString('utf8'))
-      else finish(new Error('PowerShell signature check failed'))
+      else finish(new Error(detail ? `PowerShell signature check failed: ${detail}` : `PowerShell signature check failed (exit code ${code ?? 'unknown'})`))
     })
   })
 }
