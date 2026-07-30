@@ -23,7 +23,9 @@ struct ProviderFactory {
             VolcengineArkUsageProvider()
         case .codex:
             CodexUsageProvider()
-        case .openAI, .anthropic, .cursor:
+        case .cursor:
+            CursorUsageProvider()
+        case .openAI, .anthropic:
             switch config.authMode {
             case .api:
                 KnownServiceAPIProvider()

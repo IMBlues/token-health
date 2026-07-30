@@ -50,7 +50,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
     }
 
     var usesLocalLogin: Bool {
-        self == .codex
+        self == .cursor || self == .codex
     }
 }
 

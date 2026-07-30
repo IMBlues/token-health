@@ -1,6 +1,6 @@
 # Token Health
 
-> macOS 菜单栏里的 AI Token 余额仪表盘，先照顾 Codex / Kimi Code / Zhipu Coding / MiniMax / Volcengine Ark 这类有滚动额度的 Coding 套餐。
+> macOS 菜单栏里的 AI Token 余额仪表盘，先照顾 Codex / Cursor / Kimi Code / Zhipu Coding / MiniMax / Volcengine Ark 这类 Coding 套餐。
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
 ![Swift 6](https://img.shields.io/badge/Swift-6.0-orange)
@@ -17,6 +17,7 @@ Token Health 是一个原生 SwiftUI 菜单栏 App，用来把 AI Coding 服务�
 | Provider | 状态 | 能看到什么 | 认证方式 |
 | --- | --- | --- | --- |
 | Codex | 可用 | ChatGPT Codex 账号的短周期、周额度、重置倒计时和独立模型额度桶 | 复用本机 Codex 登录，仅通过官方 App Server 读取额度 |
+| Cursor | 可用 | 当前月度账期的 Auto + Composer、API 两个独立用量池和重置时间 | 只读复用本机 Cursor 登录，通过 Cursor 官方接口读取额度 |
 | Kimi Code | 可用 | 5 小时窗口、周额度、重置倒计时 | Kimi Console Web 登录导入会话，或手动填 Bearer/Cookie |
 | Zhipu Coding | 可用 | 5 小时窗口、周额度、MCP 月调用数、近 7 天 token/tool 明细 | BigModel Web 登录导入会话 |
 | DeepSeek | 可用 | 余额、今日费用、今日 token / 请求明细 | DeepSeek Platform Web 登录导入会话；API key 模式可读官方余额 |
@@ -24,12 +25,12 @@ Token Health 是一个原生 SwiftUI 菜单栏 App，用来把 AI Coding 服务�
 | Volcengine Ark | 可用 | Agent Plan 的 5 小时、周、月 AFP 用量和重置时间 | 火山方舟控制台 Web 登录导入会话 |
 | Generic HTTP | 可用 | 5 小时窗口、周额度、Token 总额度 | 自定义 JSON endpoint，可选 Bearer token |
 | Demo | 可用 | 假数据，用来验证 UI | 无需凭证 |
-| OpenAI API / Anthropic / Cursor | 占位 | 仅在你自己提供兼容 Generic HTTP 的 usage endpoint 时可用 | API endpoint + key |
+| OpenAI API / Anthropic | 占位 | 仅在你自己提供兼容 Generic HTTP 的 usage endpoint 时可用 | API endpoint + key |
 
 ## 暂不支持
 
 - Windows / Linux / iOS，当前只支持 macOS 14+。
-- OpenAI Platform API、Anthropic、Cursor 的官方用量接口适配器还没接上；Codex 的 ChatGPT 套餐额度已单独支持。
+- OpenAI Platform API、Anthropic 的官方用量接口适配器还没接上；Codex 的 ChatGPT 套餐额度已单独支持。
 - 除 Kimi Code / Zhipu Coding / DeepSeek / MiniMax / Volcengine Ark 外，没有通用网页自动登录采集器。
 - 多设备同步、云端存储、团队共享面板。
 - 自动更新、正式签名和 Apple 公证发布包。
@@ -73,6 +74,15 @@ bash scripts/build-dmg.sh
 - 自动刷新沿用全局 15 分钟间隔；一分钟内的重复 Codex 刷新复用最近结果或错误，不会连续启动额度查询。
 - Token Health 不读取、复制或保存 Codex 登录凭证；凭证加载与必要的会话刷新仍由 Codex 自己管理。
 - OpenAI API key 的按量计费与 ChatGPT Codex 套餐额度是两套体系，不会混在这个 Provider 中。
+
+### Cursor
+
+添加计划后选择 `Cursor`：
+
+- 需要本机已经安装并登录 Cursor。Token Health 会从 Cursor 本地 `state.vscdb` 只读获取当前 access token，不复制到自己的 Keychain，也不会读取编辑器历史、项目或聊天内容。
+- 每次刷新只请求 Cursor 官方 `https://api2.cursor.sh/auth/usage-summary` 接口，展示当前月度账期的 `Auto + Composer` 与 `API` 两个独立用量池。
+- 两个用量池共用接口返回的账期结束时间；Cursor 的本地会话过期后，在 Cursor 中重新登录即可。
+- 该用量接口和 Cursor 本地登录存储都不是公开稳定 API，适配器属于 best effort。
 
 ### Kimi Code
 
@@ -167,6 +177,7 @@ Provider 凭据和 Hook token 会合并保存在一个 macOS Keychain vault 中�
 - Token Health 没有自己的后端服务。
 - 请求只会发往对应 Provider 官方接口、你在 Generic HTTP 中配置的 endpoint，或你显式启用的用量上报 Hook。
 - Codex Provider 通过本机官方 App Server 的私有 stdio 通道发送初始化与额度读取 RPC，并显式关闭该子进程的插件、Apps 和 analytics 功能；Codex 自身仍负责会话加载和必要刷新。
+- Cursor Provider 只读查询本机 Cursor 的登录数据库，并仅把当前 access token 发回 Cursor 官方用量接口；Token Health 不保存该 token。
 - API key、Cookie、Web session 等凭证存放在 macOS Keychain。
 - Codex App Server 协议以及其他 Provider 的上游网页和内部接口都可能演进；这些适配器属于 best effort，失效时欢迎提 issue 或 PR。
 
@@ -181,6 +192,7 @@ swift run TokenHealth
 
 - `StatusMenuView.swift`：菜单栏面板 UI。
 - `SettingsView.swift`：Provider 配置 UI。
+- `CursorUsageProvider.swift`：本机 Cursor 登录态读取、月度双用量池映射和官方接口请求。
 - `Providers.swift`：各 Provider 拉取和解析逻辑。
 - `UsageReporter.swift`：可配置用量上报 Hook、payload 映射和 HTTP 请求。
 - `ConfigStore.swift` / `KeychainStore.swift`：本地配置和凭证存储。

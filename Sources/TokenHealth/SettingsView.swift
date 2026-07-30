@@ -135,9 +135,9 @@ struct SettingsView: View {
 
                 Section {
                     if binding.wrappedValue.providerKind.usesLocalLogin {
-                        LabeledContent("Source", value: "Official Codex app")
-                        LabeledContent("Access", value: "Quota only")
-                        LabeledContent("Status", value: codexStatusText(for: binding.wrappedValue))
+                        LabeledContent("Source", value: localLoginSource(for: binding.wrappedValue.providerKind))
+                        LabeledContent("Access", value: localLoginAccess(for: binding.wrappedValue.providerKind))
+                        LabeledContent("Status", value: localLoginStatusText(for: binding.wrappedValue))
                     } else if usesManagedWebLogin(binding.wrappedValue) {
                         Text(apiKeyStoredValue ? "\(binding.wrappedValue.providerKind.title) web session stored locally" : "\(binding.wrappedValue.providerKind.title) web session not connected")
                             .font(.caption)
@@ -494,14 +494,30 @@ struct SettingsView: View {
         config.providerKind.usesWebSession || (config.providerKind.supportsWebLogin && config.authMode == .browserLogin)
     }
 
-    private func codexStatusText(for config: ServiceConfig) -> String {
+    private func localLoginStatusText(for config: ServiceConfig) -> String {
         if appState.isRefreshing {
             return "Refreshing"
         }
-        guard let snapshot = appState.snapshots[config.id], snapshot.providerTitle == ProviderKind.codex.title else {
+        guard let snapshot = appState.snapshots[config.id],
+              snapshot.providerTitle == config.providerKind.title else {
             return "Waiting for refresh"
         }
         return snapshot.statusMessage
+    }
+
+    private func localLoginSource(for provider: ProviderKind) -> String {
+        switch provider {
+        case .cursor:
+            "Official Cursor app"
+        case .codex:
+            "Official Codex app"
+        case .openAI, .anthropic, .kimiCode, .zhipuCode, .deepSeek, .miniMax, .volcengineArk, .genericHTTP, .demo:
+            provider.title
+        }
+    }
+
+    private func localLoginAccess(for provider: ProviderKind) -> String {
+        provider == .cursor ? "Monthly quota" : "Quota only"
     }
 
     private func iconName(for provider: ProviderKind) -> String {

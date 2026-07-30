@@ -73,14 +73,35 @@ struct StatusMenuView: View {
     }
 
     private var summaryText: String {
-        guard !appState.configs.isEmpty else {
+        StatusMenuSummary.text(
+            configs: appState.configs,
+            snapshots: appState.snapshots,
+            isRefreshing: appState.isRefreshing
+        )
+    }
+}
+
+enum StatusMenuSummary {
+    static func text(
+        configs: [ServiceConfig],
+        snapshots: [UUID: ProviderUsageSnapshot],
+        isRefreshing: Bool
+    ) -> String {
+        guard !configs.isEmpty else {
             return "No plans"
         }
-        if appState.isRefreshing {
+        if isRefreshing {
             return "Refreshing"
         }
-        let ready = appState.snapshots.values.filter { $0.state == .ready }.count
-        return "\(ready)/\(appState.configs.filter(\.isEnabled).count) updated"
+
+        let enabledConfigs = configs.filter(\.isEnabled)
+        guard !enabledConfigs.isEmpty else {
+            return "No enabled plans"
+        }
+        let ready = enabledConfigs.filter { config in
+            snapshots[config.id]?.state == .ready
+        }.count
+        return "\(ready)/\(enabledConfigs.count) updated"
     }
 }
 
@@ -201,7 +222,9 @@ private struct UsageCard: View {
                     ForEach(usages) { usage in
                         CompactUsageMetric(
                             usage: usage,
-                            labelOverride: config.providerKind == .codex ? usage.label : nil,
+                            labelOverride: config.providerKind == .codex || config.providerKind == .cursor
+                                ? usage.label
+                                : nil,
                             isSensitiveAmount: isSensitiveAmount(usage),
                             revealsSensitiveAmount: $revealsSensitiveAmounts
                         )
@@ -296,6 +319,14 @@ private struct UsageCard: View {
                 return Array(accountQuota.prefix(2))
             }
         }
+        if config.providerKind == .cursor {
+            let monthlyPools = usages
+                .filter { $0.window == .month }
+                .sorted(by: usageSort)
+            if !monthlyPools.isEmpty {
+                return Array(monthlyPools.prefix(2))
+            }
+        }
 
         let rollingQuota = usages
             .filter { $0.window == .fiveHours || $0.window == .week }
@@ -328,7 +359,25 @@ private struct UsageCard: View {
         if leftRank != rightRank {
             return leftRank < rightRank
         }
+        if config.providerKind == .cursor, lhs.window == .month, rhs.window == .month {
+            let leftLabelRank = cursorLabelRank(lhs.label)
+            let rightLabelRank = cursorLabelRank(rhs.label)
+            if leftLabelRank != rightLabelRank {
+                return leftLabelRank < rightLabelRank
+            }
+        }
         return (lhs.label ?? lhs.window.title) < (rhs.label ?? rhs.window.title)
+    }
+
+    private func cursorLabelRank(_ label: String?) -> Int {
+        switch label {
+        case "Auto + Composer":
+            0
+        case "API":
+            1
+        default:
+            2
+        }
     }
 
     private func usageRank(_ usage: TokenUsage) -> Int {
