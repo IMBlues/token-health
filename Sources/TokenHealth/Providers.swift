@@ -21,6 +21,8 @@ struct ProviderFactory {
             MiniMaxUsageProvider()
         case .volcengineArk:
             VolcengineArkUsageProvider()
+        case .openCodeGo:
+            OpenCodeGoUsageProvider()
         case .codex:
             CodexUsageProvider()
         case .cursor:

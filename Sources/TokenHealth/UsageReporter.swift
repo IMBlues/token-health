@@ -233,6 +233,7 @@ struct UsageReportBuilder {
         case .deepSeek: "deepseek"
         case .miniMax: "minimax"
         case .volcengineArk: "volcengine-ark"
+        case .openCodeGo: "opencode-go"
         case .genericHTTP: "generic-http"
         case .demo: "demo"
         }

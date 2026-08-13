@@ -12,3 +12,6 @@ dist/*.dmg
 # Python helper cache
 __pycache__/
 *.pyc
+
+# Reasonix agent metadata
+.reasonix/
