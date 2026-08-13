@@ -153,14 +153,29 @@ struct SettingsView: View {
                         }
                         .disabled(isKimiLoginInProgress)
                     } else {
-                        TextField("API endpoint", text: binding.apiEndpoint)
-                        SecureField("API key", text: $apiKey)
+                        if !binding.wrappedValue.providerKind.usesSingleAPIKeyOnly {
+                            TextField("API endpoint", text: binding.apiEndpoint)
+                        }
+                        SecureField(apiKeyStoredValue ? "API key stored" : "API key", text: $apiKey)
+                        if apiKeyStoredValue {
+                            HStack {
+                                LabeledContent("API key", value: "••••••••")
+                                Button {
+                                    clearAPIKey()
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Clear API key")
+                            }
+                        }
                     }
                 }
 
                 if !usesManagedWebLogin(binding.wrappedValue),
                    !binding.wrappedValue.providerKind.usesLocalLogin,
-                   binding.wrappedValue.providerKind != .deepSeek {
+                   binding.wrappedValue.providerKind != .deepSeek,
+                   !binding.wrappedValue.providerKind.usesSingleAPIKeyOnly {
                     Section {
                         TextField("Local usage JSON or folder", text: binding.usageDataPath)
                     }
@@ -438,6 +453,18 @@ struct SettingsView: View {
         loadedSecretID = selectedID
     }
 
+    private func clearAPIKey() {
+        guard let selectedID else {
+            return
+        }
+        let existing = appState.loadSecrets(for: selectedID)
+        if appState.saveSecrets(ProviderSecrets(apiKey: "", password: existing.password), for: selectedID) {
+            apiKey = ""
+            apiKeyStoredValue = false
+            loadedSecretID = selectedID
+        }
+    }
+
     private func startWebLogin(for provider: ProviderKind) {
         guard let selectedID else {
             return
@@ -485,6 +512,8 @@ struct SettingsView: View {
             MiniMaxWebLoginController.shared.startLogin(completion: completion)
         case .volcengineArk:
             VolcengineArkWebLoginController.shared.startLogin(completion: completion)
+        case .openCodeGo:
+            OpenCodeGoWebLoginController.shared.startLogin(completion: completion)
         case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             isKimiLoginInProgress = false
         }
@@ -511,7 +540,7 @@ struct SettingsView: View {
             "Official Cursor app"
         case .codex:
             "Official Codex app"
-        case .openAI, .anthropic, .kimiCode, .zhipuCode, .deepSeek, .miniMax, .volcengineArk, .genericHTTP, .demo:
+        case .openAI, .anthropic, .kimiCode, .zhipuCode, .deepSeek, .miniMax, .volcengineArk, .openCodeGo, .genericHTTP, .demo:
             provider.title
         }
     }
@@ -540,6 +569,8 @@ struct SettingsView: View {
             "m.circle"
         case .volcengineArk:
             "flame"
+        case .openCodeGo:
+            "terminal"
         case .genericHTTP:
             "network"
         case .demo:

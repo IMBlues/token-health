@@ -10,6 +10,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
     case deepSeek
     case miniMax
     case volcengineArk
+    case openCodeGo
     case genericHTTP
     case demo
 
@@ -26,6 +27,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         case .deepSeek: "DeepSeek"
         case .miniMax: "MiniMax"
         case .volcengineArk: "Volcengine Ark"
+        case .openCodeGo: "OpenCode Go"
         case .genericHTTP: "Generic HTTP"
         case .demo: "Demo"
         }
@@ -33,7 +35,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var supportsWebLogin: Bool {
         switch self {
-        case .kimiCode, .zhipuCode, .deepSeek, .miniMax, .volcengineArk:
+        case .kimiCode, .zhipuCode, .deepSeek, .miniMax, .volcengineArk, .openCodeGo:
             true
         case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             false
@@ -44,13 +46,18 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .kimiCode, .zhipuCode, .miniMax, .volcengineArk:
             true
-        case .openAI, .anthropic, .cursor, .codex, .deepSeek, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .codex, .deepSeek, .openCodeGo, .genericHTTP, .demo:
             false
         }
     }
 
     var usesLocalLogin: Bool {
         self == .cursor || self == .codex
+    }
+
+    /// Provider 只用单个 API key（endpoint 内置于适配器），无需 API endpoint / 本地数据 / 账号密码字段。
+    var usesSingleAPIKeyOnly: Bool {
+        self == .openCodeGo
     }
 }
 

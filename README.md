@@ -23,6 +23,7 @@ Token Health 是一个原生 SwiftUI 菜单栏 App，用来把 AI Coding 服务�
 | DeepSeek | 可用 | 余额、今日费用、今日 token / 请求明细 | DeepSeek Platform Web 登录导入会话；API key 模式可读官方余额 |
 | MiniMax | 可用 | Token Plan 的 5 小时限额、周限额、视频赠送次数、积分余额、今日/近 7 天 token 明细 | MiniMax Platform Web 登录导入会话 |
 | Volcengine Ark | 可用 | Agent Plan 的 5 小时、周、月 AFP 用量和重置时间 | 火山方舟控制台 Web 登录导入会话 |
+| OpenCode Go | 可用 | Go 订阅的 5 小时 $12、周 $30、月 $60 美元用量和重置时间 | opencode.ai 控制台 Web 登录导入会话 |
 | Generic HTTP | 可用 | 5 小时窗口、周额度、Token 总额度 | 自定义 JSON endpoint，可选 Bearer token |
 | Demo | 可用 | 假数据，用来验证 UI | 无需凭证 |
 | OpenAI API / Anthropic | 占位 | 仅在你自己提供兼容 Generic HTTP 的 usage endpoint 时可用 | API endpoint + key |
@@ -62,6 +63,12 @@ bash scripts/build-dmg.sh
 ```
 
 生成的 DMG 在 `dist/` 下。当前构建脚本只做本机 ad-hoc codesign，不是正式公证包。
+
+一键构建 DMG 并重装（自动退出旧实例、替换 `/Applications/Token Health.app` 并重新启动）：
+
+```bash
+bash scripts/install-release.sh
+```
 
 ## 配置说明
 
@@ -121,6 +128,17 @@ bash scripts/build-dmg.sh
 
 - 点 `Login with Volcengine Ark`，在火山方舟 Agent Plan 页面完成登录并等用量统计加载，然后导入会话。
 - 会展示 Agent 燃料值（AFP）的近 5 小时、近一周、近一月用量和重置时间。
+
+### OpenCode Go
+
+添加计划后选择 `OpenCode Go`，Auth 可以选两种方式：
+
+- **API**：在 `opencode.ai/auth`（OpenCode Console）订阅 Go 后复制 API key，粘贴到 Settings 的 API key 字段。Token Health 直接调用 `https://opencode.ai/zen/go/v1/usage`（Bearer 认证）读取用量，无需模拟登录。
+- **Login**：点 `Login with OpenCode Go`，在 opencode.ai 控制台（`console.opencode.ai`）用 GitHub 或 Google 完成登录，等控制台加载后导入会话。
+
+两种方式都会展示 OpenCode Go 订阅的 5 小时（$12）、周（$30）、月（$60）三个美元用量窗口和各自的重置时间；未订阅、暂停或取消时显示对应状态。
+
+注意：`/zen/go/v1/usage` 用量接口没有公开文档，适配器属于 best effort。其实际返回 `usage.rolling/weekly/monthly` 的 `percent`（已用百分比）与 `resetsAt`，Token Health 按 Go 官方额度（$12 / $30 / $60）折算成美元展示。
 
 ### Provider 排序
 
