@@ -88,7 +88,7 @@ bash scripts/install-release.sh
 
 - 需要本机已经安装并登录 Cursor。Token Health 会从 Cursor 本地 `state.vscdb` 只读获取当前 access token，不复制到自己的 Keychain，也不会读取编辑器历史、项目或聊天内容。
 - 每次刷新只请求 Cursor 官方 `https://api2.cursor.sh/auth/usage-summary` 接口，展示当前月度账期的 `Auto + Composer`、`API` 与 `Grokbot` 独立用量池。
-- 两个用量池共用接口返回的账期结束时间；Cursor 的本地会话过期后，在 Cursor 中重新登录即可。
+- 用量池共用接口返回的账期结束时间；Cursor 的本地会话过期后，在 Cursor 中重新登录即可。
 - 该用量接口和 Cursor 本地登录存储都不是公开稳定 API，适配器属于 best effort。
 
 ### Kimi Code
