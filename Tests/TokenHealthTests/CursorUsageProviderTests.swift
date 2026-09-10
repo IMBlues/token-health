@@ -39,6 +39,31 @@ struct CursorUsageProviderTests {
     }
 
     @Test
+    func mapsGrokbotPoolAsThirdMonthlyUsage() throws {
+        let response = try CursorTestSupport.decode(
+            """
+            {
+              "membershipType": "pro_plus",
+              "individualUsage": {
+                "plan": {
+                  "autoPercentUsed": 12.5,
+                  "apiPercentUsed": 5.2,
+                  "grokbotPercentUsed": 33.7
+                }
+              }
+            }
+            """
+        )
+
+        let mapped = try CursorUsageMapper.map(response)
+
+        #expect(mapped.usages.count == 3)
+        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API", "Grokbot"])
+        #expect(mapped.usages.map(\.used) == [13, 5, 34])
+        #expect(mapped.usages.map(\.window) == [.month, .month, .month])
+    }
+
+    @Test
     func acceptsFlexiblePercentagesAndFormatsPlanName() throws {
         let response = try CursorTestSupport.decode(
             """

@@ -324,7 +324,7 @@ private struct UsageCard: View {
                 .filter { $0.window == .month }
                 .sorted(by: usageSort)
             if !monthlyPools.isEmpty {
-                return Array(monthlyPools.prefix(2))
+                return Array(monthlyPools.prefix(3))
             }
         }
 
@@ -375,8 +375,10 @@ private struct UsageCard: View {
             0
         case "API":
             1
-        default:
+        case "Grokbot":
             2
+        default:
+            3
         }
     }
 

@@ -167,12 +167,16 @@ struct CursorUsagePlan: Decodable, Sendable {
     let autoPercentUsed: Double?
     let apiPercentUsed: Double?
     let totalPercentUsed: Double?
+    let grokbotPercentUsed: Double?
+    let grokPercentUsed: Double?
 
     private enum CodingKeys: String, CodingKey {
         case enabled
         case autoPercentUsed
         case apiPercentUsed
         case totalPercentUsed
+        case grokbotPercentUsed
+        case grokPercentUsed
     }
 
     init(from decoder: Decoder) throws {
@@ -181,6 +185,8 @@ struct CursorUsagePlan: Decodable, Sendable {
         autoPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .autoPercentUsed)
         apiPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .apiPercentUsed)
         totalPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .totalPercentUsed)
+        grokbotPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .grokbotPercentUsed)
+        grokPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .grokPercentUsed)
     }
 }
 
@@ -211,6 +217,15 @@ enum CursorUsageMapper {
                 monthlyUsage(
                     label: "API",
                     percentage: apiPercentUsed,
+                    resetDate: resetDate
+                )
+            )
+        }
+        if let grokbotPercentUsed = plan.grokbotPercentUsed ?? plan.grokPercentUsed {
+            usages.append(
+                monthlyUsage(
+                    label: "Grokbot",
+                    percentage: grokbotPercentUsed,
                     resetDate: resetDate
                 )
             )

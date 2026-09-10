@@ -17,7 +17,7 @@ Token Health 是一个原生 SwiftUI 菜单栏 App，用来把 AI Coding 服务�
 | Provider | 状态 | 能看到什么 | 认证方式 |
 | --- | --- | --- | --- |
 | Codex | 可用 | ChatGPT Codex 账号的短周期、周额度、重置倒计时和独立模型额度桶 | 复用本机 Codex 登录，仅通过官方 App Server 读取额度 |
-| Cursor | 可用 | 当前月度账期的 Auto + Composer、API 两个独立用量池和重置时间 | 只读复用本机 Cursor 登录，通过 Cursor 官方接口读取额度 |
+| Cursor | 可用 | 当前月度账期的 Auto + Composer、API 与 Grokbot 三个独立用量池和重置时间 | 只读复用本机 Cursor 登录，通过 Cursor 官方接口读取额度 |
 | Kimi Code | 可用 | 5 小时窗口、周额度、重置倒计时 | Kimi Console Web 登录导入会话，或手动填 Bearer/Cookie |
 | Zhipu Coding | 可用 | 5 小时窗口、周额度、MCP 月调用数、近 7 天 token/tool 明细 | BigModel Web 登录导入会话 |
 | DeepSeek | 可用 | 余额、今日费用、今日 token / 请求明细 | DeepSeek Platform Web 登录导入会话；API key 模式可读官方余额 |
@@ -87,7 +87,7 @@ bash scripts/install-release.sh
 添加计划后选择 `Cursor`：
 
 - 需要本机已经安装并登录 Cursor。Token Health 会从 Cursor 本地 `state.vscdb` 只读获取当前 access token，不复制到自己的 Keychain，也不会读取编辑器历史、项目或聊天内容。
-- 每次刷新只请求 Cursor 官方 `https://api2.cursor.sh/auth/usage-summary` 接口，展示当前月度账期的 `Auto + Composer` 与 `API` 两个独立用量池。
+- 每次刷新只请求 Cursor 官方 `https://api2.cursor.sh/auth/usage-summary` 接口，展示当前月度账期的 `Auto + Composer`、`API` 与 `Grokbot` 独立用量池。
 - 两个用量池共用接口返回的账期结束时间；Cursor 的本地会话过期后，在 Cursor 中重新登录即可。
 - 该用量接口和 Cursor 本地登录存储都不是公开稳定 API，适配器属于 best effort。
 
