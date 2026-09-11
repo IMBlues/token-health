@@ -1,6 +1,8 @@
 # Token Health
 
-> macOS 菜单栏里的 AI Token 余额仪表盘，先照顾 Codex / Cursor / Kimi Code / Zhipu Coding / MiniMax / Volcengine Ark 这类 Coding 套餐。
+> **你的 AI 额度，抬眼就懂。**
+>
+> 原生 macOS 菜单栏仪表盘，给正在写代码的人。
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
 ![Swift 6](https://img.shields.io/badge/Swift-6.0-orange)
@@ -10,36 +12,30 @@
   <img src="docs/images/token-health-menu.png" alt="Token Health menu bar screenshot" width="420">
 </p>
 
-Token Health 是一个原生 SwiftUI 菜单栏 App，用来把 AI Coding 服务的短周期额度、周额度、重置时间和一些明细用一个小面板看清楚。Provider 卡片默认收起，保留最关键的额度条；点右侧箭头可以展开完整明细。它不做额度绕过，也不代理你的请求，只是读取你授权后的官方网页/API 数据并展示。
+Token Health 读取官方用量，压成几张清爽的小卡片。不开代理，不碰请求，不做额度魔法，也没有自建后端。
 
-## 已支持
+## 支持的服务
 
-| Provider | 状态 | 能看到什么 | 认证方式 |
-| --- | --- | --- | --- |
-| Codex | 可用 | ChatGPT Codex 账号的短周期、周额度、重置倒计时和独立模型额度桶 | 复用本机 Codex 登录，仅通过官方 App Server 读取额度 |
-| Cursor | 可用 | 当前月度账期的 Auto + Composer、API 与 Grokbot 三个独立用量池和重置时间 | 只读复用本机 Cursor 登录，通过 Cursor 官方接口读取额度 |
-| Kimi Code | 可用 | 5 小时窗口、周额度、重置倒计时 | Kimi Console Web 登录导入会话，或手动填 Bearer/Cookie |
-| Zhipu Coding | 可用 | 5 小时窗口、周额度、MCP 月调用数、近 7 天 token/tool 明细 | BigModel Web 登录导入会话 |
-| DeepSeek | 可用 | 余额、今日费用、今日 token / 请求明细 | DeepSeek Platform Web 登录导入会话；API key 模式可读官方余额 |
-| MiniMax | 可用 | Token Plan 的 5 小时限额、周限额、视频赠送次数、积分余额、今日/近 7 天 token 明细 | MiniMax Platform Web 登录导入会话 |
-| Volcengine Ark | 可用 | Agent Plan 的 5 小时、周、月 AFP 用量和重置时间 | 火山方舟控制台 Web 登录导入会话 |
-| OpenCode Go | 可用 | Go 订阅的 5 小时 $12、周 $30、月 $60 美元用量和重置时间 | opencode.ai 控制台 Web 登录导入会话 |
-| Generic HTTP | 可用 | 5 小时窗口、周额度、Token 总额度 | 自定义 JSON endpoint，可选 Bearer token |
-| Demo | 可用 | 假数据，用来验证 UI | 无需凭证 |
-| OpenAI API / Anthropic | 占位 | 仅在你自己提供兼容 Generic HTTP 的 usage endpoint 时可用 | API endpoint + key |
+| Provider | 你能看到 |
+| --- | --- |
+| **Codex** | 短周期、周额度、模型额度桶、重置倒计时 |
+| **Cursor** | 月度 Auto + Composer、API、Grokbot 用量 |
+| **Kimi Code** | 5 小时、周额度 |
+| **Zhipu Coding** | 5 小时、周额度、MCP 月额度、token/tool 明细 |
+| **DeepSeek** | 余额、今日费用、token 与请求明细 |
+| **MiniMax** | 5 小时、周额度、视频赠送、积分、token 明细 |
+| **Volcengine Ark** | 5 小时、周、月 AFP 用量 |
+| **OpenCode Go** | 5 小时、周、月美元额度 |
+| **Generic HTTP** | 自定义 JSON 用量接口 |
+| **Demo** | 用来试 UI 的安全假数据 |
 
-## 暂不支持
+凭证留在 macOS Keychain。Provider 会话只读，并且只发往对应服务的官方接口。
 
-- Windows / Linux / iOS，当前只支持 macOS 14+。
-- OpenAI Platform API、Anthropic 的官方用量接口适配器还没接上；Codex 的 ChatGPT 套餐额度已单独支持。
-- 除 Kimi Code / Zhipu Coding / DeepSeek / MiniMax / Volcengine Ark 外，没有通用网页自动登录采集器。
-- 多设备同步、云端存储、团队共享面板。
-- 自动更新、正式签名和 Apple 公证发布包。
-- 绕过额度、破解套餐、模拟付费权限。
+## 安装
 
-## 安装和运行
+从 [Releases](https://github.com/IMBlues/token-health/releases) 下载最新 DMG，把 **Token Health.app** 拖进 Applications，启动后它会安静地待在菜单栏。
 
-可以从 GitHub Releases 下载最新的 `TokenHealth-*.dmg`，拖到 Applications 后运行。
+## 从源码运行
 
 ```bash
 git clone https://github.com/IMBlues/token-health.git
@@ -47,173 +43,57 @@ cd token-health
 swift run TokenHealth
 ```
 
-运行后会出现在 macOS 菜单栏。点闪电图标打开面板，点齿轮进入设置，添加 Provider 后刷新即可。
-
-## 构建 App
+## 构建
 
 ```bash
+# 构建并启动 App
 bash scripts/build-app.sh
 open ".build/app/Token Health.app"
-```
 
-构建 DMG：
-
-```bash
+# 构建可分发 DMG
 bash scripts/build-dmg.sh
 ```
 
-生成的 DMG 在 `dist/` 下。当前构建脚本只做本机 ad-hoc codesign，不是正式公证包。
+本机构建使用 ad-hoc 签名，未经过 Apple 公证。
 
-一键构建 DMG 并重装（自动退出旧实例、替换 `/Applications/Token Health.app` 并重新启动）：
+## 使用
 
-```bash
-bash scripts/install-release.sh
-```
-
-## 配置说明
-
-### Codex
-
-添加计划后选择 `Codex`：
-
-- 需要本机已经安装 OpenAI 官方签名的 ChatGPT 或 Codex 桌面端，并在 Codex 中通过 ChatGPT 账号登录。为避免执行被替换的程序，Token Health 不会自动运行 `PATH` 中的第三方或未签名 Codex CLI。
-- Token Health 启动一个短生命周期的官方 `codex app-server` 子进程，只发送初始化握手和 `account/rateLimits/read`，不调用登录、登出、历史用量、额度重置、任务或文件接口。
-- 自动刷新沿用全局 15 分钟间隔；一分钟内的重复 Codex 刷新复用最近结果或错误，不会连续启动额度查询。
-- Token Health 不读取、复制或保存 Codex 登录凭证；凭证加载与必要的会话刷新仍由 Codex 自己管理。
-- OpenAI API key 的按量计费与 ChatGPT Codex 套餐额度是两套体系，不会混在这个 Provider 中。
+点齿轮添加 Provider，按提示登录，刷新即可。网页型服务从官方控制台导入会话；API 型服务在设置里填 key。
 
 ### Cursor
 
-添加计划后选择 `Cursor`：
-
-- 需要本机已经安装并登录 Cursor。Token Health 会从 Cursor 本地 `state.vscdb` 只读获取当前 access token，不复制到自己的 Keychain，也不会读取编辑器历史、项目或聊天内容。
-- 每次刷新只请求 Cursor 官方 `https://api2.cursor.sh/auth/usage-summary` 接口，展示当前月度账期的 `Auto + Composer`、`API` 与 `Grokbot` 独立用量池。
-- 用量池共用接口返回的账期结束时间；Cursor 的本地会话过期后，在 Cursor 中重新登录即可。
-- 该用量接口和 Cursor 本地登录存储都不是公开稳定 API，适配器属于 best effort。
-
-### Kimi Code
-
-添加计划后选择 `Kimi Code`：
-
-- 推荐点 `Login with Kimi Code`，在官方 Kimi Console 完成登录，然后点击导入会话。
-- 也可以手动粘贴 Kimi Web Bearer token 或 `cookie:...` 到 API key 字段。
-- 默认请求 Kimi Console 的用量接口；如果填了自定义 endpoint，则按 Generic HTTP 的 JSON 结构解析。
-
-### Zhipu Coding
-
-添加计划后选择 `Zhipu Coding`：
-
-- 点 `Login with Zhipu Coding`，在 BigModel 用量页完成登录，然后导入会话。
-- 会尝试读取套餐名、5 小时额度、周额度、MCP 月额度，以及近 7 天 token/tool 统计。
-
-### DeepSeek
-
-添加计划后选择 `DeepSeek`：
-
-- 推荐把 `Auth` 切到 `Login`，点 `Login with DeepSeek`，在官方 DeepSeek Platform 完成登录并等用量页加载，然后导入会话。
-- 会展示账户余额、今日费用、今日 token 和请求数，并把按模型拆分的今日明细放在详情里。
-- 余额和今日费用默认会显示为 `¥¥¥`，需要点击旁边的小眼睛才会展开真实金额。
-- 如果使用 `API` 模式，只会调用 DeepSeek 官方公开的 `/user/balance` 余额接口；官方公开文档暂未提供今日用量接口。
-
-### MiniMax
-
-添加计划后选择 `MiniMax`：
-
-- 点 `Login with MiniMax`，在官方 MiniMax Platform 完成登录并等用量页加载，然后导入会话。
-- 会展示 Token Plan 的 5 小时请求限额、周请求限额、视频赠送次数、积分余额、今日 token、近 7 天 token，以及今日 TOP 模型明细。
-
-### Volcengine Ark
-
-添加计划后选择 `Volcengine Ark`：
-
-- 点 `Login with Volcengine Ark`，在火山方舟 Agent Plan 页面完成登录并等用量统计加载，然后导入会话。
-- 会展示 Agent 燃料值（AFP）的近 5 小时、近一周、近一月用量和重置时间。
+Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后请求 Cursor 用量接口。接口提供独立数值时显示 Auto + Composer、API、Grokbot；如果 Cursor 把 Grokbot 合并进 Auto，会明确显示 **Grokbot (included in Auto)**，不会无声消失。
 
 ### OpenCode Go
 
-添加计划后选择 `OpenCode Go`，Auth 可以选两种方式：
-
-- **API**：在 `opencode.ai/auth`（OpenCode Console）订阅 Go 后复制 API key，粘贴到 Settings 的 API key 字段。Token Health 直接调用 `https://opencode.ai/zen/go/v1/usage`（Bearer 认证）读取用量，无需模拟登录。
-- **Login**：点 `Login with OpenCode Go`，在 opencode.ai 控制台（`console.opencode.ai`）用 GitHub 或 Google 完成登录，等控制台加载后导入会话。
-
-两种方式都会展示 OpenCode Go 订阅的 5 小时（$12）、周（$30）、月（$60）三个美元用量窗口和各自的重置时间；未订阅、暂停或取消时显示对应状态。
-
-注意：`/zen/go/v1/usage` 用量接口没有公开文档，适配器属于 best effort。其实际返回 `usage.rolling/weekly/monthly` 的 `percent`（已用百分比）与 `resetsAt`，Token Health 按 Go 官方额度（$12 / $30 / $60）折算成美元展示。
-
-### Provider 排序
-
-在 Settings 左侧列表里拖动 Provider 行右侧的排序柄，可以手动调整菜单面板中的展示顺序。排序会保存到本机配置。
-
-### 用量上报 Hook
-
-Settings 左侧的 `Usage reporting` 可以把一个或多个指定 Provider 的 `5h` / `week` 额度快照合并到同一次 POST 中，发送到自定义 HTTPS 端点。它支持 Bearer token、幂等键和可选的精确证书 SHA-256 pin，可随刷新自动上报，也可用 `Report now` 手动发送；上报失败不会影响本地额度刷新。
-
-Provider 凭据和 Hook token 会合并保存在一个 macOS Keychain vault 中，避免安装后按 Provider 反复弹出钥匙串授权。
+支持 API key 或内置控制台登录，展示 Go 订阅的 5 小时（$12）、周（$30）、月（$60）额度。
 
 ### Generic HTTP
 
-如果你有自己的用量服务，可以让它返回下面这种 JSON：
+让你的接口返回这样的用量对象即可：
 
 ```json
 {
-  "fiveHours": {
-    "used": 12000,
-    "limit": 50000,
-    "resetAt": "2026-07-02T12:00:00Z"
-  },
-  "week": {
-    "used": 240000,
-    "limit": 900000,
-    "resetAt": "2026-07-06T00:00:00Z"
-  }
+  "fiveHours": { "used": 12000, "limit": 50000, "resetAt": "2026-07-02T12:00:00Z" },
+  "week": { "used": 240000, "limit": 900000, "resetAt": "2026-07-06T00:00:00Z" }
 }
 ```
 
-字段名也兼容部分 snake_case 和嵌套形态，详见 `UsageJSONParser`。
+## 隐私
 
-也支持带 `data` 包装的总额度响应：
-
-```json
-{
-  "code": true,
-  "data": {
-    "name": "Example User",
-    "total_available": 298665817,
-    "total_granted": 300803492,
-    "total_used": 2137675,
-    "unlimited_quota": false,
-    "expires_at": 0
-  },
-  "message": "ok"
-}
-```
-
-菜单卡片会显示已用比例（例如 `0.71%`）及对应进度；展开 Provider 后，会在进度条下方显示完整的 `2,137,675 / 300,803,492 tokens`。`data.name` 会显示在 Provider 副标题中。若没有 `total_granted`，会使用 `total_used + total_available` 推导总额度；若总额度未知、为 0 或为无限额度，则回退显示已使用的 Token 数量。
-
-## 隐私和安全
-
-- Token Health 没有自己的后端服务。
-- 请求只会发往对应 Provider 官方接口、你在 Generic HTTP 中配置的 endpoint，或你显式启用的用量上报 Hook。
-- Codex Provider 通过本机官方 App Server 的私有 stdio 通道发送初始化与额度读取 RPC，并显式关闭该子进程的插件、Apps 和 analytics 功能；Codex 自身仍负责会话加载和必要刷新。
-- Cursor Provider 只读查询本机 Cursor 的登录数据库，并仅把当前 access token 发回 Cursor 官方用量接口；Token Health 不保存该 token。
-- API key、Cookie、Web session 等凭证存放在 macOS Keychain。
-- Codex App Server 协议以及其他 Provider 的上游网页和内部接口都可能演进；这些适配器属于 best effort，失效时欢迎提 issue 或 PR。
+- 没有 Token Health 服务端，也没有云端同步。
+- 凭证保存在 macOS Keychain。
+- 请求只会发往你选择的 Provider，或你明确配置的 Generic HTTP / 上报接口。
+- 只展示用量，不绕过限制、不伪造付费权限、不代理模型请求。
 
 ## 开发
 
 ```bash
 swift build
-swift run TokenHealth
+swift test
 ```
 
-主要代码在 `Sources/TokenHealth/`：
-
-- `StatusMenuView.swift`：菜单栏面板 UI。
-- `SettingsView.swift`：Provider 配置 UI。
-- `CursorUsageProvider.swift`：本机 Cursor 登录态读取、月度双用量池映射和官方接口请求。
-- `Providers.swift`：各 Provider 拉取和解析逻辑。
-- `UsageReporter.swift`：可配置用量上报 Hook、payload 映射和 HTTP 请求。
-- `ConfigStore.swift` / `KeychainStore.swift`：本地配置和凭证存储。
+这是一个小而原生的 SwiftUI 项目。入口从 `Sources/TokenHealth/StatusMenuView.swift`、`SettingsView.swift` 和各 Provider 实现开始。
 
 ## License
 
