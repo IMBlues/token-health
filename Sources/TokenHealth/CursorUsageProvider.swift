@@ -160,6 +160,17 @@ struct CursorUsageSummary: Decodable, Sendable {
 
 struct CursorAccountUsage: Decodable, Sendable {
     let plan: CursorUsagePlan?
+    let grokbotPercentUsed: Double?
+    let grokBotPercentUsed: Double?
+
+    private enum CodingKeys: String, CodingKey { case plan, grokbotPercentUsed, grokBotPercentUsed }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        plan = try c.decodeIfPresent(CursorUsagePlan.self, forKey: .plan)
+        grokbotPercentUsed = c.decodeCursorDoubleIfPresent(forKey: .grokbotPercentUsed)
+        grokBotPercentUsed = c.decodeCursorDoubleIfPresent(forKey: .grokBotPercentUsed)
+    }
 }
 
 struct CursorUsagePlan: Decodable, Sendable {
@@ -167,12 +178,18 @@ struct CursorUsagePlan: Decodable, Sendable {
     let autoPercentUsed: Double?
     let apiPercentUsed: Double?
     let totalPercentUsed: Double?
+    let grokbotPercentUsed: Double?
+    let grokPercentUsed: Double?
+    let grokBotPercentUsed: Double?
 
     private enum CodingKeys: String, CodingKey {
         case enabled
         case autoPercentUsed
         case apiPercentUsed
         case totalPercentUsed
+        case grokbotPercentUsed
+        case grokPercentUsed
+        case grokBotPercentUsed
     }
 
     init(from decoder: Decoder) throws {
@@ -181,6 +198,9 @@ struct CursorUsagePlan: Decodable, Sendable {
         autoPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .autoPercentUsed)
         apiPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .apiPercentUsed)
         totalPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .totalPercentUsed)
+        grokbotPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .grokbotPercentUsed)
+        grokPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .grokPercentUsed)
+        grokBotPercentUsed = container.decodeCursorDoubleIfPresent(forKey: .grokBotPercentUsed)
     }
 }
 
@@ -211,6 +231,26 @@ enum CursorUsageMapper {
                 monthlyUsage(
                     label: "API",
                     percentage: apiPercentUsed,
+                    resetDate: resetDate
+                )
+            )
+        }
+        if let grokbotPercentUsed = plan.grokbotPercentUsed ?? plan.grokPercentUsed ?? plan.grokBotPercentUsed ?? response.individualUsage?.grokbotPercentUsed ?? response.individualUsage?.grokBotPercentUsed {
+            usages.append(
+                monthlyUsage(
+                    label: "Grokbot",
+                    percentage: grokbotPercentUsed,
+                    resetDate: resetDate
+                )
+            )
+        } else if let autoPercentUsed = plan.autoPercentUsed {
+            // Cursor currently reports Grokbot models inside the Auto bucket rather
+            // than exposing a separate percentage. Keep the pool visible until the
+            // API provides a dedicated Grokbot value.
+            usages.append(
+                monthlyUsage(
+                    label: "Grokbot (included in Auto)",
+                    percentage: autoPercentUsed,
                     resetDate: resetDate
                 )
             )
