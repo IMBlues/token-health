@@ -375,7 +375,7 @@ private struct UsageCard: View {
             0
         case "API":
             1
-        case "Grokbot":
+        case "Grokbot", "Grokbot (included in Auto)":
             2
         default:
             3
