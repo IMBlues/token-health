@@ -1,6 +1,6 @@
 import Foundation
 
-struct DeepSeekWebSessionCredential: WebSessionCredential {
+struct DeepSeekWebSessionCredential: WebSessionCredential, Codable, Equatable, Sendable {
     static let storagePrefix = "deepseek-web-session:"
 
     var accessToken: String?

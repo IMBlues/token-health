@@ -1,13 +1,17 @@
 import Foundation
 
-/// 网页登录类 Provider 存在 Keychain 里的凭据共用的编解码约定。
-/// 各 Provider 的字段并不一致（有的没有 accessToken，有的没有账号名），
-/// 协议只约定存储前缀与编解码，不要求统一字段。
+/// Shared encoding contract for the credentials that web-login providers store in the Keychain.
+/// Provider structs do not share a field set (some have no access token, some no account name),
+/// so the protocol fixes only the storage prefix and the codec, not the fields.
+///
+/// Call the codec on a concrete type (`DeepSeekWebSessionCredential.decode(from:)`). It lives in an
+/// extension, so it does not take part in dynamic dispatch: through an `any WebSessionCredential`
+/// existential you would silently get the default implementation instead of the conformer's.
 protocol WebSessionCredential: Codable, Equatable, Sendable {
     static var storagePrefix: String { get }
     var isEmpty: Bool { get }
     var debugSummary: String { get }
-    /// 设置页与错误文案展示的账号标识；没有该信息的 Provider 返回 nil
+    /// Account identifier shown in settings and error copy; nil when the provider has none.
     var accountLabel: String? { get }
 }
 

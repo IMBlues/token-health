@@ -50,4 +50,33 @@ struct WebSessionCredentialTests {
         #expect(DeepSeekWebSessionCredential(accessToken: "t", cookieHeader: nil, accountName: "").accountLabel == nil)
         #expect(DeepSeekWebSessionCredential(accessToken: "t", cookieHeader: nil, accountName: nil).accountLabel == nil)
     }
+
+    @Test
+    func roundTripsAConformerWithADifferentFieldSet() {
+        let credential = SyntheticCredential(cookieHeader: "c=1", note: "n")
+
+        let decoded = SyntheticCredential.decode(from: credential.encodedForStorage())
+
+        #expect(decoded == credential)
+        #expect(SyntheticCredential.decode(from: "deepseek-web-session:{}") == nil)
+    }
+
+    @Test
+    func decodesLegacyStringMissingOptionalKeys() {
+        let decoded = DeepSeekWebSessionCredential.decode(from: #"deepseek-web-session:{"accessToken":"t"}"#)
+
+        #expect(decoded?.accessToken == "t")
+        #expect(decoded?.cookieHeader == nil)
+        #expect(decoded?.accountName == nil)
+    }
+
+    private struct SyntheticCredential: WebSessionCredential {
+        static let storagePrefix = "synthetic-web-session:"
+        var cookieHeader: String?
+        var note: String?
+
+        var isEmpty: Bool { (cookieHeader ?? "").isEmpty }
+        var debugSummary: String { "cookie=\((cookieHeader ?? "").isEmpty ? "no" : "yes")" }
+        var accountLabel: String? { nil }
+    }
 }
