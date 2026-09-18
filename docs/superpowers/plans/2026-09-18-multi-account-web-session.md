@@ -1149,6 +1149,13 @@ EOF
 
 ### Task 4: `WebSessionRegistry`
 
+> 实现后的代码评审又改了几处，**以仓库里的代码为准**，下面的代码块是最初版本：
+> 缓存值改成 `(kind: ProviderKind, controller: WebSessionController)`，因为设置页可以改 Provider，
+> 只按 id 判断会在改完类型后返回旧 Provider 的内核；
+> 新增 `evictionsInFlight` 这组"正在删除"的 id，避免删除过程中在即将被删的 profile 上重建内核；
+> `evict` 判断是否要清 profile 时看"这个 config 是否曾经有 profile"，而不是当前 kind；
+> 内核新增 `private(set) var isTornDown`，让"是否调用过 teardown"成为可断言的事实。
+
 **Files:**
 - Create: `Sources/TokenHealth/WebSessionRegistry.swift`
 - Test: `Tests/TokenHealthTests/WebSessionRegistryTests.swift`
@@ -1431,7 +1438,7 @@ Run:
 ```bash
 F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift build 2>&1 | tail -5 && swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -5
 ```
-Expected: `Build complete!`，测试失败集合与基线一致（只有 Cursor 那一个）
+Expected: `Build complete!`，测试失败集合与基线一致（只有 `CursorUsageProviderTests` 的那两个用例）
 
 - [ ] **Step 4: 提交**
 
@@ -1544,7 +1551,7 @@ Run:
 ```bash
 F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift build 2>&1 | tail -5 && swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -5
 ```
-Expected: `Build complete!`，测试失败集合与基线一致（只有 Cursor 那一个）
+Expected: `Build complete!`，测试失败集合与基线一致（只有 `CursorUsageProviderTests` 的那两个用例）
 
 - [ ] **Step 6: 提交**
 
@@ -1664,7 +1671,7 @@ Run:
 ```bash
 F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift build 2>&1 | tail -5 && swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -5
 ```
-Expected: `Build complete!`，测试失败集合与基线一致（只有 Cursor 那一个）
+Expected: `Build complete!`，测试失败集合与基线一致（只有 `CursorUsageProviderTests` 的那两个用例）
 
 - [ ] **Step 6: 提交**
 
@@ -1700,7 +1707,7 @@ Run:
 ```bash
 F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift build 2>&1 | tail -5 && swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -5
 ```
-Expected: `Build complete!`，测试失败集合与基线一致（只有 Cursor 那一个）
+Expected: `Build complete!`，测试失败集合与基线一致（只有 `CursorUsageProviderTests` 的那两个用例）
 
 - [ ] **Step 4: 提交**
 

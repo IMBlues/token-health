@@ -245,16 +245,31 @@ final class WebSessionRegistry {
     func controller(for config: ServiceConfig) -> WebSessionController?
 
     /// 删除账号：淘汰内核并移除其 profile
-    func evict(configID: UUID) async
+    /// 收整个 config 而不是 id：没建过内核时，要靠 config.providerKind 判断是否可能有 profile
+    func evict(config: ServiceConfig) async
 }
 ```
 
-- 内部 `[UUID: WebSessionController]`，键是 config id；创建时用
-  `WebSessionDescriptorFactory.descriptor(for: config.providerKind)`，取不到则返回 `nil`。
-- `evict` 顺序：`controller.teardown()` → 从字典移除 → `removeProfile(configID)`。
-  **顺序是硬约束**：SDK 要求使用某个 store 的 `WKWebView` 全部释放之后才能移除该 store。
+- 内部 `[UUID: (kind: ProviderKind, controller: WebSessionController)]`，键是 config id；
+  创建时用 `WebSessionDescriptorFactory.descriptor(for: config.providerKind)`，取不到则返回 `nil`。
+  缓存里**记下创建时的 kind**：设置页允许改 Provider，若只按键判断，改完类型后会把旧 Provider 的
+  内核当成新的返回，删除账号时还会因为"当前类型不再支持登录"而跳过 profile 清理。
+- `evict` 顺序：从字典移除 → `controller.teardown()` → `removeProfile(configID)`。
+  **`teardown()` 必须在移除 store 之前**：SDK 要求使用某个 store 的 `WKWebView` 全部释放之后才能移除该 store。
+  先摘出字典是为了让 `teardown()` 让出调度的那一瞬间，别的调用拿不到一个正在被拆掉的内核。
+  两个顺序都有窗口期，真正的护栏是 `evictionsInFlight` 这一组"正在删除"的 id：
+  `evict` 开始时置入、结束时移除，`controller(for:)` 遇到这些 id 直接返回 `nil`，
+  避免在即将被删掉的 profile 上重建内核。
+- 是否需要移除 profile，判断依据是"这个 config **是否曾经**有 profile"
+  （缓存里有记录，或当前 kind 仍支持登录），而不是只看当前 kind——否则改过类型的账号会漏清。
+  这也是 `evict` 收整个 `config` 而不是只收 id 的原因。
   `WKWebsiteDataStore.remove(forIdentifier:completionHandler:)` 是异步回调 API，
   失败只记 `debugLog`，不向调用方抛错（包在 `removePersistentProfile` 里）。
+- 内核暴露 `private(set) var isTornDown`，`teardown()` 第一句置位，`startLogin` / `fetchUsage`
+  之后拒绝工作。它让"是否调用过 teardown"成为可断言的事实——否则测试只能验证缓存被清空，
+  验证不了那条硬约束。
+- 生命周期上没有空闲回收：缓存的内核（以及首次取用量后常驻的无头 WebView）会一直持有到该 config
+  被删除为止。账号数量级下可以接受，阶段二若引入更多 Provider 再考虑。
 - `WKWebsiteDataStore(forIdentifier:)`、`remove(forIdentifier:completionHandler:)` 均为
   macOS 14.0+ API，且都标注 `WK_SWIFT_UI_ACTOR`（Swift 6 下即 `@MainActor`；
   注册表本身就是 `@MainActor`，注入闭包的类型因此带 `@MainActor`）。已对 macOS 14 SDK
@@ -339,7 +354,7 @@ final class WebSessionRegistry {
 
 `AppState.deleteConfig` 保持现有同步签名与返回值（`SettingsView.swift:72` 依赖它），
 在删 Keychain 凭据、从 `configs` 移除、存盘之后，追加一个 fire-and-forget 的
-`Task { await WebSessionRegistry.shared.evict(configID: configID) }`。
+`Task { await WebSessionRegistry.shared.evict(config: config) }`。
 profile 清理属于后台收尾，不阻塞、也不影响删除操作的返回值。
 
 ## 7. 错误处理
