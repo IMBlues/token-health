@@ -1256,7 +1256,7 @@ EOF
 ### Task 5: DeepSeek Provider 的兜底改走注册表
 
 **Files:**
-- Modify: `Sources/TokenHealth/DeepSeekUsageProvider.swift:18-49`
+- Modify: `Sources/TokenHealth/DeepSeekUsageProvider.swift:18-49`（兜底分支）、`:74`、`:136-143`（其余旧引用）
 
 - [ ] **Step 1: 改兜底调用，并迁移同文件里其余的旧引用**
 
@@ -1641,7 +1641,9 @@ Expected: 两个窗口同时存在，A 的窗口里是账号 A 的已登录页�
 - [ ] **Step 6: 重启后仍然可用**
 
 退出 App 再启动。
-Expected: A 和 B 都还在，刷新后两张卡片都出数字（走 Keychain 凭据 + 各自的 profile）
+Expected: A 和 B 都还在，刷新后两张卡片都出数字。这一步走的是 Keychain 凭据的 URLSession 主路径，
+per-account profile 只在主请求失败时才参与（兜底）；所以这里若失败，先看 Keychain 凭据有没有丢，
+而不是先怀疑 profile。
 
 - [ ] **Step 7: 兜底路径用的是自己的会话**
 
