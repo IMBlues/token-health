@@ -28,14 +28,15 @@ struct CursorUsageProviderTests {
         let mapped = try CursorUsageMapper.map(response)
 
         #expect(mapped.planName == "Pro")
-        #expect(mapped.usages.count == 2)
-        #expect(mapped.usages.map(\.window) == [.month, .month])
-        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API"])
-        #expect(mapped.usages.map(\.used) == [3, 42])
-        #expect(mapped.usages.map(\.limit) == [100, 100])
-        #expect(mapped.usages.map(\.unit) == ["%", "%"])
-        #expect(mapped.usages.compactMap(\.resetDate).count == 2)
+        #expect(mapped.usages.count == 3)
+        #expect(mapped.usages.map(\.window) == [.month, .month, .month])
+        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API", "Grokbot (included in Auto)"])
+        #expect(mapped.usages.map(\.used) == [3, 42, 3])
+        #expect(mapped.usages.map(\.limit) == [100, 100, 100])
+        #expect(mapped.usages.map(\.unit) == ["%", "%", "%"])
+        #expect(mapped.usages.compactMap(\.resetDate).count == 3)
         #expect(mapped.usages[0].resetDate == mapped.usages[1].resetDate)
+        #expect(mapped.usages[0].resetDate == mapped.usages[2].resetDate)
     }
 
     @Test
@@ -82,7 +83,8 @@ struct CursorUsageProviderTests {
         let mapped = try CursorUsageMapper.map(response)
 
         #expect(mapped.planName == "Pro Plus")
-        #expect(mapped.usages.map(\.used) == [100, 0])
+        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API", "Grokbot (included in Auto)"])
+        #expect(mapped.usages.map(\.used) == [100, 0, 100])
     }
 
     @Test
