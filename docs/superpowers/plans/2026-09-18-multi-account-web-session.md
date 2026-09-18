@@ -1133,7 +1133,7 @@ Run:
 ```bash
 F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -15
 ```
-Expected: `52 tests in 5 suites` 之外只多出 Chunk 1 的新用例，失败集合与基线一致（只有 Cursor 那一个）
+Expected: 本任务不新增用例，所以总数与上一步相同（`74 tests in 7 suites`）；失败集合与基线一致（只有 Cursor 那两个用例）
 
 - [ ] **Step 6: 提交**
 
