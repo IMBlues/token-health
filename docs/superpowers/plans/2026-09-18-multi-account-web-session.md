@@ -268,6 +268,14 @@ EOF
 
 ### Task 2: 描述符协议、脚本信封、错误类型与 DeepSeek 描述符
 
+> 实现后的代码评审又改了几处接口，**以仓库里的代码为准**，下面的代码块是最初版本：
+> 新增 `loginInstructions` / `missingSessionMessage` 两个每 Provider 文案（各家的登录页文案差别很大，
+> 统一模板会把 Volcengine Ark 的 "Agent Plan"、OpenCode Go 的 GitHub/Google 提示说错）；
+> `originHost` 改为协议扩展里的默认实现（取 `loginURL.host`），避免两处真相不一致导致每次刷新都整页重载；
+> `isAuthenticationFailure` 从"仅扩展、不可覆写"提升为协议要求 + 默认实现（否则描述符自己实现会被静默忽略）；
+> 结构体改名为 `DeepSeekWebSessionDescriptor`，与文件名和 `DeepSeekWebSessionCredential` 对齐；
+> 账号标识扫描增加时间戳键名过滤。
+
 **Files:**
 - Create: `Sources/TokenHealth/WebSessionError.swift`
 - Create: `Sources/TokenHealth/WebSessionDescriptor.swift`
@@ -1013,9 +1021,7 @@ private final class WebSessionLoginWindowController: NSWindowController, NSWindo
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         importButton = NSButton(title: "Import Session", target: nil, action: nil)
-        statusLabel = NSTextField(
-            labelWithString: "Log in with \(descriptor.providerTitle), wait for Usage to load, then import."
-        )
+        statusLabel = NSTextField(labelWithString: descriptor.loginInstructions)
 
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 1080, height: 760))
         let footer = NSView()
@@ -1088,7 +1094,7 @@ private final class WebSessionLoginWindowController: NSWindowController, NSWindo
 
             self.dataStore.httpCookieStore.getAllCookies { cookies in
                 let matching = cookies
-                    .filter { self.descriptor.shouldIncludeCookie(domain: $0.domain) }
+                    .filter { self.descriptor.shouldIncludeCookie(domain: $0.domain.lowercased()) }
                     .map { "\($0.name)=\($0.value)" }
                 let cookieHeader = matching.isEmpty ? nil : matching.joined(separator: "; ")
 
@@ -1099,7 +1105,7 @@ private final class WebSessionLoginWindowController: NSWindowController, NSWindo
                     cookieHeader: cookieHeader,
                     pageTitle: self.webView.title
                 ) else {
-                    self.statusLabel.stringValue = "No session found. Make sure \(self.descriptor.providerTitle) is logged in."
+                    self.statusLabel.stringValue = self.descriptor.missingSessionMessage
                     self.onImportFailed?()
                     return
                 }
@@ -1789,10 +1795,22 @@ Expected: 与 Step 2 相比，属于 B 的目录消失，A 的还在。
 （含 `KimiWebUsageBridge` 的日志迁移与其 9 处调用点），删除各自窗口实现，逐个实机验证。
 需要另写一份计划。
 
-落地时注意两点：
+落地时注意几点：
 
 - `accountLabel` 里 `guard let accountName, !accountName.isEmpty else { return nil }` 这段
   会在 MiniMax、Volcengine Ark、OpenCode Go 三家重复，届时应抽成 `WebSessionCredential`
   协议扩展里的 `static func nonEmpty(_ value: String?) -> String?`，不要抄三遍。
 - 其余五家的凭据字段与 DeepSeek 不同（Kimi/Zhipu 没有 `accountName`，Volcengine Ark/OpenCode Go
   没有 `accessToken`），迁移时按 spec §5.1 的表格逐家对齐，不要套用 DeepSeek 的字段。
+- **`cookieHeader` 现在是一个拼接好的字符串**，而 Zhipu（`bigmodel_token_production`）、
+  MiniMax（`minimax_group_id_v2`）、Volcengine Ark（`csrfToken`）三家需要从 cookie 里取**具名的**某一个值。
+  届时如果字符串解析开始变得别扭，就把协议的入参改成结构化的
+  `cookies: [WebSessionCookie]`（name/value/domain），DeepSeek 那种只拼 header 的用法配一个扩展 helper。
+  现在不改是因为只有 DeepSeek 一家在用，YAGNI。
+- **`WebSessionScriptEnvelope.text` 在缺失时是空串**，不是 nil。Kimi / Zhipu / Volcengine Ark 三家的
+  `usageData` 是取 `text` 当响应用的，实现时必须校验非空并抛 `invalidResponse`，
+  不能直接 `Data(envelope.text.utf8)` 交出空数据。
+- 每家的 `providerTitle` 用**品牌名**（"Kimi"、"Zhipu"），不是 `ProviderKind.title`（"Kimi Code"、"Zhipu Coding"）；
+  窗口标题一律是 `"Login with <providerTitle>"`。
+- spec §5.2 说"描述符放在现有 `*WebLoginController.swift` 里、文件名不变"，实际落地改成了新建文件 +
+  完成后删除旧文件（见偏差 1）。阶段二照此办理，不必回头改 spec。
