@@ -14,6 +14,7 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     private var headlessWebView: WKWebView?
     private var loadContinuation: CheckedContinuation<Void, Error>?
     private var evaluationContinuation: CheckedContinuation<String, Error>?
+    private var isFetching = false
     private var completion: ((Result<String, Error>) -> Void)?
 
     init(configID: UUID, descriptor: any WebSessionDescriptor, dataStore: WKWebsiteDataStore) {
@@ -75,12 +76,14 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     // MARK: - Headless usage fetch
 
     func fetchUsage(context: WebSessionFetchContext) async throws -> Data {
-        guard loadContinuation == nil, evaluationContinuation == nil else {
+        guard !isFetching, loadContinuation == nil, evaluationContinuation == nil else {
             throw WebSessionError.requestFailed(
                 providerTitle: descriptor.providerTitle,
                 message: "\(descriptor.providerTitle) session is already fetching usage"
             )
         }
+        isFetching = true
+        defer { isFetching = false }
 
         let webView = headlessWebView ?? makeHeadlessWebView()
         headlessWebView = webView
@@ -90,13 +93,14 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
         let raw: String
         do {
             raw = try await evaluate(descriptor.usageFetchScript(context: context), in: webView)
-        } catch let error as WebSessionError {
-            throw error
         } catch {
             WebSessionLog.debugLog(
                 "script failed: \(error.localizedDescription)",
                 providerTitle: descriptor.providerTitle
             )
+            if let sessionError = error as? WebSessionError {
+                throw sessionError
+            }
             throw WebSessionError.requestFailed(
                 providerTitle: descriptor.providerTitle,
                 message: error.localizedDescription
@@ -134,8 +138,9 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     // MARK: - Lifecycle
 
     /// Drops the kernel's references so the registry can remove this config's data store.
-    /// Unblocks any in-flight load or script evaluation first, then yields once so those tasks
-    /// unwind and release their WebView before the caller removes the store.
+    /// Unblocks any in-flight load or script evaluation first, then yields once to give those tasks
+    /// a chance to unwind and release their WebView. Not a hard drain barrier: the caller must not
+    /// treat this as meaning the store is already released.
     func teardown() async {
         let removed = WebSessionError.requestFailed(
             providerTitle: descriptor.providerTitle,
