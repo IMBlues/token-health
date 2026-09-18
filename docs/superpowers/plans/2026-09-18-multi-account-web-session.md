@@ -40,7 +40,7 @@ swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross
 `acceptsFlexiblePercentagesAndFormatsPlanName`（1 个，`:85`）。同一个根因——commit `a7ce4ee` 改了
 Cursor 解析器，让 Grokbot 显示在 Auto 桶里，但没同步更新这两个更早的用例；行为是有意的
 （README 明确写了 Grokbot 合并进 Auto 时的显示方式），是测试过时而非解析器 bug。
-修复已单独提交在分支 `dev_bluesyu/strange-jemison-f47458`（commit `db262d0`），**不在 main 上**。
+修复已单独提交在分支 `dev_bluesyu/strange-jemison-f47458`（commit `32039eb`，基于 main 的 `888a66f`），**不在 main 上**。
 
 因此：**本计划里说的"测试全绿"一律指"除这两个基线失败外全绿"**。每次跑全量后确认失败集合与
 基线相同即可，不要为了让数字变绿去改 Cursor 的测试。如果开工前先把 `db262d0` 合进 main，
