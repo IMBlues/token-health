@@ -9,6 +9,9 @@ final class WebSessionRegistry {
     private let removeProfile: @MainActor (UUID) async -> Void
     private var controllers: [UUID: (kind: ProviderKind, controller: WebSessionController)] = [:]
     private var evictionsInFlight: Set<UUID> = []
+    /// Ids that have ever had a kernel built for them. The cache alone cannot answer "did this
+    /// config ever have a browser profile?" once a kernel has been dropped by a provider change.
+    private var configuredProfileIDs: Set<UUID> = []
 
     init(
         makeDataStore: @escaping @MainActor (UUID) -> WKWebsiteDataStore = { WKWebsiteDataStore(forIdentifier: $0) },
@@ -47,6 +50,7 @@ final class WebSessionRegistry {
             dataStore: makeDataStore(config.id)
         )
         controllers[config.id] = (kind: config.providerKind, controller: controller)
+        configuredProfileIDs.insert(config.id)
         return controller
     }
 
@@ -69,11 +73,8 @@ final class WebSessionRegistry {
         if let removed {
             await removed.controller.teardown()
         }
-        // Clear the profile if this config ever had one — including when its provider kind has
-        // since changed to something the factory no longer recognises. This is also why `evict`
-        // takes the whole config: for a config this run never built a kernel for, the current kind
-        // is the only evidence that a profile may exist on disk.
-        guard removed != nil || WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil else {
+        let hadProfile = removed != nil || configuredProfileIDs.remove(config.id) != nil
+        guard hadProfile || WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil else {
             return
         }
         await removeProfile(config.id)

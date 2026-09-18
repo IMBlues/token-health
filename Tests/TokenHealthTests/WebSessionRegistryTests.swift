@@ -150,6 +150,21 @@ struct WebSessionRegistryTests {
     }
 
     @Test
+    func evictClearsTheProfileAfterTheKernelWasDroppedByAProviderChange() async {
+        let spy = ProfileRemovalSpy()
+        let registry = makeRegistry(spy: spy)
+        var config = deepSeekConfig()
+        _ = registry.controller(for: config)
+
+        config.providerKind = .demo
+        _ = registry.controller(for: config)
+
+        await registry.evict(config: config)
+
+        #expect(spy.removed == [config.id])
+    }
+
+    @Test
     func removePersistentProfileCompletesForAnUnknownIdentifier() async {
         // Exercises the one path that calls the SDK removal API; a completion handler that never
         // fires would suspend this forever.
