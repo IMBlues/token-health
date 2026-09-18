@@ -1403,6 +1403,11 @@ EOF
 （`Providers.swift:3` 的 `protocol UsageProvider: Sendable` 没有 actor 隔离）。旧代码那一个
 `try await` 覆盖了整条表达式才得以编译。
 
+注意 `controller(for:)` 返回 `nil` 现在有两种含义：该 Provider 不支持网页登录，或者这个账号正在被删除
+（`evictionsInFlight` 命中）。这里统一抛 `.unsupportedProvider`，文案在第二种情况下不准确；
+但正在删除的账号，它的快照马上会被 `deleteConfig` 从 `snapshots` 里移除，用户看不到，
+所以不为此新增错误类型。
+
 然后迁移同文件里剩下的 5 处旧引用（不改的话 Task 8 的 grep 门禁会失败）：
 
 | 位置 | 现在 | 改成 |
