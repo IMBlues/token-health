@@ -5,7 +5,7 @@ import Testing
 @Suite
 @MainActor
 struct WebSessionDescriptorTests {
-    private let descriptor = DeepSeekSessionDescriptor()
+    private let descriptor = DeepSeekWebSessionDescriptor()
 
     @Test
     func filtersCookiesByDeepSeekDomain() {
@@ -55,14 +55,15 @@ struct WebSessionDescriptorTests {
 
     @Test
     func scansNestedSummaryForAccountIdentifier() {
-        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["phone": "13800000000"]]) == "13800000000")
-        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["nickname": "blues", "email": "a@b.co"]]) == "a@b.co")
-        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["id": "12345678"]]) == "12345678")
+        #expect(DeepSeekWebSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["phone": "13800000000"]]) == "13800000000")
+        #expect(DeepSeekWebSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["nickname": "blues", "email": "a@b.co"]]) == "a@b.co")
+        #expect(DeepSeekWebSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["id": "12345678"]]) == "12345678")
         // Email wins over numeric ids: numeric fields like created_at sort before email by key
         // name, so they must not displace the email.
-        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["created_at": "1789000000", "email": "a@b.co"]]) == "a@b.co")
-        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["nickname": "blues"]]) == nil)
-        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: nil) == nil)
+        #expect(DeepSeekWebSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["created_at": "1789000000", "email": "a@b.co"]]) == "a@b.co")
+        #expect(DeepSeekWebSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["created_at": "1789000000"]]) == nil)
+        #expect(DeepSeekWebSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["nickname": "blues"]]) == nil)
+        #expect(DeepSeekWebSessionDescriptor.accountLabel(fromSummary: nil) == nil)
     }
 
     @Test
@@ -83,10 +84,10 @@ struct WebSessionDescriptorTests {
     }
 
     @Test
-    func extractionScriptToleratesSummaryFailure() {
+    func extractionScriptRequestsUserSummary() {
         let script = descriptor.extractionScript
-        #expect(script.contains("try {"))
-        #expect(script.contains("userSummary"))
+        #expect(script.contains("summary.send()"))
+        #expect(script.contains("/api/v0/users/get_user_summary"))
     }
 
     @Test
@@ -115,5 +116,45 @@ struct WebSessionDescriptorTests {
         #expect(factory.descriptor(for: .deepSeek) != nil)
         #expect(factory.descriptor(for: .kimiCode) == nil)
         #expect(factory.descriptor(for: .demo) == nil)
+    }
+
+    @Test
+    func exposesProviderCopy() {
+        #expect(descriptor.providerTitle == "DeepSeek")
+        #expect(descriptor.loginInstructions == "Log in with DeepSeek Platform, wait for Usage to load, then import.")
+        #expect(descriptor.missingSessionMessage == "No session found. Make sure DeepSeek Platform is logged in.")
+        #expect(descriptor.originHost == descriptor.loginURL.host)
+    }
+
+    @Test
+    func errorDescriptionsAreUserFacing() {
+        #expect(WebSessionError.unsupportedProvider.errorDescription == "This provider does not support web login")
+        #expect(WebSessionError.cancelled(providerTitle: "Kimi").errorDescription == "Kimi login cancelled")
+        #expect(WebSessionError.sessionExpired(providerTitle: "Kimi").errorDescription == "Kimi session expired. Log in again for this account.")
+        #expect(WebSessionError.loadTimeout(providerTitle: "Kimi", seconds: 20).errorDescription == "Kimi page did not load within 20 seconds.")
+        #expect(WebSessionError.invalidResponse(providerTitle: "Kimi").errorDescription == "Kimi usage response was invalid")
+        #expect(WebSessionError.requestFailed(providerTitle: "Kimi", message: "boom").errorDescription == "boom")
+    }
+
+    @Test
+    func allowsOverridingTheAuthFailureRule() {
+        // Guards the A3 fix: a conformer's own implementation must win through the protocol,
+        // not be silently dropped by static dispatch.
+        #expect(OverridingDescriptor().isAuthenticationFailure(scriptResultJSON: #"{"ok":false,"status":500,"text":""}"#))
+    }
+
+    private struct OverridingDescriptor: WebSessionDescriptor {
+        let providerTitle = "Override"
+        let loginInstructions = "Log in with Override."
+        let missingSessionMessage = "No session found."
+        let loginURL = URL(string: "https://example.com/usage")!
+
+        func shouldIncludeCookie(domain: String) -> Bool { false }
+        var extractionScript: String { "0" }
+        func encodeCredential(extractionJSON: String, cookieHeader: String?, pageTitle: String?) -> String? { nil }
+        func usageFetchScript(context: WebSessionFetchContext) -> String { "0" }
+        func usageData(fromScriptResult scriptResultJSON: String) throws -> Data { Data(scriptResultJSON.utf8) }
+        func accountLabel(fromCredential credential: String) -> String? { nil }
+        func isAuthenticationFailure(scriptResultJSON: String) -> Bool { true }
     }
 }

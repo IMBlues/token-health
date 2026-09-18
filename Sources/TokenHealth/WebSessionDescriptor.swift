@@ -33,22 +33,35 @@ struct WebSessionScriptEnvelope {
 
 @MainActor
 protocol WebSessionDescriptor {
-    /// Provider name used for window titles, error copy, and logs, e.g. "DeepSeek"
+    /// Brand name used in window titles, error copy and logs — "Kimi", not `ProviderKind.title`
+    /// ("Kimi Code"). Every provider's existing window title is "Login with <this>".
     var providerTitle: String { get }
 
-    /// Address loaded by the login window; it also defines the origin the headless WebView must be on
+    /// Footer hint in the login window, before anything is imported. Provider-specific, because
+    /// each console's landing page differs.
+    var loginInstructions: String { get }
+
+    /// Shown when Import found nothing to import.
+    var missingSessionMessage: String { get }
+
+    /// Page the login window loads, and the origin the headless WebView must be on.
     var loginURL: URL { get }
 
-    /// Host the headless WebView compares against to decide it is "already on the right site"
+    /// Host the headless WebView must already be on before `usageFetchScript` runs. Defaults to
+    /// `loginURL.host`; override only if a provider's fetch legitimately runs from another host.
     var originHost: String { get }
 
-    /// Whether a cookie belongs to this provider
+    /// Whether a cookie belongs to this provider. The kernel lowercases `domain` before calling.
     func shouldIncludeCookie(domain: String) -> Bool
 
     /// Executed on the login page, returns a JSON string; the kernel does not parse it
     var extractionScript: String { get }
 
-    /// Assembles the Keychain credential string from the extraction result, cookies, and page title; nil when it cannot be assembled
+    /// Builds the Keychain credential string. `cookieHeader` is the matching cookies joined as
+    /// `name=value` pairs with `"; "`, in WebKit's own order, unencoded. Five phase-2 providers must
+    /// pull a specifically-named cookie out of it (Zhipu's `bigmodel_token_production`, MiniMax's
+    /// `minimax_group_id_v2`, Volcengine Ark's `csrfToken`), so match on the full name before the
+    /// first `=`, never on a prefix.
     func encodeCredential(extractionJSON: String, cookieHeader: String?, pageTitle: String?) -> String?
 
     /// Executed in the authenticated page, returns the script envelope
@@ -59,12 +72,18 @@ protocol WebSessionDescriptor {
 
     /// Decodes the account identifier from the Keychain ciphertext for display in settings; nil when it cannot be decoded
     func accountLabel(fromCredential credential: String) -> String?
+
+    /// Whether an `ok == false` envelope means the session is gone rather than a site error.
+    func isAuthenticationFailure(scriptResultJSON: String) -> Bool
 }
 
 extension WebSessionDescriptor {
-    /// Default rule: the envelope has `ok == false` and `status` is 401 / 403.
-    /// Deliberately a protocol extension (static dispatch, not overridable): all six providers
-    /// currently report unauthenticated as 401/403.
+    var originHost: String {
+        loginURL.host ?? ""
+    }
+
+    /// Default: the envelope reports a failure with a 401 or 403 status. Override when a site
+    /// signals an expired session differently.
     func isAuthenticationFailure(scriptResultJSON: String) -> Bool {
         guard let envelope = WebSessionScriptEnvelope.parse(scriptResultJSON),
               !envelope.ok else {
@@ -82,7 +101,7 @@ struct WebSessionDescriptorFactory {
     func descriptor(for kind: ProviderKind) -> (any WebSessionDescriptor)? {
         switch kind {
         case .deepSeek:
-            DeepSeekSessionDescriptor()
+            DeepSeekWebSessionDescriptor()
         case .kimiCode, .zhipuCode, .miniMax, .volcengineArk, .openCodeGo,
              .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             nil

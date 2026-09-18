@@ -1,10 +1,11 @@
 import Foundation
 
 @MainActor
-struct DeepSeekSessionDescriptor: WebSessionDescriptor {
+struct DeepSeekWebSessionDescriptor: WebSessionDescriptor {
     let providerTitle = "DeepSeek"
+    let loginInstructions = "Log in with DeepSeek Platform, wait for Usage to load, then import."
+    let missingSessionMessage = "No session found. Make sure DeepSeek Platform is logged in."
     let loginURL = URL(string: "https://platform.deepseek.com/usage")!
-    let originHost = "platform.deepseek.com"
 
     func shouldIncludeCookie(domain: String) -> Bool {
         domain.lowercased().contains("deepseek")
@@ -107,42 +108,52 @@ struct DeepSeekSessionDescriptor: WebSessionDescriptor {
         DeepSeekWebSessionCredential.decode(from: credential)?.accountLabel
     }
 
-    /// The site's response body has no stable public field documentation, so pick by
-    /// "email first, then plain numeric id"; returns nil when nothing is found and the
-    /// caller falls back to the page title.
+    /// The site response has no documented stable field, so this is a best-effort guess: the first
+    /// email-shaped string, else the first all-digit string of 6+ characters. Timestamp-shaped keys
+    /// are skipped, because a numeric epoch would otherwise win. The result is written into the
+    /// Keychain during import, so a wrong guess is user-visible and needs a re-import to correct.
     nonisolated static func accountLabel(fromSummary summary: Any?) -> String? {
         guard let summary else {
             return nil
         }
         var candidates: [String] = []
-        collectStrings(from: summary, into: &candidates)
-        // Email first: purely numeric fields like created_at / id are plentiful, so they must
-        // not displace the email.
+        collectStrings(from: summary, into: &candidates, key: nil)
+        // An email is a real identifier; a bare number might still be an id, so it only wins when
+        // there is no email at all.
         if let email = candidates.first(where: looksLikeEmail) {
             return email
         }
         return candidates.first(where: looksLikeNumericIdentifier)
     }
 
-    private nonisolated static func collectStrings(from value: Any, into result: inout [String]) {
+    private nonisolated static func collectStrings(from value: Any, into result: inout [String], key: String?) {
         if let string = value as? String {
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
+            if !trimmed.isEmpty, !isTimestampKey(key) {
                 result.append(trimmed)
             }
             return
         }
         if let array = value as? [Any] {
             for item in array {
-                collectStrings(from: item, into: &result)
+                collectStrings(from: item, into: &result, key: key)
             }
             return
         }
         if let object = value as? [String: Any] {
-            for key in object.keys.sorted() {
-                collectStrings(from: object[key] as Any, into: &result)
+            for childKey in object.keys.sorted() {
+                collectStrings(from: object[childKey] as Any, into: &result, key: childKey)
             }
         }
+    }
+
+    private nonisolated static func isTimestampKey(_ key: String?) -> Bool {
+        guard let key else {
+            return false
+        }
+        let lowered = key.lowercased()
+        return lowered.hasSuffix("_at") || lowered.hasSuffix("_ts") || lowered.contains("time")
+            || lowered.hasPrefix("expire")
     }
 
     private nonisolated static func looksLikeEmail(_ value: String) -> Bool {
