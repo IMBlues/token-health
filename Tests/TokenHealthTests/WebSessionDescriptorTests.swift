@@ -138,9 +138,11 @@ struct WebSessionDescriptorTests {
 
     @Test
     func allowsOverridingTheAuthFailureRule() {
-        // Guards the A3 fix: a conformer's own implementation must win through the protocol,
-        // not be silently dropped by static dispatch.
-        #expect(OverridingDescriptor().isAuthenticationFailure(scriptResultJSON: #"{"ok":false,"status":500,"text":""}"#))
+        // Guards the A3 fix: a conformer's own implementation must win through the protocol.
+        // The call must go through the existential — a concrete-typed call binds statically to the
+        // conformer's member and would pass even without the requirement.
+        let descriptor: any WebSessionDescriptor = OverridingDescriptor()
+        #expect(descriptor.isAuthenticationFailure(scriptResultJSON: #"{"ok":false,"status":500,"text":""}"#))
     }
 
     private struct OverridingDescriptor: WebSessionDescriptor {
