@@ -9,7 +9,8 @@ struct SettingsView: View {
     @State private var password = ""
     @State private var reportBearerToken = ""
     @State private var loadedSecretID: UUID?
-    @State private var isKimiLoginInProgress = false
+    @State private var storedAccountLabel: String?
+    @State private var isWebLoginInProgress = false
     @State private var apiKeyStoredValue = false
     @State private var reportTokenStoredValue = false
 
@@ -139,7 +140,7 @@ struct SettingsView: View {
                         LabeledContent("Access", value: localLoginAccess(for: binding.wrappedValue.providerKind))
                         LabeledContent("Status", value: localLoginStatusText(for: binding.wrappedValue))
                     } else if usesManagedWebLogin(binding.wrappedValue) {
-                        Text(apiKeyStoredValue ? "\(binding.wrappedValue.providerKind.title) web session stored locally" : "\(binding.wrappedValue.providerKind.title) web session not connected")
+                        Text(webSessionStatusText(for: binding.wrappedValue))
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -147,11 +148,11 @@ struct SettingsView: View {
                             startWebLogin(for: binding.wrappedValue.providerKind)
                         } label: {
                             Label(
-                                isKimiLoginInProgress ? "Waiting for login" : "Login with \(binding.wrappedValue.providerKind.title)",
+                                isWebLoginInProgress ? "Waiting for login" : "Login with \(binding.wrappedValue.providerKind.title)",
                                 systemImage: "person.crop.circle.badge.checkmark"
                             )
                         }
-                        .disabled(isKimiLoginInProgress)
+                        .disabled(isWebLoginInProgress)
                     } else {
                         if !binding.wrappedValue.providerKind.usesSingleAPIKeyOnly {
                             TextField("API endpoint", text: binding.apiEndpoint)
@@ -384,12 +385,14 @@ struct SettingsView: View {
             apiKey = ""
             password = ""
             loadedSecretID = nil
+            storedAccountLabel = nil
             return
         }
         if selectedID == Self.reportingSelectionID {
             apiKey = ""
             password = ""
             apiKeyStoredValue = false
+            storedAccountLabel = nil
             reportBearerToken = ""
             reportTokenStoredValue = !appState.loadReportHookToken().isEmpty
             loadedSecretID = selectedID
@@ -402,6 +405,7 @@ struct SettingsView: View {
             apiKey = ""
             password = ""
             apiKeyStoredValue = false
+            storedAccountLabel = nil
             loadedSecretID = selectedID
             return
         }
@@ -409,7 +413,17 @@ struct SettingsView: View {
         apiKey = ""
         password = secrets.password
         apiKeyStoredValue = !secrets.apiKey.isEmpty
+        storedAccountLabel = webSessionAccountLabel(for: selectedID, credential: secrets.apiKey)
         loadedSecretID = selectedID
+    }
+
+    private func webSessionAccountLabel(for configID: UUID, credential: String) -> String? {
+        guard !credential.isEmpty,
+              let kind = appState.configs.first(where: { $0.id == configID })?.providerKind,
+              let descriptor = WebSessionDescriptorFactory().descriptor(for: kind) else {
+            return nil
+        }
+        return descriptor.accountLabel(fromCredential: credential)
     }
 
     private func saveReportHookSettings() {
@@ -470,9 +484,9 @@ struct SettingsView: View {
             return
         }
 
-        isKimiLoginInProgress = true
+        isWebLoginInProgress = true
         let completion: (Result<String, Error>) -> Void = { result in
-            isKimiLoginInProgress = false
+            isWebLoginInProgress = false
 
             switch result {
             case let .success(credential):
@@ -493,6 +507,7 @@ struct SettingsView: View {
                     appState.configs[index].apiEndpoint = ""
                     appState.saveConfigs()
                 }
+                loadSecretsIfNeeded(force: true)
                 Task {
                     await appState.refreshAll()
                 }
@@ -507,7 +522,13 @@ struct SettingsView: View {
         case .zhipuCode:
             ZhipuWebLoginController.shared.startLogin(completion: completion)
         case .deepSeek:
-            DeepSeekWebLoginController.shared.startLogin(completion: completion)
+            guard let config = appState.configs.first(where: { $0.id == selectedID }),
+                  let controller = WebSessionRegistry.shared.controller(for: config) else {
+                isWebLoginInProgress = false
+                appState.lastError = WebSessionError.unsupportedProvider.localizedDescription
+                return
+            }
+            controller.startLogin(completion: completion)
         case .miniMax:
             MiniMaxWebLoginController.shared.startLogin(completion: completion)
         case .volcengineArk:
@@ -515,8 +536,19 @@ struct SettingsView: View {
         case .openCodeGo:
             OpenCodeGoWebLoginController.shared.startLogin(completion: completion)
         case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
-            isKimiLoginInProgress = false
+            isWebLoginInProgress = false
         }
+    }
+
+    private func webSessionStatusText(for config: ServiceConfig) -> String {
+        let title = config.providerKind.title
+        guard apiKeyStoredValue else {
+            return "\(title) web session not connected"
+        }
+        guard loadedSecretID == config.id, let storedAccountLabel else {
+            return "\(title) web session stored locally"
+        }
+        return "\(title) web session connected: \(storedAccountLabel)"
     }
 
     private func usesManagedWebLogin(_ config: ServiceConfig) -> Bool {
