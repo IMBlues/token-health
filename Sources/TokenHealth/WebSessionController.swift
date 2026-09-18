@@ -87,7 +87,13 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     // MARK: - Headless usage fetch
 
     func fetchUsage(context: WebSessionFetchContext) async throws -> Data {
-        guard !isTornDown, !isFetching, loadContinuation == nil, evaluationContinuation == nil else {
+        guard !isTornDown else {
+            throw WebSessionError.requestFailed(
+                providerTitle: descriptor.providerTitle,
+                message: "\(descriptor.providerTitle) session was removed"
+            )
+        }
+        guard !isFetching, loadContinuation == nil, evaluationContinuation == nil else {
             throw WebSessionError.requestFailed(
                 providerTitle: descriptor.providerTitle,
                 message: "\(descriptor.providerTitle) session is already fetching usage"

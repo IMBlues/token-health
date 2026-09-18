@@ -90,15 +90,23 @@ struct WebSessionRegistryTests {
     @Test
     func evictTearsTheKernelDownBeforeRemovingTheProfile() async {
         let spy = ProfileRemovalSpy()
-        let registry = makeRegistry(spy: spy)
+        var tornDownWhenProfileRemoved: Bool?
+        var controller: WebSessionController?
+        let registry = WebSessionRegistry(
+            makeDataStore: { _ in .nonPersistent() },
+            removeProfile: { id in
+                // Read at the SDK call, not after evict returns: a post-hoc assertion would stay
+                // green if evict were reordered to remove the profile first.
+                tornDownWhenProfileRemoved = controller?.isTornDown
+                spy.removed.append(id)
+            }
+        )
         let config = deepSeekConfig()
-        let controller = registry.controller(for: config)
+        controller = registry.controller(for: config)
 
         await registry.evict(config: config)
 
-        // The SDK requires every WebView using a store to be released before the store is removed;
-        // this pins the teardown call, which a dictionary-only assertion cannot see.
-        #expect(controller?.isTornDown == true)
+        #expect(tornDownWhenProfileRemoved == true)
         #expect(spy.removed == [config.id])
     }
 
@@ -136,13 +144,16 @@ struct WebSessionRegistryTests {
     }
 
     @Test
-    func changingTheProviderKindReplacesTheCachedKernel() {
+    func changingTheProviderKindReplacesTheCachedKernel() async {
         let registry = makeRegistry(spy: ProfileRemovalSpy())
         var config = deepSeekConfig()
         let deepSeekKernel = registry.controller(for: config)
 
         config.providerKind = .demo
         #expect(registry.controller(for: config) == nil)
+
+        await Task.yield()
+        #expect(deepSeekKernel?.isTornDown == true)
 
         config.providerKind = .deepSeek
         let rebuilt = registry.controller(for: config)
@@ -164,7 +175,7 @@ struct WebSessionRegistryTests {
         #expect(spy.removed == [config.id])
     }
 
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func removePersistentProfileCompletesForAnUnknownIdentifier() async {
         // Exercises the one path that calls the SDK removal API; a completion handler that never
         // fires would suspend this forever.

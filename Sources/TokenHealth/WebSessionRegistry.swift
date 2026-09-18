@@ -73,7 +73,8 @@ final class WebSessionRegistry {
         if let removed {
             await removed.controller.teardown()
         }
-        let hadProfile = removed != nil || configuredProfileIDs.remove(config.id) != nil
+        let hadRecordedProfile = configuredProfileIDs.remove(config.id) != nil
+        let hadProfile = removed != nil || hadRecordedProfile
         guard hadProfile || WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil else {
             return
         }
