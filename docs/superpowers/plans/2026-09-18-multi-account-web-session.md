@@ -1258,9 +1258,9 @@ EOF
 **Files:**
 - Modify: `Sources/TokenHealth/DeepSeekUsageProvider.swift:18-49`
 
-- [ ] **Step 1: 改兜底调用**
+- [ ] **Step 1: 改兜底调用，并迁移同文件里其余的旧引用**
 
-`fetchPlatformUsage` 里把：
+先改 `fetchPlatformUsage` 的兜底分支。把：
 
 ```swift
             } catch {
@@ -1280,7 +1280,7 @@ EOF
                     "native request failed: \(error.localizedDescription); falling back to own session",
                     providerTitle: "DeepSeek"
                 )
-                guard let controller = WebSessionRegistry.shared.controller(for: config) else {
+                guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
                     throw WebSessionError.unsupportedProvider
                 }
                 bundleData = try await controller.fetchUsage(
@@ -1289,18 +1289,36 @@ EOF
             }
 ```
 
-注意这里用的是该账号**自己**的 profile，不再是"当前活跃窗口"。
+`await` 不能省：`WebSessionRegistry` 是 `@MainActor`，而 `UsageProvider.fetchUsage` 是 nonisolated
+（`Providers.swift:3` 的 `protocol UsageProvider: Sendable` 没有 actor 隔离）。旧代码那一个
+`try await` 覆盖了整条表达式才得以编译。
+
+然后迁移同文件里剩下的 5 处旧引用（不改的话 Task 8 的 grep 门禁会失败）：
+
+| 位置 | 现在 | 改成 |
+| --- | --- | --- |
+| `:74`、`:136`、`:140`、`:143` | `DeepSeekWebLoginController.debugLog(msg)` | `WebSessionLog.debugLog(msg, providerTitle: "DeepSeek")` |
+| `:141` | `throw DeepSeekWebLoginController.LoginError.requestFailed("DeepSeek HTTP \(httpResponse.statusCode): \(body.prefix(160))")` | `throw WebSessionError.requestFailed(providerTitle: "DeepSeek", message: "DeepSeek HTTP \(httpResponse.statusCode): \(body.prefix(160))")` |
+
+（`WebSessionLog.debugLog` 与旧 `DeepSeekWebLoginController.debugLog` 同样是 `nonisolated` +
+`TOKEN_HEALTH_DEBUG` 门控，`localizedDescription` 文案也一致，行为不变。）
 
 - [ ] **Step 2: 加环境变量门控的强制兜底开关**
 
-在同一个 `do` 块的最前面（`bundleData` 的第一次赋值之前）加：
+在**内层** `do` 块的第一句（也就是 `bundleData = try await fetchUsageBundle(session:period:)` 之前）插入：
 
 ```swift
-            if ProcessInfo.processInfo.environment["TOKEN_HEALTH_FORCE_WEB_FALLBACK"] == "1" {
-                WebSessionLog.debugLog("forced web fallback", providerTitle: "DeepSeek")
-                throw WebSessionError.requestFailed(providerTitle: "DeepSeek", message: "forced fallback")
-            }
+            do {
+                if ProcessInfo.processInfo.environment["TOKEN_HEALTH_FORCE_WEB_FALLBACK"] == "1" {
+                    WebSessionLog.debugLog("forced web fallback", providerTitle: "DeepSeek")
+                    throw WebSessionError.requestFailed(providerTitle: "DeepSeek", message: "forced fallback")
+                }
+                bundleData = try await fetchUsageBundle(session: session, period: period)
+            } catch {
 ```
+
+位置很关键：必须在内层 `do` 里。若放到外层 `do` 的开头（`let bundleData: Data` 之前），
+会被外层 `catch` 吞掉、直接返回 `.unavailable` 快照，兜底路径根本不会执行。
 
 与既有的 `TOKEN_HEALTH_DEBUG` 同一模式，便于 Task 9 复现兜底路径；不设该环境变量时行为完全不变。
 
@@ -1338,7 +1356,7 @@ EOF
     @State private var storedAccountLabel: String?
 ```
 
-在 `loadSecretsIfNeeded` 里，凡是把 `apiKeyStoredValue` 置为 `false` 的分支（`:392`、`:404`、以及 `:384-387` 的 `guard` 分支）后面都补一行 `storedAccountLabel = nil`；在 `:408-412` 那个分支里改成：
+在 `loadSecretsIfNeeded` 里，凡是把 `apiKeyStoredValue` 置为 `false` 的两处（`:392` 的 Integrations 分支、`:404` 的本地登录分支）后面都补一行 `storedAccountLabel = nil`；`:384-387` 那个 `guard let selectedID` 的提前返回分支没设 `apiKeyStoredValue`，但也一并清掉 `storedAccountLabel`，避免残留上一个配置的账号名。在 `:408-412` 那个分支里改成：
 
 ```swift
         let secrets = appState.loadSecrets(for: selectedID)
@@ -1381,14 +1399,19 @@ EOF
 ```swift
     private func webSessionStatusText(for config: ServiceConfig) -> String {
         let title = config.providerKind.title
-        guard apiKeyStoredValue,
-              loadedSecretID == config.id,
-              let storedAccountLabel else {
+        guard apiKeyStoredValue else {
+            return "\(title) web session not connected"
+        }
+        guard loadedSecretID == config.id, let storedAccountLabel else {
             return "\(title) web session stored locally"
         }
         return "\(title) web session connected: \(storedAccountLabel)"
     }
 ```
+
+两级 guard 不能合并：现有文案有两条语义——没存凭据是 "not connected"，存了凭据才是
+"stored locally"（`SettingsView.swift:142` 是 DeepSeek 与未迁移五家共用的分支，
+丢掉第一条会让五家的 UI 文案回归）。
 
 - [ ] **Step 4: 登录按钮走注册表**
 
@@ -1524,7 +1547,7 @@ EOF
                     .help("Add plan or account")
 ```
 
-`:195` 与 `:226` 附近的两处 `appState.addConfig()` 调用不动——默认参数让它们继续可用。
+另外两处 `appState.addConfig()` 调用（`SettingsView.swift:227` 的空状态按钮、`StatusMenuView.swift:55`）不动——默认参数让它们继续可用。
 
 - [ ] **Step 5: 编译并跑全量测试**
 
@@ -1598,7 +1621,9 @@ Expected: 记下当前条目，删除账号后要对比。identifier store 在�
 
 设置里 `+` → "Add DeepSeek account" → 选中它 → "Login with DeepSeek" → 用账号 A 登录 →
 等 Usage 页加载 → Import Session。
-Expected: 菜单出现账号 A 的卡片，第一行是 `DeepSeek`，副标题是 `DeepSeek · <邮箱或手机号>`
+Expected: 菜单出现账号 A 的卡片，第一行是 `DeepSeek`，副标题是 `DeepSeek · <账号标识>`；
+账号标识取不到时副标题就是 `DeepSeek`（spec §5.6 不要求一定能取到邮箱），
+这种情况记一笔即可，不算失败。
 
 - [ ] **Step 4: 账号 B，并检查 A 没被顶掉（核心验收点）**
 
@@ -1620,10 +1645,11 @@ Expected: A 和 B 都还在，刷新后两张卡片都出数字（走 Keychain �
 
 - [ ] **Step 7: 兜底路径用的是自己的会话**
 
-前台运行并打开强制兜底开关：
+先退出 Step 6 启动的那个实例（只保留一个菜单栏进程），再前台运行并打开强制兜底开关。
+可执行文件名是 `TokenHealth`（无空格，见 `scripts/build-app.sh:44`）：
 
 ```bash
-TOKEN_HEALTH_DEBUG=1 TOKEN_HEALTH_FORCE_WEB_FALLBACK=1 ".build/app/Token Health.app/Contents/MacOS/Token Health"
+TOKEN_HEALTH_DEBUG=1 TOKEN_HEALTH_FORCE_WEB_FALLBACK=1 ".build/app/Token Health.app/Contents/MacOS/TokenHealth"
 ```
 
 Expected: 每张卡片各打一行 `[TokenHealth][DeepSeek] forced web fallback`，随后各自 `web fetch succeeded`；
