@@ -15,6 +15,12 @@
 1. **分支**：当前在 `main`。先 `git switch -c feature/multi-account-web-session`。
 2. **工作区已有两处未提交改动**（`AppSupport/Info.plist` 版本号 0.8.2、`Sources/TokenHealth/StatusMenuView.swift` 去掉 `onAppear` 刷新）。它们不属于本功能：**本计划所有 `git add` 都用显式文件路径**，不要用 `git add -A` / `git add .`，避免把它们卷进功能提交。
 
+## 代码约定
+
+- **注释一律用英文**。仓库 40 个 Swift 文件里只有 1 行中文注释（既有代码），其余全是英文；计划里下面的代码块若出现中文注释，落盘时翻成英文。这是唯一允许偏离"逐字粘贴"的地方——**行为代码本身必须逐字一致**。
+- **协议扩展方法是静态派发**。`WebSessionCredential` 的编解码、`WebSessionDescriptor.isAuthenticationFailure` 都只作为协议扩展存在；通过 `any` 存在类型调用会拿到默认实现而不是具体类型的实现，且不报错。调用一律走具体类型。这个坑本项目已经踩过一次（见偏差 6）。
+- **提交尾注固定为** `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`，与分支上的既有提交一致。
+
 ## 跑测试与基线（重要）
 
 本机只装了 CommandLineTools、没有 Xcode，`swift test` 会以 `no such module 'Testing'` 失败——
@@ -1782,3 +1788,11 @@ Expected: 与 Step 2 相比，属于 B 的目录消失，A 的还在。
 按 spec §9：把 Kimi、Zhipu、MiniMax、Volcengine Ark、OpenCode Go 的描述符补齐
 （含 `KimiWebUsageBridge` 的日志迁移与其 9 处调用点），删除各自窗口实现，逐个实机验证。
 需要另写一份计划。
+
+落地时注意两点：
+
+- `accountLabel` 里 `guard let accountName, !accountName.isEmpty else { return nil }` 这段
+  会在 MiniMax、Volcengine Ark、OpenCode Go 三家重复，届时应抽成 `WebSessionCredential`
+  协议扩展里的 `static func nonEmpty(_ value: String?) -> String?`，不要抄三遍。
+- 其余五家的凭据字段与 DeepSeek 不同（Kimi/Zhipu 没有 `accountName`，Volcengine Ark/OpenCode Go
+  没有 `accessToken`），迁移时按 spec §5.1 的表格逐家对齐，不要套用 DeepSeek 的字段。
