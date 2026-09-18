@@ -156,6 +156,10 @@ extension WebSessionDescriptor {
 }
 ```
 
+该判定只作为协议扩展提供，是静态派发的，**不打算让描述符覆写**：目前六个 Provider 的
+"未认证"都是 401/403，没有例外。将来若某个站点要靠响应体里的业务错误码判断，
+再把它提升为协议要求。
+
 `WebSessionDescriptorFactory.descriptor(for: ProviderKind) -> WebSessionDescriptor?`
 用 `switch` 覆盖六个 Provider，与现有 `ProviderFactory` 风格一致；其余 kind 返回 `nil`。
 
@@ -195,8 +199,9 @@ enum WebSessionError: LocalizedError {
 }
 ```
 
-`dataStore` 由调用方注入（默认 `WKWebsiteDataStore(forIdentifier: configID)`），
-既是生产的唯一来源，也让单元测试能传 `.nonPersistent()` 而不碰磁盘。
+`dataStore` 由注册表注入（见 §5.4 的 `makeDataStore`，生产路径即
+`WKWebsiteDataStore(forIdentifier: configID)`），既是生产的唯一来源，也让单元测试能传
+`.nonPersistent()` 而不碰磁盘。`init` 上不写默认值：Swift 的默认参数不能引用其他参数。
 
 持有资源：
 
@@ -232,8 +237,8 @@ final class WebSessionRegistry {
     static let shared: WebSessionRegistry
 
     init(
-        makeDataStore: @escaping (UUID) -> WKWebsiteDataStore = { WKWebsiteDataStore(forIdentifier: $0) },
-        removeProfile: @escaping (UUID) async -> Void = { await WebSessionRegistry.removePersistentProfile($0) }
+        makeDataStore: @escaping @MainActor (UUID) -> WKWebsiteDataStore = { WKWebsiteDataStore(forIdentifier: $0) },
+        removeProfile: @escaping @MainActor (UUID) async -> Void = { await WebSessionRegistry.removePersistentProfile($0) }
     )
 
     /// 取该 config 的内核，不存在则创建；Provider 不支持 Web 登录时返回 nil
@@ -251,7 +256,12 @@ final class WebSessionRegistry {
   `WKWebsiteDataStore.remove(forIdentifier:completionHandler:)` 是异步回调 API，
   失败只记 `debugLog`，不向调用方抛错（包在 `removePersistentProfile` 里）。
 - `WKWebsiteDataStore(forIdentifier:)`、`remove(forIdentifier:completionHandler:)` 均为
-  macOS 14.0+ API，与本 App 部署目标一致；不使用 `allDataStoreIdentifiers()`。
+  macOS 14.0+ API，且都标注 `WK_SWIFT_UI_ACTOR`（Swift 6 下即 `@MainActor`；
+  注册表本身就是 `@MainActor`，注入闭包的类型因此带 `@MainActor`）。已对 macOS 14 SDK
+  做过 typecheck 验证：移除的回调签名是 `(NSError?) -> Void`，失败时把 `NSError`
+  记进 `debugLog`；`dataStoreForIdentifier:` 对 `nil` identifier 会抛异常，而 Swift 的
+  `UUID` 非可选，触发不到。不使用 `allDataStoreIdentifiers()`（它是类属性而非方法，
+  本设计不需要枚举）。
 
 ### 5.5 Provider 侧改动
 
