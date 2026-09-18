@@ -8,6 +8,10 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
 
     let configID: UUID
 
+    /// Set on the first `teardown()`; afterwards both entry points refuse to run, so a torn-down
+    /// kernel can never touch its store again.
+    private(set) var isTornDown = false
+
     private let descriptor: any WebSessionDescriptor
     private let dataStore: WKWebsiteDataStore
     private var loginWindow: WebSessionLoginWindowController?
@@ -27,6 +31,13 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     // MARK: - Login
 
     func startLogin(completion: @escaping (Result<String, Error>) -> Void) {
+        guard !isTornDown else {
+            completion(.failure(WebSessionError.requestFailed(
+                providerTitle: descriptor.providerTitle,
+                message: "\(descriptor.providerTitle) session was removed"
+            )))
+            return
+        }
         if let pending = self.completion {
             self.completion = nil
             pending(.failure(WebSessionError.cancelled(providerTitle: descriptor.providerTitle)))
@@ -76,7 +87,7 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     // MARK: - Headless usage fetch
 
     func fetchUsage(context: WebSessionFetchContext) async throws -> Data {
-        guard !isFetching, loadContinuation == nil, evaluationContinuation == nil else {
+        guard !isTornDown, !isFetching, loadContinuation == nil, evaluationContinuation == nil else {
             throw WebSessionError.requestFailed(
                 providerTitle: descriptor.providerTitle,
                 message: "\(descriptor.providerTitle) session is already fetching usage"
@@ -142,6 +153,8 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     /// a chance to unwind and release their WebView. Not a hard drain barrier: the caller must not
     /// treat this as meaning the store is already released.
     func teardown() async {
+        isTornDown = true
+
         let removed = WebSessionError.requestFailed(
             providerTitle: descriptor.providerTitle,
             message: "\(descriptor.providerTitle) session was removed"

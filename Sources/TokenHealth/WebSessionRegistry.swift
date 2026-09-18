@@ -7,7 +7,8 @@ final class WebSessionRegistry {
 
     private let makeDataStore: @MainActor (UUID) -> WKWebsiteDataStore
     private let removeProfile: @MainActor (UUID) async -> Void
-    private var controllers: [UUID: WebSessionController] = [:]
+    private var controllers: [UUID: (kind: ProviderKind, controller: WebSessionController)] = [:]
+    private var evictionsInFlight: Set<UUID> = []
 
     init(
         makeDataStore: @escaping @MainActor (UUID) -> WKWebsiteDataStore = { WKWebsiteDataStore(forIdentifier: $0) },
@@ -17,11 +18,26 @@ final class WebSessionRegistry {
         self.removeProfile = removeProfile
     }
 
-    /// Returns this config's kernel, creating it if absent; nil when the provider does not support web login.
+    /// Returns this config's kernel, creating it on first use; nil when the provider cannot log in
+    /// through a browser, or while the account is being deleted.
     func controller(for config: ServiceConfig) -> WebSessionController? {
-        if let existing = controllers[config.id] {
-            return existing
+        guard !evictionsInFlight.contains(config.id) else {
+            return nil
         }
+        if let cached = controllers[config.id] {
+            guard cached.kind != config.providerKind else {
+                return cached.controller
+            }
+            // The provider was changed under this config, so the cached kernel is for the wrong
+            // site. Drop it; its profile (keyed by config id) stays where it is and is cleaned up
+            // when the config is deleted.
+            controllers.removeValue(forKey: config.id)
+            Task { await cached.controller.teardown() }
+        }
+        return makeController(for: config)
+    }
+
+    private func makeController(for config: ServiceConfig) -> WebSessionController? {
         guard let descriptor = WebSessionDescriptorFactory().descriptor(for: config.providerKind) else {
             return nil
         }
@@ -30,22 +46,34 @@ final class WebSessionRegistry {
             descriptor: descriptor,
             dataStore: makeDataStore(config.id)
         )
-        controllers[config.id] = controller
+        controllers[config.id] = (kind: config.providerKind, controller: controller)
         return controller
     }
 
     /// Deletes an account: evicts the kernel and clears the profile on disk.
-    /// The profile is cleared even if no kernel was created in this run (app restarted, then deleted the account).
+    /// `config.id` is tombstoned for the duration of the eviction, so `controller(for:)` cannot
+    /// build a new kernel on a profile that is about to be removed. The profile is cleared if this
+    /// config ever had one — even if no kernel was created in this run (app restarted, then deleted
+    /// the account), or if its provider kind has since changed to something the factory no longer
+    /// recognises.
     ///
-    /// `teardown()` first unblocks any in-flight load or script wait, closes the login window and yields
-    /// once so those tasks get a chance to release their WebView; only then is the store removed (the SDK
-    /// requires the WKWebViews using that store to be released first). It is **not** a hard barrier, so do
-    /// not treat it here as "already drained".
+    /// `teardown()` first unblocks any in-flight load or script wait, closes the login window and
+    /// yields once so those tasks get a chance to release their WebView; only then is the store
+    /// removed (the SDK requires the WKWebViews using that store to be released first). It is
+    /// **not** a hard barrier, so do not treat it here as "already drained".
     func evict(config: ServiceConfig) async {
-        if let controller = controllers.removeValue(forKey: config.id) {
-            await controller.teardown()
+        evictionsInFlight.insert(config.id)
+        defer { evictionsInFlight.remove(config.id) }
+
+        let removed = controllers.removeValue(forKey: config.id)
+        if let removed {
+            await removed.controller.teardown()
         }
-        guard WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil else {
+        // Clear the profile if this config ever had one — including when its provider kind has
+        // since changed to something the factory no longer recognises. This is also why `evict`
+        // takes the whole config: for a config this run never built a kernel for, the current kind
+        // is the only evidence that a profile may exist on disk.
+        guard removed != nil || WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil else {
             return
         }
         await removeProfile(config.id)
