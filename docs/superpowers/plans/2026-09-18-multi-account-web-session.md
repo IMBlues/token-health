@@ -15,12 +15,34 @@
 1. **分支**：当前在 `main`。先 `git switch -c feature/multi-account-web-session`。
 2. **工作区已有两处未提交改动**（`AppSupport/Info.plist` 版本号 0.8.2、`Sources/TokenHealth/StatusMenuView.swift` 去掉 `onAppear` 刷新）。它们不属于本功能：**本计划所有 `git add` 都用显式文件路径**，不要用 `git add -A` / `git add .`，避免把它们卷进功能提交。
 
-## 与 spec 的四处在意偏差（有意为之）
+## 跑测试与基线（重要）
+
+本机只装了 CommandLineTools、没有 Xcode，`swift test` 会以 `no such module 'Testing'` 失败——
+**这是既有环境问题，不是本次改动造成的**。swift-testing 的模块在
+`/Library/Developer/CommandLineTools/Library/Developer/Frameworks/Testing.framework`，
+SwiftPM 默认不搜这个路径，必须显式传进去。本计划里所有测试命令都是这个两行形式：
+
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks
+swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F"
+```
+
+要过滤用例时把 `--filter <SuiteName>` 放在 `swift test` 后面。`swift build` 不受影响，正常可用。
+
+**基线失败（改动前就存在）**：全量跑是 `52 tests in 5 suites` 带 8 个 issue，全部来自
+`CursorUsageProviderTests.mapsMonthlyAutoAndAPIPools`——commit `a7ce4ee` 改了 Cursor 解析器，
+让 Grokbot 显示在 Auto 桶里，但没同步更新这个更早的用例。它与本功能无关，已单独挂出去修。
+**本计划里说的"测试全绿"一律指"除这个基线失败外全绿"**：每次跑全量后，确认失败集合与基线相同即可，
+不要为了让数字变绿去改 Cursor 的测试。
+
+## 与 spec 的六处在意偏差（有意为之）
 
 1. **spec §5.2 说"描述符放在现有 `*WebLoginController.swift` 里、文件名不变"**。本计划改为：新建 `DeepSeekWebSessionDescriptor.swift`，旧文件 `DeepSeekWebLoginController.swift` 保留到 Task 8 再删。原因是这样每个 commit 都能编译通过；旧文件内容整体被替换，改名不省 diff。
-2. **spec §5.4 的 `evict(configID:)` 改为 `evict(config:)`**。原因：只按 configID 淘汰会在"App 重启后、没打开过登录窗口就删除账号"时漏掉磁盘上的 profile——此时注册表里没有 controller。带 `config` 才能在无 controller 时也清 profile。
+2. **spec §5.4 的 `evict(configID:)` 改为 `evict(config:)`**。真正的理由是：注册表需要 `config.providerKind` 才能判断这个配置"是否可能有 profile"，从而决定要不要走清理；只拿到一个 UUID 就无法在"App 重启后、没打开过登录窗口就删除账号"这种情况下清掉磁盘上的 profile（此时注册表里根本没有 controller）。
 3. **spec §5.6 说"`planName` 为空时副标题回退到 `config.displayName`"**。实际菜单卡片第一行已经是 `config.displayName`（`StatusMenuView.swift:129`），再加这个回退会变成 `DeepSeek 2` / `DeepSeek · DeepSeek 2` 的重复。多账号可区分性由 `displayName` 承担即可，副标题保持现状（`StatusMenuView.swift:258-264` 不动）。
 4. **spec §5.1 协议里的 `static var empty: Self` 去掉**。阶段一的代码路径里没有任何地方用它（旧代码的 `?? DeepSeekWebSessionCredential()` 用法已由描述符显式构造取代），属于 YAGNI。
+5. **`WebSessionError` 多一个 `case cancelled(providerTitle: String)`**（spec §5.3 没列）。它承接旧 `DeepSeekWebLoginController.LoginError.cancelled`，保住 "DeepSeek login cancelled" 这条文案。
+6. **`accountLabel(fromCredential:)` 提升为协议要求（带 nil 默认实现），而不是 spec §5.6 说的扩展方法**。必须这样：扩展方法走静态派发，通过 `any WebSessionDescriptor` 调用会拿到默认实现而不是 DeepSeek 的实现，设置页就永远显示不出账号名。
 
 ## 文件结构
 
@@ -128,7 +150,10 @@ struct WebSessionCredentialTests {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `swift test --filter WebSessionCredentialTests`
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift test --filter WebSessionCredentialTests -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F"
+```
 Expected: 编译失败（`Value of type 'DeepSeekWebSessionCredential' has no member 'accountLabel'`）
 
 - [ ] **Step 3: 写协议**
@@ -209,7 +234,10 @@ struct DeepSeekWebSessionCredential: WebSessionCredential {
 
 - [ ] **Step 5: 跑测试确认通过**
 
-Run: `swift test --filter WebSessionCredentialTests`
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift test --filter WebSessionCredentialTests -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F"
+```
 Expected: PASS（6 个用例）
 
 - [ ] **Step 6: 提交**
@@ -251,8 +279,11 @@ struct WebSessionDescriptorTests {
         #expect(descriptor.shouldIncludeCookie(domain: "platform.deepseek.com"))
         #expect(descriptor.shouldIncludeCookie(domain: ".deepseek.com"))
         #expect(descriptor.shouldIncludeCookie(domain: "DEEPSEEK.COM"))
+        // 过滤是子串匹配（沿用旧实现），所以形如 notdeepseek.example.com 的域名也会命中；
+        // 这里只断言确实不含 "deepseek" 子串的域名。
         #expect(!descriptor.shouldIncludeCookie(domain: "example.com"))
-        #expect(!descriptor.shouldIncludeCookie(domain: "notdeepseek.example.com"))
+        #expect(!descriptor.shouldIncludeCookie(domain: "example.org"))
+        #expect(!descriptor.shouldIncludeCookie(domain: "openai.com"))
     }
 
     @Test
@@ -293,6 +324,8 @@ struct WebSessionDescriptorTests {
         #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["phone": "13800000000"]]) == "13800000000")
         #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["nickname": "blues", "email": "a@b.co"]]) == "a@b.co")
         #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["id": "12345678"]]) == "12345678")
+        // 邮箱优先于纯数字：created_at 这类数字字段的键名排在 email 前面，不能让它顶掉邮箱。
+        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["created_at": "1789000000", "email": "a@b.co"]]) == "a@b.co")
         #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["nickname": "blues"]]) == nil)
         #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: nil) == nil)
     }
@@ -353,7 +386,10 @@ struct WebSessionDescriptorTests {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `swift test --filter WebSessionDescriptorTests`
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift test --filter WebSessionDescriptorTests -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F"
+```
 Expected: 编译失败（`cannot find 'DeepSeekSessionDescriptor' in scope`）
 
 - [ ] **Step 3: 写错误类型**
@@ -609,7 +645,7 @@ struct DeepSeekSessionDescriptor: WebSessionDescriptor {
         DeepSeekWebSessionCredential.decode(from: credential)?.accountLabel
     }
 
-    /// 站点返回体没有稳定的公开字段文档，按"第一个像邮箱、手机号或纯数字 id 的字符串"取；
+    /// 站点返回体没有稳定的公开字段文档，按"邮箱优先、其次纯数字 id"取；
     /// 取不到返回 nil，由调用方回退到页面标题。
     nonisolated static func accountLabel(fromSummary summary: Any?) -> String? {
         guard let summary else {
@@ -617,7 +653,11 @@ struct DeepSeekSessionDescriptor: WebSessionDescriptor {
         }
         var candidates: [String] = []
         collectStrings(from: summary, into: &candidates)
-        return candidates.first(where: looksLikeAccountIdentifier)
+        // 邮箱优先：created_at / id 这类纯数字字段很多，不能让它顶掉邮箱。
+        if let email = candidates.first(where: looksLikeEmail) {
+            return email
+        }
+        return candidates.first(where: looksLikeNumericIdentifier)
     }
 
     private nonisolated static func collectStrings(from value: Any, into result: inout [String]) {
@@ -641,12 +681,16 @@ struct DeepSeekSessionDescriptor: WebSessionDescriptor {
         }
     }
 
-    private nonisolated static func looksLikeAccountIdentifier(_ value: String) -> Bool {
-        if let atIndex = value.firstIndex(of: "@") {
-            let domain = value[value.index(after: atIndex)...]
-            return domain.contains(".") && !value.hasPrefix("@") && !value.hasSuffix("@")
+    private nonisolated static func looksLikeEmail(_ value: String) -> Bool {
+        guard let atIndex = value.firstIndex(of: "@") else {
+            return false
         }
-        return !value.isEmpty && value.allSatisfy(\.isNumber) && value.count >= 6
+        let domain = value[value.index(after: atIndex)...]
+        return domain.contains(".") && !value.hasPrefix("@") && !value.hasSuffix("@")
+    }
+
+    private nonisolated static func looksLikeNumericIdentifier(_ value: String) -> Bool {
+        value.count >= 6 && value.allSatisfy(\.isNumber)
     }
 
     private nonisolated static func accountNameFromPageTitle(_ title: String?) -> String? {
@@ -660,7 +704,10 @@ struct DeepSeekSessionDescriptor: WebSessionDescriptor {
 
 - [ ] **Step 6: 跑测试确认通过**
 
-Run: `swift test --filter WebSessionDescriptorTests`
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift test --filter WebSessionDescriptorTests -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F"
+```
 Expected: PASS（11 个用例）
 
 - [ ] **Step 7: 提交**
@@ -679,7 +726,7 @@ EOF
 
 ## Chunk 2: 内核与注册表
 
-> 这两个任务没有单元测试：登录窗口与无头 WebView 都是 WebKit 绑定，单元测试里造不出真实会话。验证方式是"编译通过 + Task 9 的实机验收"。其中可纯逻辑化的部分（cookie 过滤、凭据组装、信封解包、未认证判定）已经在 Chunk 1 被测试覆盖。
+> Task 3 只靠编译与 Task 9 的实机验收把关，没有单元测试：登录窗口与无头 WebView 都是 WebKit 绑定，单元测试里造不出真实会话。其中可纯逻辑化的部分（cookie 过滤、凭据组装、信封解包、未认证判定）已经在 Chunk 1 被测试覆盖。Task 4（注册表）**有**单元测试，见下。
 
 ### Task 3: `WebSessionLog` 与 `WebSessionController`
 
@@ -891,7 +938,7 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
                     return
                 }
                 guard let string = value as? String else {
-                    continuation.resume(throwing: WebSessionError.invalidResponse(providerTitle: "Web"))
+                    continuation.resume(throwing: WebSessionError.invalidResponse(providerTitle: descriptor.providerTitle))
                     return
                 }
                 continuation.resume(returning: string)
@@ -959,12 +1006,34 @@ private final class WebSessionLoginWindowController: NSWindowController, NSWindo
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 1080, height: 760))
         let footer = NSView()
 
-        // 以下约束与 DeepSeekWebLoginController.swift:109-136 完全一致：
-        // webView.translatesAutoresizingMaskIntoConstraints = false
-        // footer / importButton / statusLabel 同上
-        // container.addSubview(webView) / addSubview(footer)
-        // footer.addSubview(statusLabel) / addSubview(importButton)
-        // NSLayoutConstraint.activate([...12 条...])
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        importButton.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        container.addSubview(webView)
+        container.addSubview(footer)
+        footer.addSubview(statusLabel)
+        footer.addSubview(importButton)
+
+        NSLayoutConstraint.activate([
+            footer.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            footer.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            footer.heightAnchor.constraint(equalToConstant: 48),
+
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: footer.topAnchor),
+
+            statusLabel.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 14),
+            statusLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: importButton.leadingAnchor, constant: -12),
+
+            importButton.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -14),
+            importButton.centerYAnchor.constraint(equalTo: footer.centerYAnchor)
+        ])
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1080, height: 760),
@@ -1030,17 +1099,21 @@ private final class WebSessionLoginWindowController: NSWindowController, NSWindo
 }
 ```
 
-约束那一段直接照抄 `DeepSeekWebLoginController.swift:109-136`（4 行 `translatesAutoresizingMaskIntoConstraints = false`、2 行 `container.addSubview`、2 行 `footer.addSubview`、12 条 `NSLayoutConstraint`），把里面的 `container` / `footer` / `webView` / `statusLabel` / `importButton` 名字对好即可。
+以上窗口代码是完整的，约束块（13 条）从 `DeepSeekWebLoginController.swift:109-136` 搬运，
+变量名不变，可直接粘贴。
 
 - [ ] **Step 4: 编译**
 
-Run: `swift build 2>&1 | tail -20`
+Run: `swift build 2>&1 | tail -20`（`swift build` 不需要额外的 framework 参数）
 Expected: `Build complete!`
 
 - [ ] **Step 5: 跑全量测试确认没碰坏别的**
 
-Run: `swift test 2>&1 | tail -15`
-Expected: 全部通过（Chunk 1 的新用例 + 既有用例）
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -15
+```
+Expected: `52 tests in 5 suites` 之外只多出 Chunk 1 的新用例，失败集合与基线一致（只有 Cursor 那一个）
 
 - [ ] **Step 6: 提交**
 
@@ -1158,7 +1231,10 @@ struct WebSessionRegistryTests {
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `swift test --filter WebSessionRegistryTests`
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift test --filter WebSessionRegistryTests -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F"
+```
 Expected: 编译失败（`cannot find 'WebSessionRegistry' in scope`）
 
 - [ ] **Step 3: 实现**
@@ -1234,7 +1310,10 @@ final class WebSessionRegistry {
 
 - [ ] **Step 4: 跑测试确认通过**
 
-Run: `swift test --filter WebSessionRegistryTests`
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift test --filter WebSessionRegistryTests -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F"
+```
 Expected: PASS（6 个用例）
 
 - [ ] **Step 5: 提交**
@@ -1324,8 +1403,11 @@ EOF
 
 - [ ] **Step 3: 编译并跑全量测试**
 
-Run: `swift build 2>&1 | tail -5 && swift test 2>&1 | tail -5`
-Expected: `Build complete!`，测试全绿
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift build 2>&1 | tail -5 && swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -5
+```
+Expected: `Build complete!`，测试失败集合与基线一致（只有 Cursor 那一个）
 
 - [ ] **Step 4: 提交**
 
@@ -1434,8 +1516,11 @@ EOF
 
 - [ ] **Step 5: 编译并跑全量测试**
 
-Run: `swift build 2>&1 | tail -5 && swift test 2>&1 | tail -5`
-Expected: `Build complete!`，测试全绿
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift build 2>&1 | tail -5 && swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -5
+```
+Expected: `Build complete!`，测试失败集合与基线一致（只有 Cursor 那一个）
 
 - [ ] **Step 6: 提交**
 
@@ -1551,8 +1636,11 @@ EOF
 
 - [ ] **Step 5: 编译并跑全量测试**
 
-Run: `swift build 2>&1 | tail -5 && swift test 2>&1 | tail -5`
-Expected: `Build complete!`，测试全绿
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift build 2>&1 | tail -5 && swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -5
+```
+Expected: `Build complete!`，测试失败集合与基线一致（只有 Cursor 那一个）
 
 - [ ] **Step 6: 提交**
 
@@ -1584,8 +1672,11 @@ git rm Sources/TokenHealth/DeepSeekWebLoginController.swift
 
 - [ ] **Step 3: 编译并跑全量测试**
 
-Run: `swift build 2>&1 | tail -5 && swift test 2>&1 | tail -5`
-Expected: `Build complete!`，测试全绿
+Run:
+```bash
+F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks; swift build 2>&1 | tail -5 && swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F" 2>&1 | tail -5
+```
+Expected: `Build complete!`，测试失败集合与基线一致（只有 Cursor 那一个）
 
 - [ ] **Step 4: 提交**
 
