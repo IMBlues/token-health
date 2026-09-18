@@ -1300,6 +1300,10 @@ final class WebSessionRegistry {
 
     /// 删除账号：淘汰内核并清掉磁盘上的 profile。
     /// 即使本次运行里没创建过内核（例如重启后直接删除），也要清 profile。
+    ///
+    /// `teardown()` 会先解开在途的加载/脚本等待，关闭登录窗口并让出一次调度，
+    /// 使那些任务有机会释放自己的 WebView；之后再移除 store（SDK 要求使用该 store 的
+    /// WKWebView 必须先释放）。它**不是**一个硬性屏障，所以这里不要把它当成"已经排空"。
     func evict(config: ServiceConfig) async {
         if let controller = controllers.removeValue(forKey: config.id) {
             await controller.teardown()
