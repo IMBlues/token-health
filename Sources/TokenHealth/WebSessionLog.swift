@@ -12,12 +12,12 @@ enum WebSessionLog {
     /// unauthenticated fetches.
     nonisolated static func javascriptAuthSummary(from object: [String: Any]) -> String {
         let parts = object.keys
-            .filter { $0.hasPrefix("has") }
             .sorted()
-            .map { key -> String in
-                let label = String(key.dropFirst(3))
-                let value = (object[key] as? Bool) == true ? "yes" : "no"
-                return "\(label)=\(value)"
+            .compactMap { key -> String? in
+                guard key.hasPrefix("has"), let flag = object[key] as? Bool else {
+                    return nil
+                }
+                return "\(key.dropFirst(3))=\(flag ? "yes" : "no")"
             }
         return "jsAuth \(parts.joined(separator: " "))"
     }

@@ -13,6 +13,7 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     private var loginWindow: WebSessionLoginWindowController?
     private var headlessWebView: WKWebView?
     private var loadContinuation: CheckedContinuation<Void, Error>?
+    private var evaluationContinuation: CheckedContinuation<String, Error>?
     private var completion: ((Result<String, Error>) -> Void)?
 
     init(configID: UUID, descriptor: any WebSessionDescriptor, dataStore: WKWebsiteDataStore) {
@@ -25,6 +26,10 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     // MARK: - Login
 
     func startLogin(completion: @escaping (Result<String, Error>) -> Void) {
+        if let pending = self.completion {
+            self.completion = nil
+            pending(.failure(WebSessionError.cancelled(providerTitle: descriptor.providerTitle)))
+        }
         self.completion = completion
 
         let controller = loginWindow ?? WebSessionLoginWindowController(
@@ -35,8 +40,16 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
             self?.finish(.success(credential))
         }
         controller.onImportFailed = { [weak self] in
-            let title = self?.descriptor.providerTitle ?? "Web"
-            self?.finish(.failure(WebSessionError.invalidResponse(providerTitle: title)), keepWindowOpen: true)
+            guard let self else {
+                return
+            }
+            self.finish(
+                .failure(WebSessionError.requestFailed(
+                    providerTitle: self.descriptor.providerTitle,
+                    message: self.descriptor.missingSessionMessage
+                )),
+                keepWindowOpen: true
+            )
         }
         controller.onCancel = { [weak self] in
             let title = self?.descriptor.providerTitle ?? "Web"
@@ -52,17 +65,23 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     private func finish(_ result: Result<String, Error>, keepWindowOpen: Bool = false) {
         let completion = completion
         self.completion = nil
-        completion?(result)
 
-        guard !keepWindowOpen else {
-            return
+        if !keepWindowOpen {
+            loginWindow?.window?.orderOut(nil)
         }
-        loginWindow?.window?.orderOut(nil)
+        completion?(result)
     }
 
     // MARK: - Headless usage fetch
 
     func fetchUsage(context: WebSessionFetchContext) async throws -> Data {
+        guard loadContinuation == nil, evaluationContinuation == nil else {
+            throw WebSessionError.requestFailed(
+                providerTitle: descriptor.providerTitle,
+                message: "\(descriptor.providerTitle) session is already fetching usage"
+            )
+        }
+
         let webView = headlessWebView ?? makeHeadlessWebView()
         headlessWebView = webView
 
@@ -71,6 +90,8 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
         let raw: String
         do {
             raw = try await evaluate(descriptor.usageFetchScript(context: context), in: webView)
+        } catch let error as WebSessionError {
+            throw error
         } catch {
             WebSessionLog.debugLog(
                 "script failed: \(error.localizedDescription)",
@@ -112,16 +133,27 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
 
     // MARK: - Lifecycle
 
+    /// Drops the kernel's references so the registry can remove this config's data store.
+    /// Unblocks any in-flight load or script evaluation first, then yields once so those tasks
+    /// unwind and release their WebView before the caller removes the store.
     func teardown() async {
-        resumeLoad(throwing: WebSessionError.requestFailed(
+        let removed = WebSessionError.requestFailed(
             providerTitle: descriptor.providerTitle,
             message: "\(descriptor.providerTitle) session was removed"
-        ))
-        loginWindow?.window?.orderOut(nil)
+        )
+        resumeLoad(throwing: removed)
+        resumeEvaluation(with: .failure(removed))
+
+        // close(), not orderOut(): closing fires windowWillClose, which delivers a cancellation to a
+        // pending login completion, and releases the window (and with it the login WebView) instead
+        // of leaving it alive on the store we are about to remove.
+        loginWindow?.close()
         loginWindow = nil
         headlessWebView?.navigationDelegate = nil
         headlessWebView = nil
         completion = nil
+
+        await Task.yield()
     }
 
     private func makeHeadlessWebView() -> WKWebView {
@@ -161,18 +193,28 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
 
     private func evaluate(_ script: String, in webView: WKWebView) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
+            evaluationContinuation = continuation
             webView.evaluateJavaScript(script) { value, error in
                 if let error {
-                    continuation.resume(throwing: error)
-                    return
+                    self.resumeEvaluation(with: .failure(error))
+                } else if let string = value as? String {
+                    self.resumeEvaluation(with: .success(string))
+                } else {
+                    self.resumeEvaluation(with: .failure(
+                        WebSessionError.invalidResponse(providerTitle: self.descriptor.providerTitle)
+                    ))
                 }
-                guard let string = value as? String else {
-                    continuation.resume(throwing: WebSessionError.invalidResponse(providerTitle: self.descriptor.providerTitle))
-                    return
-                }
-                continuation.resume(returning: string)
             }
         }
+    }
+
+    /// Single-resume slot for the script evaluation, mirroring `resumeLoad`.
+    private func resumeEvaluation(with result: Result<String, Error>) {
+        guard let continuation = evaluationContinuation else {
+            return
+        }
+        evaluationContinuation = nil
+        continuation.resume(with: result)
     }
 
     /// Guarantees the continuation is resumed only once: both the navigation callbacks and the
@@ -190,14 +232,23 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView === headlessWebView else {
+            return
+        }
         resumeLoad()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard webView === headlessWebView else {
+            return
+        }
         resumeLoad(throwing: error)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard webView === headlessWebView else {
+            return
+        }
         resumeLoad(throwing: error)
     }
 }
