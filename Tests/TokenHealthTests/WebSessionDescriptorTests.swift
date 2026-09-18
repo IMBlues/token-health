@@ -1,0 +1,119 @@
+import Foundation
+import Testing
+@testable import TokenHealth
+
+@Suite
+@MainActor
+struct WebSessionDescriptorTests {
+    private let descriptor = DeepSeekSessionDescriptor()
+
+    @Test
+    func filtersCookiesByDeepSeekDomain() {
+        #expect(descriptor.shouldIncludeCookie(domain: "platform.deepseek.com"))
+        #expect(descriptor.shouldIncludeCookie(domain: ".deepseek.com"))
+        #expect(descriptor.shouldIncludeCookie(domain: "DEEPSEEK.COM"))
+        // Filtering is substring matching (carried over from the old implementation), so a
+        // domain like notdeepseek.example.com would also match; here we only assert on domains
+        // that truly do not contain the "deepseek" substring.
+        #expect(!descriptor.shouldIncludeCookie(domain: "example.com"))
+        #expect(!descriptor.shouldIncludeCookie(domain: "example.org"))
+        #expect(!descriptor.shouldIncludeCookie(domain: "openai.com"))
+    }
+
+    @Test
+    func buildsCredentialFromExtractionResult() {
+        let extraction = #"{"href":"https://platform.deepseek.com/usage","accessToken":"tok-1","userSummary":{"email":"me@example.com"}}"#
+        let encoded = descriptor.encodeCredential(
+            extractionJSON: extraction,
+            cookieHeader: "c=1",
+            pageTitle: nil
+        )
+
+        let decoded = encoded.flatMap { DeepSeekWebSessionCredential.decode(from: $0) }
+        #expect(decoded?.accessToken == "tok-1")
+        #expect(decoded?.cookieHeader == "c=1")
+        #expect(decoded?.accountName == "me@example.com")
+    }
+
+    @Test
+    func fallsBackToPageTitleWhenSummaryHasNoAccount() {
+        let extraction = #"{"accessToken":"tok-2","userSummary":null}"#
+        let encoded = descriptor.encodeCredential(
+            extractionJSON: extraction,
+            cookieHeader: nil,
+            pageTitle: "me@example.com"
+        )
+
+        #expect(DeepSeekWebSessionCredential.decode(from: encoded ?? "")?.accountName == "me@example.com")
+    }
+
+    @Test
+    func returnsNilWhenNoAccessToken() {
+        #expect(descriptor.encodeCredential(extractionJSON: #"{"accessToken":""}"#, cookieHeader: "c=1", pageTitle: nil) == nil)
+        #expect(descriptor.encodeCredential(extractionJSON: "not json", cookieHeader: "c=1", pageTitle: nil) == nil)
+    }
+
+    @Test
+    func scansNestedSummaryForAccountIdentifier() {
+        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["phone": "13800000000"]]) == "13800000000")
+        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["nickname": "blues", "email": "a@b.co"]]) == "a@b.co")
+        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["id": "12345678"]]) == "12345678")
+        // Email wins over numeric ids: numeric fields like created_at sort before email by key
+        // name, so they must not displace the email.
+        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["created_at": "1789000000", "email": "a@b.co"]]) == "a@b.co")
+        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: ["biz_data": ["nickname": "blues"]]) == nil)
+        #expect(DeepSeekSessionDescriptor.accountLabel(fromSummary: nil) == nil)
+    }
+
+    @Test
+    func returnsWholeEnvelopeAsUsageData() throws {
+        let envelope = #"{"ok":true,"status":200,"summary":{"a":1},"amount":{"b":2},"cost":{"c":3}}"#
+        let data = try descriptor.usageData(fromScriptResult: envelope)
+
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(object?["summary"] != nil)
+        #expect(object?["amount"] != nil)
+        #expect(object?["cost"] != nil)
+    }
+
+    @Test
+    func usageScriptMentionsRequestedMonth() {
+        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9))
+        #expect(script.contains("month=9&year=2026"))
+    }
+
+    @Test
+    func extractionScriptToleratesSummaryFailure() {
+        let script = descriptor.extractionScript
+        #expect(script.contains("try {"))
+        #expect(script.contains("userSummary"))
+    }
+
+    @Test
+    func treatsUnauthorizedEnvelopeAsAuthenticationFailure() {
+        #expect(descriptor.isAuthenticationFailure(scriptResultJSON: #"{"ok":false,"status":401,"text":"unauthorized"}"#))
+        #expect(descriptor.isAuthenticationFailure(scriptResultJSON: #"{"ok":false,"status":403,"text":"forbidden"}"#))
+        #expect(!descriptor.isAuthenticationFailure(scriptResultJSON: #"{"ok":false,"status":500,"text":"boom"}"#))
+        #expect(!descriptor.isAuthenticationFailure(scriptResultJSON: #"{"ok":true,"status":200,"text":""}"#))
+        #expect(!descriptor.isAuthenticationFailure(scriptResultJSON: "not json"))
+    }
+
+    @Test
+    func parsesScriptEnvelope() {
+        let envelope = WebSessionScriptEnvelope.parse(#"{"ok":false,"status":403,"text":"forbidden","extra":1}"#)
+        #expect(envelope?.ok == false)
+        #expect(envelope?.status == 403)
+        #expect(envelope?.text == "forbidden")
+        #expect(WebSessionScriptEnvelope.parse("not json") == nil)
+        #expect(WebSessionScriptEnvelope.object(from: #"{"hasAccessToken":true}"#)?["hasAccessToken"] as? Bool == true)
+        #expect(WebSessionScriptEnvelope.object(from: "not json") == nil)
+    }
+
+    @Test
+    func factoryOnlyKnowsDeepSeekForNow() {
+        let factory = WebSessionDescriptorFactory()
+        #expect(factory.descriptor(for: .deepSeek) != nil)
+        #expect(factory.descriptor(for: .kimiCode) == nil)
+        #expect(factory.descriptor(for: .demo) == nil)
+    }
+}
