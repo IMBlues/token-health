@@ -29,11 +29,14 @@ swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross
 
 要过滤用例时把 `--filter <SuiteName>` 放在 `swift test` 后面。`swift build` 不受影响，正常可用。
 
-**基线失败（改动前就存在）**：全量跑是 `52 tests in 5 suites` 带 8 个 issue，全部来自
-`CursorUsageProviderTests.mapsMonthlyAutoAndAPIPools`——commit `a7ce4ee` 改了 Cursor 解析器，
-让 Grokbot 显示在 Auto 桶里，但没同步更新这个更早的用例。它与本功能无关，已单独挂出去修。
-**本计划里说的"测试全绿"一律指"除这个基线失败外全绿"**：每次跑全量后，确认失败集合与基线相同即可，
-不要为了让数字变绿去改 Cursor 的测试。
+**基线失败（改动前就存在）**：全量跑是 `52 tests in 5 suites` 带 8 个 issue，分布在
+`CursorUsageProviderTests` 的两个用例上：`mapsMonthlyAutoAndAPIPools`（7 个）与
+`acceptsFlexiblePercentagesAndFormatsPlanName`（1 个，`:85`）。同一个根因——commit `a7ce4ee` 改了
+Cursor 解析器，让 Grokbot 显示在 Auto 桶里，但没同步更新这两个更早的用例。它们与本功能无关，
+已单独挂出去修。**本计划里说的"测试全绿"一律指"除这两个基线失败外全绿"**：
+每次跑全量后，确认失败集合与基线相同即可，不要为了让数字变绿去改 Cursor 的测试。
+（另注：`Task { @MainActor in … }` 闭包里隐式 `self` 是允许的；只有普通 escaping 闭包
+——例如 `evaluateJavaScript` 的 completion——才必须写 `self.`。）
 
 ## 与 spec 的六处在意偏差（有意为之）
 
@@ -938,7 +941,7 @@ final class WebSessionController: NSObject, WKNavigationDelegate {
                     return
                 }
                 guard let string = value as? String else {
-                    continuation.resume(throwing: WebSessionError.invalidResponse(providerTitle: descriptor.providerTitle))
+                    continuation.resume(throwing: WebSessionError.invalidResponse(providerTitle: self.descriptor.providerTitle))
                     return
                 }
                 continuation.resume(returning: string)
