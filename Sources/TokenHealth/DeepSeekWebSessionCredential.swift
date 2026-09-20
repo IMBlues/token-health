@@ -12,10 +12,7 @@ struct DeepSeekWebSessionCredential: WebSessionCredential, Codable, Equatable, S
     }
 
     var accountLabel: String? {
-        guard let accountName, !accountName.isEmpty else {
-            return nil
-        }
-        return accountName
+        Self.nonEmpty(accountName)
     }
 
     var debugSummary: String {

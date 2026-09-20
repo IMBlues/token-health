@@ -52,6 +52,13 @@ struct WebSessionCredentialTests {
     }
 
     @Test
+    func treatsNilAndEmptyStringsAlike() {
+        #expect(DeepSeekWebSessionCredential.nonEmpty(nil) == nil)
+        #expect(DeepSeekWebSessionCredential.nonEmpty("") == nil)
+        #expect(DeepSeekWebSessionCredential.nonEmpty("x") == "x")
+    }
+
+    @Test
     func roundTripsAConformerWithADifferentFieldSet() {
         let credential = SyntheticCredential(cookieHeader: "c=1", note: "n")
 

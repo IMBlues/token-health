@@ -34,4 +34,13 @@ extension WebSessionCredential {
         }
         return try? JSONDecoder().decode(Self.self, from: data)
     }
+
+    /// Maps an optional string to nil when it is nil or empty, so conformers can write
+    /// `var accountLabel: String? { Self.nonEmpty(accountName) }` instead of repeating the guard.
+    static func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else {
+            return nil
+        }
+        return value
+    }
 }

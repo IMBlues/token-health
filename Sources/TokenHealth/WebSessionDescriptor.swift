@@ -58,7 +58,7 @@ protocol WebSessionDescriptor {
     var extractionScript: String { get }
 
     /// Builds the Keychain credential string. `cookieHeader` is the matching cookies joined as
-    /// `name=value` pairs with `"; "`, in WebKit's own order, unencoded. Five phase-2 providers must
+    /// `name=value` pairs with `"; "`, in WebKit's own order, unencoded. Three phase-2 providers must
     /// pull a specifically-named cookie out of it (Zhipu's `bigmodel_token_production`, MiniMax's
     /// `minimax_group_id_v2`, Volcengine Ark's `csrfToken`), so match on the full name before the
     /// first `=`, never on a prefix.
@@ -106,5 +106,19 @@ struct WebSessionDescriptorFactory {
              .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             nil
         }
+    }
+}
+
+extension WebSessionFetchContext {
+    /// The current year and month in UTC. Providers whose scripts take no period still have to pass
+    /// something to `fetchUsage(context:)`; this keeps the value meaningful if a script ever starts
+    /// interpolating one.
+    static func currentUTC(now: Date = Date()) -> WebSessionFetchContext {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        return WebSessionFetchContext(
+            year: calendar.component(.year, from: now),
+            month: calendar.component(.month, from: now)
+        )
     }
 }

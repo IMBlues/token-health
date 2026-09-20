@@ -84,6 +84,17 @@ struct WebSessionDescriptorTests {
     }
 
     @Test
+    func buildsTheCurrentUTCMonth() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let now = Date()
+        let context = WebSessionFetchContext.currentUTC(now: now)
+
+        #expect(context.year == calendar.component(.year, from: now))
+        #expect(context.month == calendar.component(.month, from: now))
+    }
+
+    @Test
     func extractionScriptRequestsUserSummary() {
         let script = descriptor.extractionScript
         #expect(script.contains("summary.send()"))
