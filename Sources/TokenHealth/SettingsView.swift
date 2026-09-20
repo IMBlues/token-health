@@ -550,7 +550,13 @@ struct SettingsView: View {
             }
             controller.startLogin(completion: completion)
         case .miniMax:
-            MiniMaxWebLoginController.shared.startLogin(completion: completion)
+            guard let config = appState.configs.first(where: { $0.id == selectedID }),
+                  let controller = WebSessionRegistry.shared.controller(for: config) else {
+                isWebLoginInProgress = false
+                appState.lastError = WebSessionError.unsupportedProvider.localizedDescription
+                return
+            }
+            controller.startLogin(completion: completion)
         case .volcengineArk:
             guard let config = appState.configs.first(where: { $0.id == selectedID }),
                   let controller = WebSessionRegistry.shared.controller(for: config) else {

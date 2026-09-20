@@ -125,6 +125,7 @@ struct WebSessionDescriptorTests {
     func factoryKnowsEveryMigratedProvider() {
         let factory = WebSessionDescriptorFactory()
         #expect(factory.descriptor(for: .deepSeek) != nil)
+        #expect(factory.descriptor(for: .miniMax) != nil)
         #expect(factory.descriptor(for: .openCodeGo) != nil)
         #expect(factory.descriptor(for: .volcengineArk) != nil)
         #expect(factory.descriptor(for: .zhipuCode) != nil)

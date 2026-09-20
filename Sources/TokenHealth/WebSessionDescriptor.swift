@@ -102,13 +102,15 @@ struct WebSessionDescriptorFactory {
         switch kind {
         case .deepSeek:
             DeepSeekWebSessionDescriptor()
+        case .miniMax:
+            MiniMaxWebSessionDescriptor()
         case .volcengineArk:
             VolcengineArkWebSessionDescriptor()
         case .openCodeGo:
             OpenCodeGoWebSessionDescriptor()
         case .zhipuCode:
             ZhipuWebSessionDescriptor()
-        case .kimiCode, .miniMax,
+        case .kimiCode,
              .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             nil
         }
