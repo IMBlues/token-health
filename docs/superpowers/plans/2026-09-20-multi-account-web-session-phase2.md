@@ -217,9 +217,13 @@ EOF
 ```swift
         // Whether this config ever had a profile cannot be answered by this run's bookkeeping: the
         // provider kind may have changed, and the app may have restarted since. Ask the store.
-        let hadProfile = removed != nil
+        // The store query is split out because `await` cannot appear inside `||`'s autoclosure; the
+        // cheap arms still short-circuit, so the query only runs when they both come up empty.
+        var hadProfile = removed != nil
             || WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil
-            || await hasStoredProfile(config.id)
+        if !hadProfile {
+            hadProfile = await hasStoredProfile(config.id)
+        }
         guard hadProfile else {
             return
         }
