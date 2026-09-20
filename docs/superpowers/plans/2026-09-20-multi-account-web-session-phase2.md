@@ -167,11 +167,14 @@ EOF
 
     @Test
     func evictClearsAProfileThatOutlivedTheAppRun() async {
-        // The account had a profile on disk from an earlier run, and this run never built a kernel
-        // for it (the provider kind was changed, then the app restarted). The in-memory bookkeeping
-        // cannot know; the store query can.
+        // This account had a profile on disk from an earlier run, and this run never built a kernel
+        // for it (the provider kind was changed away from a web-login kind, then the app restarted).
+        // Neither the cache nor the current kind can answer "was there a profile?" — only the store
+        // query can. The config must therefore be one the factory rejects, or the descriptor arm of
+        // the guard short-circuits and this test would pass against the old bookkeeping too.
         let spy = ProfileRemovalSpy()
-        let config = deepSeekConfig()
+        var config = deepSeekConfig()
+        config.providerKind = .demo
         let registry = makeRegistry(spy: spy, existingProfiles: [config.id])
 
         await registry.evict(config: config)
@@ -273,7 +276,9 @@ Task 3-7 每家都按这六步走，只有"必须做对的决定"不同。**描�
 
 - [ ] **Step 2: 跑测试确认编译失败**（类型还不存在）
 - [ ] **Step 3: 实现描述符 + 凭据**：新建 `<Provider>WebSessionDescriptor.swift`；凭据结构体改为遵循 `WebSessionCredential`（保留全部既有字段，加 `storagePrefix` 与 `accountLabel`，`isEmpty`/`debugSummary` 语义不变）。
-- [ ] **Step 4: 接线**：工厂加 case；Provider 兜底改成经注册表（形状照 `DeepSeekUsageProvider.swift:24-45`，**含 `TOKEN_HEALTH_FORCE_WEB_FALLBACK` 开关，放在内层 `do` 的第一句**，context 用 `.currentUTC()`）；`SettingsView` 的对应 case 改成注册表分派；该文件里其余的旧 `debugLog` / `LoginError` 引用按研究文档的表格迁移。
+- [ ] **Step 4: 接线**：工厂加 case；Provider 兜底改成经注册表（形状照 `DeepSeekUsageProvider.swift:24-45`，**含 `TOKEN_HEALTH_FORCE_WEB_FALLBACK` 开关**，context 用 `.currentUTC()`）；`SettingsView` 的对应 case 改成注册表分派；该文件里其余的旧 `debugLog` / `LoginError` 引用按研究文档的表格迁移。
+
+  **开关位置（Kimi 不同，见 Task 7）**：其余四家放在**内层 `do` 的第一句**（包住原生请求的那个 `do`）。判据是行为而不是行号：设了环境变量后，日志必须出现 `forced web fallback`，**并且随后真的走了 web 兜底**。放错层（例如放到"只有原生失败才进入"的函数里）会静默失效。
 - [ ] **Step 5: 删除旧 controller + 更新工厂测试**：先跑 grep 门禁（该文件之外应无引用），再 `git rm`；把 `WebSessionDescriptorTests.factoryOnlyKnowsDeepSeekForNow` 改名（如 `factoryKnowsEveryMigratedProvider`）并加断言 `factory.descriptor(for: .xxx) != nil`。
 - [ ] **Step 6: 编译 + 全量测试 + 提交**：失败集合必须仍只有那两个 Cursor 用例。
 
@@ -378,6 +383,10 @@ git commit -m "Migrate MiniMax to the shared web session kernel"
   - `loginURL` 用窗口那个（`?from=kfc_overview_topbar`）。
   - **要删两个文件**：`KimiWebLoginController.swift` 与 `KimiWebUsageBridge.swift`。桥的 **9 处 `debugLog` 调用点**全在 `Providers.swift`（`phase2-research/kimi.md` §3 列了确切行号），连同 `KimiWebLoginController.swift:223` 那处 `javascriptAuthSummary` 一起迁移——两者在 `WebSessionLog` 里都已有实现。
   - Kimi 的兜底原本是**两段式**（先活跃窗口、再隐藏 WebView）：`Providers.swift:661-688` 的 `fetchConsoleUsageViaWebView` 整段按研究文档改写成一次注册表调用。注意它读 `secrets` 只是为了 `planName`，那个参数要留着。
+  - ⚠️ **`TOKEN_HEALTH_FORCE_WEB_FALLBACK` 开关在 Kimi 这里没有现成的"内层 `do`"**：Kimi 的 `fetchUsage` 在 `.api` 分支里直接调 `fetchConsoleUsage`，原生请求和 web 兜底都在其中，迁移后连那个两段式 `do/catch` 也合并掉了。
+    **开关必须放在"原生请求之前、且原生失败后确实会走到 web 兜底"的那一层**（即 `.api` 分支进入原生尝试之前，或 `fetchConsoleUsage` 里紧挨原生请求之前）。
+    **最容易放错的位置是 `fetchConsoleUsageViaWebView` 内部——那里只在原生已经失败之后才进入，开关永远不会触发**，Kimi 的验收会静默失败。
+    判据同样是行为：设了环境变量后，日志必须出现 `forced web fallback`，**且随后真的执行了 web 兜底**（Task 8 Step 4 会验证这一点）。
 - [ ] **Step 5: 删两个文件 + 工厂测试**（把 `factory.descriptor(for: .kimiCode) == nil` 翻转成 `!= nil`）
 - [ ] **Step 6: 编译 + 全量 + 提交**
 
@@ -408,7 +417,7 @@ bash scripts/build-app.sh
 osascript -e 'tell application "Token Health" to quit'; sleep 2; rm -rf "/Applications/Token Health.app" && cp -R ".build/app/Token Health.app" /Applications/
 TOKEN_HEALTH_DEBUG=1 ".build/app/Token Health.app/Contents/MacOS/TokenHealth" &
 ```
-前台运行的目的是拿到 `debugLog` 输出（`open` 会丢掉 stdout）。
+末尾的 `&` 只是把进程放到后台好继续敲命令，**它的 stdout 仍然接在这个终端上**——之所以不直接用 `open`，就是因为 `open` 会把输出丢掉，而 `debugLog` 是本次验收唯一的观测手段。
 
 - [ ] **Step 3: 每家一条，走**原生路径**先确认日常可用**：在设置里点该家的 "Login with X" → 登录 → Import Session → 菜单卡片出数字。
   Expected：状态行显示 `… web session connected: <账号>`；**Kimi 与 Zhipu 例外**（它们没有账号标识，仍显示 `stored locally`，设计如此）；OpenCode Go 的标识来自页面标题、被过滤掉时也是 `stored locally`。**如实记录每家显示的是哪一种**。
@@ -426,9 +435,22 @@ Expected：日志里每家各出现 `forced web fallback`，随后是各自 `web
 
 - [ ] **Step 5: 多账号**（至少挑一家有第二个账号的）：再加一个账号 → 两张卡片并存 → 在其中一个上重新登录，另一张的数字不变。这是本功能的核心验收点。
 
-- [ ] **Step 6: 重启后仍在**：退出 App 再用 `open` 正常启动，各卡片刷新正常。
+- [ ] **Step 6: 删除账号确实清掉了磁盘上的 profile**
 
-- [ ] **Step 7: 记录**：结果写进本文件末尾的"验收记录"，含未验证项与原因。
+先记下删除前的目录内容：
+
+```bash
+ls -la ~/Library/WebKit/local.token-health.app/WebsiteData/
+```
+
+然后在设置里删掉其中一个账号，再跑一次同样的命令。
+
+Expected：属于该账号的那个目录消失，其余账号的还在。
+这一步不能省——`hasStoredProfile` 走的是真实 SDK（`allDataStoreIdentifiers`），而**单元测试里它是被注入替身挡掉的**，全流程只有这里能验证它。它是"删除账号即清 cookie"这条承诺的唯一实测点。
+
+- [ ] **Step 7: 重启后仍在**：退出 App 再用 `open` 正常启动，各卡片刷新正常。
+
+- [ ] **Step 8: 记录**：结果写进本文件末尾的"验收记录"，含未验证项与原因。
 
 ---
 
@@ -461,4 +483,4 @@ Expected：日志里每家各出现 `forced web fallback`，随后是各自 `web
 ## 未验证 / 已知缺口
 
 - 升级后每家 Provider 需要**重新登录一次**（新的 per-config profile 是空的），原生路径在此期间照常工作。
-- Kimi 的源站判断由宽松匹配收紧为精确匹配（Task 7 末尾）——若实测出现重载循环，在描述符里覆写 `originHost` 或放宽内核的匹配规则，二选一。
+- Kimi 的源站判断由宽松匹配（`host.contains("kimi.com")`）收紧为精确匹配（`== "www.kimi.com"`）——若实测出现重载循环，**修法是放宽内核的匹配规则**（例如让描述符提供一个 `isOnOrigin(_:)` 判定），**不是**在描述符里覆写 `originHost`：它的用量请求是相对路径，页面必须留在 `www.kimi.com`，默认值本来就是对的。
