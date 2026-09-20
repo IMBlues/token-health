@@ -60,13 +60,24 @@ struct SettingsView: View {
                 Divider()
 
                 HStack {
-                    Button {
-                        selectedID = appState.addConfig()
-                        loadSecretsIfNeeded(force: true)
+                    Menu {
+                        Button("New plan") {
+                            selectedID = appState.addConfig()
+                            loadSecretsIfNeeded(force: true)
+                        }
+                        Divider()
+                        ForEach(ProviderKind.allCases.filter(\.supportsWebLogin)) { kind in
+                            Button("Add \(kind.title) account") {
+                                selectedID = appState.addConfig(providerKind: kind)
+                                loadSecretsIfNeeded(force: true)
+                            }
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
-                    .help("Add plan")
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Add plan or account")
 
                     Button {
                         if let selectedID {
