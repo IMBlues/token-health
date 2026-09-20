@@ -476,6 +476,9 @@ struct SettingsView: View {
         apiKey = ""
         apiKeyStoredValue = !nextAPIKey.isEmpty
         loadedSecretID = selectedID
+        // The picker does not reload secrets, so refresh the label here: a config switched to API
+        // mode and saved would otherwise still claim the old web-session account.
+        storedAccountLabel = webSessionAccountLabel(for: selectedID, credential: nextAPIKey)
     }
 
     private func clearAPIKey() {

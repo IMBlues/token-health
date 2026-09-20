@@ -87,7 +87,7 @@ final class WebSessionRegistry {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             WKWebsiteDataStore.remove(forIdentifier: id) { error in
                 if let error {
-                    WebSessionLog.debugLog(
+                    WebSessionLog.error(
                         "profile removal failed for \(id.uuidString): \(error.localizedDescription)",
                         providerTitle: "WebSession"
                     )

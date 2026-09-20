@@ -86,7 +86,14 @@ final class AppState: ObservableObject {
             snapshots[id] = nil
             normalizeReportProviderSelection()
             lastError = nil
-            Task { await WebSessionRegistry.shared.evict(config: config) }
+            Task {
+                // Let any in-flight refresh finish: evicting mid-fetch would leave that account's
+                // WebView alive, and the store removal requires it to be released first.
+                for _ in 0 ..< 300 where isRefreshing {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                await WebSessionRegistry.shared.evict(config: config)
+            }
             return true
         } catch {
             lastError = error.localizedDescription
