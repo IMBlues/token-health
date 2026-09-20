@@ -1,6 +1,7 @@
 import Foundation
 
 struct DeepSeekUsageProvider: UsageProvider {
+    private static let providerTitle = "DeepSeek"
     private let publicBalanceEndpoint = "https://api.deepseek.com/user/balance"
 
     func fetchUsage(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
@@ -23,12 +24,23 @@ struct DeepSeekUsageProvider: UsageProvider {
         do {
             let bundleData: Data
             do {
+                // Debug-only escape hatch for exercising the web-session fallback path; there is
+                // no real native request behind this failure.
+                if ProcessInfo.processInfo.environment["TOKEN_HEALTH_FORCE_WEB_FALLBACK"] == "1" {
+                    WebSessionLog.debugLog("forced web fallback", providerTitle: Self.providerTitle)
+                    throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "forced fallback")
+                }
                 bundleData = try await fetchUsageBundle(session: session, period: period)
             } catch {
-                DeepSeekWebLoginController.debugLog("native request failed: \(error.localizedDescription); falling back to active WebView")
-                bundleData = try await DeepSeekWebLoginController.shared.fetchUsageBundleFromActiveSession(
-                    month: period.month,
-                    year: period.year
+                WebSessionLog.debugLog(
+                    "native request failed: \(error.localizedDescription); falling back to own session",
+                    providerTitle: Self.providerTitle
+                )
+                guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
+                    throw WebSessionError.unsupportedProvider
+                }
+                bundleData = try await controller.fetchUsage(
+                    context: WebSessionFetchContext(year: period.year, month: period.month)
                 )
             }
 
@@ -71,7 +83,7 @@ struct DeepSeekUsageProvider: UsageProvider {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
                 let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-                DeepSeekWebLoginController.debugLog("public balance failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))")
+                WebSessionLog.debugLog("public balance failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))", providerTitle: Self.providerTitle)
                 return ProviderUsageSnapshot.unavailable(config: config, message: "HTTP \(httpResponse.statusCode)")
             }
 
@@ -133,14 +145,14 @@ struct DeepSeekUsageProvider: UsageProvider {
         request.setValue("zh-CN,zh;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         applySessionAuthentication(session, to: &request)
 
-        DeepSeekWebLoginController.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)")
+        WebSessionLog.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)", providerTitle: Self.providerTitle)
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            DeepSeekWebLoginController.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))")
-            throw DeepSeekWebLoginController.LoginError.requestFailed("DeepSeek HTTP \(httpResponse.statusCode): \(body.prefix(160))")
+            WebSessionLog.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))", providerTitle: Self.providerTitle)
+            throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "\(Self.providerTitle) HTTP \(httpResponse.statusCode): \(body.prefix(160))")
         }
-        DeepSeekWebLoginController.debugLog("native request succeeded, path=\(path), bytes=\(data.count)")
+        WebSessionLog.debugLog("native request succeeded, path=\(path), bytes=\(data.count)", providerTitle: Self.providerTitle)
         return data
     }
 

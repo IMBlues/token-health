@@ -65,11 +65,6 @@ struct StatusMenuView: View {
             }
         }
         .padding(16)
-        .onAppear {
-            Task {
-                await appState.refreshAll()
-            }
-        }
     }
 
     private var summaryText: String {

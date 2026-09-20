@@ -39,6 +39,7 @@ struct ProviderFactory {
 }
 
 struct ZhipuCodeUsageProvider: UsageProvider {
+    private static let providerTitle = "Zhipu"
     private let quotaEndpoint = "https://bigmodel.cn/api/monitor/usage/quota/limit?type=2"
 
     func fetchUsage(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
@@ -49,10 +50,24 @@ struct ZhipuCodeUsageProvider: UsageProvider {
         do {
             let quotaData: Data
             do {
+                // Debug-only escape hatch for exercising the web-session fallback path; there is
+                // no real native request behind this failure.
+                if ProcessInfo.processInfo.environment["TOKEN_HEALTH_FORCE_WEB_FALLBACK"] == "1" {
+                    WebSessionLog.debugLog("forced web fallback", providerTitle: Self.providerTitle)
+                    throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "forced fallback")
+                }
                 quotaData = try await fetchUsageData(session: session, endpoint: quotaEndpoint)
             } catch {
-                ZhipuWebLoginController.debugLog("native request failed: \(error.localizedDescription); falling back to active WebView")
-                quotaData = try await ZhipuWebLoginController.shared.fetchUsageDataFromActiveSession()
+                WebSessionLog.debugLog(
+                    "native request failed: \(error.localizedDescription); falling back to own session",
+                    providerTitle: Self.providerTitle
+                )
+                guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
+                    throw WebSessionError.unsupportedProvider
+                }
+                // The quota endpoint takes no period parameters, so the context is intentionally
+                // unused by its script.
+                quotaData = try await controller.fetchUsage(context: .currentUTC())
             }
 
             let parser = ZhipuUsageParser()
@@ -140,17 +155,17 @@ struct ZhipuCodeUsageProvider: UsageProvider {
             request.setValue(projectID, forHTTPHeaderField: "Bigmodel-Project")
         }
 
-        ZhipuWebLoginController.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)")
+        WebSessionLog.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)", providerTitle: Self.providerTitle)
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            ZhipuWebLoginController.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))")
-            throw ZhipuWebLoginController.LoginError.requestFailed("Zhipu HTTP \(httpResponse.statusCode): \(body.prefix(160))")
+            WebSessionLog.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))", providerTitle: Self.providerTitle)
+            throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "Zhipu HTTP \(httpResponse.statusCode): \(body.prefix(160))")
         }
-        ZhipuWebLoginController.debugLog("native request succeeded, bytes=\(data.count)")
+        WebSessionLog.debugLog("native request succeeded, bytes=\(data.count)", providerTitle: Self.providerTitle)
         if endpoint.contains("/monitor/usage/quota/limit") {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            ZhipuWebLoginController.debugLog("quota body=\(body.prefix(1000))")
+            WebSessionLog.debugLog("quota body=\(body.prefix(1000))", providerTitle: Self.providerTitle)
         }
         return data
     }
@@ -202,7 +217,7 @@ struct ZhipuUsageParser {
         let dataObject = root["data"] ?? root
         let limits = findLimits(in: dataObject)
         guard !limits.isEmpty else {
-            ZhipuWebLoginController.debugLog("parser found no limits in body=\(responsePreview(data))")
+            WebSessionLog.debugLog("parser found no limits in body=\(responsePreview(data))", providerTitle: "Zhipu")
             throw ParserError.noUsage
         }
 
@@ -232,7 +247,7 @@ struct ZhipuUsageParser {
 
         guard !result.isEmpty else {
             let keySummary = candidates.map { $0.keys.sorted().joined(separator: "|") }.joined(separator: ",")
-            ZhipuWebLoginController.debugLog("parser could not map limits keys=\(keySummary), body=\(responsePreview(data))")
+            WebSessionLog.debugLog("parser could not map limits keys=\(keySummary), body=\(responsePreview(data))", providerTitle: "Zhipu")
             throw ParserError.noUsage
         }
         return result
@@ -240,7 +255,7 @@ struct ZhipuUsageParser {
 
     func parseModelUsage(data: Data) -> [TokenUsage] {
         guard let root = jsonRoot(data), let payload = payload(from: root) else {
-            ZhipuWebLoginController.debugLog("model parser invalid body=\(responsePreview(data))")
+            WebSessionLog.debugLog("model parser invalid body=\(responsePreview(data))", providerTitle: "Zhipu")
             return []
         }
 
@@ -265,14 +280,14 @@ struct ZhipuUsageParser {
         result.append(contentsOf: topModels)
 
         if result.isEmpty {
-            ZhipuWebLoginController.debugLog("model parser found no usage body=\(responsePreview(data))")
+            WebSessionLog.debugLog("model parser found no usage body=\(responsePreview(data))", providerTitle: "Zhipu")
         }
         return result
     }
 
     func parseToolUsage(data: Data) -> [TokenUsage] {
         guard let root = jsonRoot(data), let payload = payload(from: root) else {
-            ZhipuWebLoginController.debugLog("tool parser invalid body=\(responsePreview(data))")
+            WebSessionLog.debugLog("tool parser invalid body=\(responsePreview(data))", providerTitle: "Zhipu")
             return []
         }
 
@@ -561,6 +576,7 @@ struct ZhipuUsageParser {
 }
 
 struct KimiCodeUsageProvider: UsageProvider {
+    private static let providerTitle = "Kimi"
     private let defaultConsoleUsageEndpoint = "https://www.kimi.com/apiv2/kimi.gateway.billing.v1.BillingService/GetUsages"
 
     func fetchUsage(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
@@ -569,12 +585,18 @@ struct KimiCodeUsageProvider: UsageProvider {
             let endpoint = config.apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
             if endpoint.isEmpty || endpoint.contains("BillingService/GetUsages") {
                 if let session = KimiWebSessionCredential.decode(from: secrets.apiKey) {
-                    KimiWebUsageBridge.debugLog("stored Kimi session found, trying native request first: \(session.debugSummary)")
-                    let nativeSnapshot = await fetchConsoleUsage(config: config, secrets: secrets, endpoint: endpoint)
-                    if nativeSnapshot.state == .ready {
-                        return nativeSnapshot
+                    WebSessionLog.debugLog("stored Kimi session found, trying native request first: \(session.debugSummary)", providerTitle: Self.providerTitle)
+                    // Debug-only escape hatch for exercising the web-session fallback path; there
+                    // is no real native request behind this failure.
+                    if ProcessInfo.processInfo.environment["TOKEN_HEALTH_FORCE_WEB_FALLBACK"] == "1" {
+                        WebSessionLog.debugLog("forced web fallback", providerTitle: Self.providerTitle)
+                    } else {
+                        let nativeSnapshot = await fetchConsoleUsage(config: config, secrets: secrets, endpoint: endpoint)
+                        if nativeSnapshot.state == .ready {
+                            return nativeSnapshot
+                        }
+                        WebSessionLog.debugLog("native request failed: \(nativeSnapshot.statusMessage); falling back to own session", providerTitle: Self.providerTitle)
                     }
-                    KimiWebUsageBridge.debugLog("native request failed: \(nativeSnapshot.statusMessage); falling back to active WebView")
                     return await fetchConsoleUsageViaWebView(config: config, secrets: secrets)
                 }
                 return await fetchConsoleUsage(config: config, secrets: secrets, endpoint: endpoint)
@@ -627,20 +649,20 @@ struct KimiCodeUsageProvider: UsageProvider {
             applyKimiAuthentication(secrets.apiKey, to: &request)
             request.httpBody = Data(#"{"scope":["FEATURE_CODING"]}"#.utf8)
             if let session = KimiWebSessionCredential.decode(from: secrets.apiKey) {
-                KimiWebUsageBridge.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)")
+                WebSessionLog.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)", providerTitle: Self.providerTitle)
             }
 
             let (data, response) = try await URLSession.shared.data(for: request)
             if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
                 let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-                KimiWebUsageBridge.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))")
+                WebSessionLog.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))", providerTitle: Self.providerTitle)
                 return ProviderUsageSnapshot.unavailable(config: config, message: "HTTP \(httpResponse.statusCode)")
             }
 
-            KimiWebUsageBridge.debugLog("native request succeeded, bytes=\(data.count)")
+            WebSessionLog.debugLog("native request succeeded, bytes=\(data.count)", providerTitle: Self.providerTitle)
             if ProcessInfo.processInfo.environment["TOKEN_HEALTH_DEBUG"] == "1",
                let body = String(data: data, encoding: .utf8) {
-                KimiWebUsageBridge.debugLog("native response body=\(body.prefix(1200))")
+                WebSessionLog.debugLog("native response body=\(body.prefix(1200))", providerTitle: Self.providerTitle)
             }
             let usages = try KimiCodeBillingParser().parse(data: data)
             return ProviderUsageSnapshot(
@@ -660,16 +682,15 @@ struct KimiCodeUsageProvider: UsageProvider {
 
     private func fetchConsoleUsageViaWebView(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
         do {
-            let data: Data
-            do {
-                data = try await KimiWebLoginController.shared.fetchUsageDataFromActiveSession()
-            } catch {
-                KimiWebUsageBridge.debugLog("active session fetch failed: \(error.localizedDescription); falling back to hidden WebView")
-                data = try await KimiWebUsageBridge.shared.fetchUsageData()
+            guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
+                throw WebSessionError.unsupportedProvider
             }
+            // Kimi's usage script asks for the current FEATURE_CODING window and takes no
+            // year/month, so the context values are inert; the kernel still requires one.
+            let data = try await controller.fetchUsage(context: .currentUTC())
             if ProcessInfo.processInfo.environment["TOKEN_HEALTH_DEBUG"] == "1",
                let body = String(data: data, encoding: .utf8) {
-                KimiWebUsageBridge.debugLog("web response body=\(body.prefix(1200))")
+                WebSessionLog.debugLog("web response body=\(body.prefix(1200))", providerTitle: Self.providerTitle)
             }
             let usages = try KimiCodeBillingParser().parse(data: data)
             return ProviderUsageSnapshot(
@@ -770,7 +791,7 @@ struct KimiCodeBillingParser {
         let used = intValue(detail["used"]) ?? max(0, limit - (intValue(detail["remaining"]) ?? limit))
         let reset = resetDate(in: detail) ?? resetDate(in: context)
         if reset == nil {
-            KimiWebUsageBridge.debugLog("parser found no reset for \(window.title), detailKeys=\(Array(detail.keys).sorted()), contextKeys=\(Array(context.keys).sorted())")
+            WebSessionLog.debugLog("parser found no reset for \(window.title), detailKeys=\(Array(detail.keys).sorted()), contextKeys=\(Array(context.keys).sorted())", providerTitle: "Kimi")
         }
         return TokenUsage(
             window: window,

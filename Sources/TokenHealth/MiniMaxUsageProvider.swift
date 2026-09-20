@@ -1,6 +1,7 @@
 import Foundation
 
 struct MiniMaxUsageProvider: UsageProvider {
+    private static let providerTitle = "MiniMax"
     private let platformHost = "www.minimaxi.com"
 
     func fetchUsage(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
@@ -11,10 +12,24 @@ struct MiniMaxUsageProvider: UsageProvider {
         do {
             let bundleData: Data
             do {
+                // Debug-only escape hatch for exercising the web-session fallback path; there is
+                // no real native request behind this failure.
+                if ProcessInfo.processInfo.environment["TOKEN_HEALTH_FORCE_WEB_FALLBACK"] == "1" {
+                    WebSessionLog.debugLog("forced web fallback", providerTitle: Self.providerTitle)
+                    throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "forced fallback")
+                }
                 bundleData = try await fetchUsageBundle(session: session)
             } catch {
-                MiniMaxWebLoginController.debugLog("native request failed: \(error.localizedDescription); falling back to active WebView")
-                bundleData = try await MiniMaxWebLoginController.shared.fetchUsageBundleFromActiveSession()
+                WebSessionLog.debugLog(
+                    "native request failed: \(error.localizedDescription); falling back to own session",
+                    providerTitle: Self.providerTitle
+                )
+                guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
+                    throw WebSessionError.unsupportedProvider
+                }
+                // MiniMax's usage script takes no period parameters, so the context is
+                // intentionally unused by its script.
+                bundleData = try await controller.fetchUsage(context: .currentUTC())
             }
 
             let result = try MiniMaxUsageParser().parseBundle(data: bundleData)
@@ -98,14 +113,14 @@ struct MiniMaxUsageProvider: UsageProvider {
         )
         applySessionAuthentication(session, to: &request)
 
-        MiniMaxWebLoginController.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)")
+        WebSessionLog.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)", providerTitle: Self.providerTitle)
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            MiniMaxWebLoginController.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))")
-            throw MiniMaxWebLoginController.LoginError.requestFailed("MiniMax HTTP \(httpResponse.statusCode): \(body.prefix(160))")
+            WebSessionLog.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))", providerTitle: Self.providerTitle)
+            throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "MiniMax HTTP \(httpResponse.statusCode): \(body.prefix(160))")
         }
-        MiniMaxWebLoginController.debugLog("native request succeeded, path=\(path), bytes=\(data.count)")
+        WebSessionLog.debugLog("native request succeeded, path=\(path), bytes=\(data.count)", providerTitle: Self.providerTitle)
         return data
     }
 

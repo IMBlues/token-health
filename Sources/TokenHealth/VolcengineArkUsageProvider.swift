@@ -1,6 +1,7 @@
 import Foundation
 
 struct VolcengineArkUsageProvider: UsageProvider {
+    private static let providerTitle = "Volcengine Ark"
     private let consoleOrigin = "https://console.volcengine.com"
     private let agentPlanReferer = "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan"
 
@@ -12,10 +13,26 @@ struct VolcengineArkUsageProvider: UsageProvider {
         do {
             let usageData: Data
             do {
+                // Debug-only escape hatch for exercising the web-session fallback path; there is
+                // no real native request behind this failure.
+                if ProcessInfo.processInfo.environment["TOKEN_HEALTH_FORCE_WEB_FALLBACK"] == "1" {
+                    WebSessionLog.debugLog("forced web fallback", providerTitle: Self.providerTitle)
+                    throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "forced fallback")
+                }
                 usageData = try await fetchAgentPlanAFPUsage(session: session)
             } catch {
-                VolcengineArkWebLoginController.debugLog("native request failed: \(error.localizedDescription); falling back to active WebView")
-                usageData = try await VolcengineArkWebLoginController.shared.fetchAFPUsageFromActiveSession()
+                WebSessionLog.debugLog(
+                    "native request failed: \(error.localizedDescription); falling back to own session",
+                    providerTitle: Self.providerTitle
+                )
+                guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
+                    throw WebSessionError.unsupportedProvider
+                }
+                // The AFP endpoint takes no period parameters, so the context is intentionally
+                // unused by its script.
+                usageData = try await controller.fetchUsage(
+                    context: .currentUTC()
+                )
             }
 
             let usages = try VolcengineArkUsageParser().parseAFPUsage(data: usageData)
@@ -67,16 +84,22 @@ struct VolcengineArkUsageProvider: UsageProvider {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        VolcengineArkWebLoginController.debugLog("native request action=\(action), \(session.debugSummary)")
+        WebSessionLog.debugLog("native request action=\(action), \(session.debugSummary)", providerTitle: Self.providerTitle)
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            VolcengineArkWebLoginController.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))")
-            throw VolcengineArkWebLoginController.LoginError.requestFailed("Volcengine Ark HTTP \(httpResponse.statusCode): \(body.prefix(160))")
+            WebSessionLog.debugLog(
+                "native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))",
+                providerTitle: Self.providerTitle
+            )
+            throw WebSessionError.requestFailed(
+                providerTitle: Self.providerTitle,
+                message: "Volcengine Ark HTTP \(httpResponse.statusCode): \(body.prefix(160))"
+            )
         }
 
         try VolcengineArkUsageParser().validateResponseEnvelope(data: data)
-        VolcengineArkWebLoginController.debugLog("native request succeeded, action=\(action), bytes=\(data.count)")
+        WebSessionLog.debugLog("native request succeeded, action=\(action), bytes=\(data.count)", providerTitle: Self.providerTitle)
         return data
     }
 }

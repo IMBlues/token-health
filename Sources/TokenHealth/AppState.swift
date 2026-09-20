@@ -51,12 +51,29 @@ final class AppState: ObservableObject {
         }
     }
 
-    func addConfig() -> UUID {
-        let config = ServiceConfig(displayName: "Kimi Code", providerKind: .kimiCode, authMode: .api)
+    func addConfig(providerKind: ProviderKind = .kimiCode) -> UUID {
+        let config = ServiceConfig(
+            displayName: uniqueDisplayName(for: providerKind),
+            providerKind: providerKind,
+            authMode: providerKind.defaultsToBrowserLogin ? .browserLogin : .api
+        )
         configs.append(config)
         settingsSelectedID = config.id
         saveConfigs()
         return config.id
+    }
+
+    private func uniqueDisplayName(for kind: ProviderKind) -> String {
+        let base = kind.title
+        let existing = Set(configs.map(\.displayName))
+        guard existing.contains(base) else {
+            return base
+        }
+        var index = 2
+        while existing.contains("\(base) \(index)") {
+            index += 1
+        }
+        return "\(base) \(index)"
     }
 
     @discardableResult
@@ -69,6 +86,14 @@ final class AppState: ObservableObject {
             snapshots[id] = nil
             normalizeReportProviderSelection()
             lastError = nil
+            Task {
+                // Let any in-flight refresh finish: evicting mid-fetch would leave that account's
+                // WebView alive, and the store removal requires it to be released first.
+                for _ in 0 ..< 300 where isRefreshing {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
+                await WebSessionRegistry.shared.evict(config: config)
+            }
             return true
         } catch {
             lastError = error.localizedDescription

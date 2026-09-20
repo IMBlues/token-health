@@ -42,6 +42,13 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         }
     }
 
+    /// Providers whose normal credential path is the web session rather than a plain API key, so a
+    /// new config for them should start in Login mode. Excludes the single-API-key providers, which
+    /// ship an endpoint of their own.
+    var defaultsToBrowserLogin: Bool {
+        supportsWebLogin && !usesWebSession && !usesSingleAPIKeyOnly
+    }
+
     var usesWebSession: Bool {
         switch self {
         case .kimiCode, .zhipuCode, .miniMax, .volcengineArk:
