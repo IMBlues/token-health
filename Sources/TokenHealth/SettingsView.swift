@@ -548,7 +548,13 @@ struct SettingsView: View {
         case .volcengineArk:
             VolcengineArkWebLoginController.shared.startLogin(completion: completion)
         case .openCodeGo:
-            OpenCodeGoWebLoginController.shared.startLogin(completion: completion)
+            guard let config = appState.configs.first(where: { $0.id == selectedID }),
+                  let controller = WebSessionRegistry.shared.controller(for: config) else {
+                isWebLoginInProgress = false
+                appState.lastError = WebSessionError.unsupportedProvider.localizedDescription
+                return
+            }
+            controller.startLogin(completion: completion)
         case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             isWebLoginInProgress = false
         }

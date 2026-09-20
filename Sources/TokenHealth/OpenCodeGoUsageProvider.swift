@@ -1,6 +1,7 @@
 import Foundation
 
 struct OpenCodeGoUsageProvider: UsageProvider {
+    private static let providerTitle = "OpenCode Go"
     private let consoleHost = "console.opencode.ai"
     private let apiUsageEndpoint = "https://opencode.ai/zen/go/v1/usage"
 
@@ -23,10 +24,26 @@ struct OpenCodeGoUsageProvider: UsageProvider {
         do {
             let bundleData: Data
             do {
+                // Debug-only escape hatch for exercising the web-session fallback path; there is
+                // no real native request behind this failure.
+                if ProcessInfo.processInfo.environment["TOKEN_HEALTH_FORCE_WEB_FALLBACK"] == "1" {
+                    WebSessionLog.debugLog("forced web fallback", providerTitle: Self.providerTitle)
+                    throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "forced fallback")
+                }
                 bundleData = try await fetchUsageBundle(session: session)
             } catch {
-                OpenCodeGoWebLoginController.debugLog("native request failed: \(error.localizedDescription); falling back to active WebView")
-                bundleData = try await OpenCodeGoWebLoginController.shared.fetchUsageBundleFromActiveSession()
+                WebSessionLog.debugLog(
+                    "native request failed: \(error.localizedDescription); falling back to own session",
+                    providerTitle: Self.providerTitle
+                )
+                guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
+                    throw WebSessionError.unsupportedProvider
+                }
+                // The status endpoint takes no period parameters, so the context is intentionally
+                // unused by its script.
+                bundleData = try await controller.fetchUsage(
+                    context: .currentUTC()
+                )
             }
 
             let result = try OpenCodeGoUsageParser().parseBundle(data: bundleData)
@@ -48,16 +65,16 @@ struct OpenCodeGoUsageProvider: UsageProvider {
             )
         } catch {
             let message: String
-            if let loginError = error as? OpenCodeGoWebLoginController.LoginError {
-                switch loginError {
-                case .missingWebView:
+            if let sessionError = error as? WebSessionError {
+                switch sessionError {
+                case .unsupportedProvider:
                     message = "OpenCode Go session is unavailable. Re-login with OpenCode Go."
-                case let .requestFailed(text):
+                case let .requestFailed(_, text):
                     message = text.contains("401")
                         ? "OpenCode Go session expired. Re-login with OpenCode Go."
                         : text
                 default:
-                    message = loginError.localizedDescription
+                    message = sessionError.localizedDescription
                 }
             } else {
                 message = error.localizedDescription
@@ -82,12 +99,15 @@ struct OpenCodeGoUsageProvider: UsageProvider {
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
 
-        OpenCodeGoWebLoginController.debugLog("API usage request endpoint=\(url.absoluteString)")
+        WebSessionLog.debugLog("API usage request endpoint=\(url.absoluteString)", providerTitle: Self.providerTitle)
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
                 let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-                OpenCodeGoWebLoginController.debugLog("API usage request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))")
+                WebSessionLog.debugLog(
+                    "API usage request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))",
+                    providerTitle: Self.providerTitle
+                )
                 let message: String
                 if httpResponse.statusCode == 401 {
                     message = "OpenCode Go API key rejected (401). Check the key in Settings."
@@ -135,14 +155,23 @@ struct OpenCodeGoUsageProvider: UsageProvider {
             request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         }
 
-        OpenCodeGoWebLoginController.debugLog("native request endpoint=\(url.absoluteString), \(session.debugSummary)")
+        WebSessionLog.debugLog(
+            "native request endpoint=\(url.absoluteString), \(session.debugSummary)",
+            providerTitle: Self.providerTitle
+        )
         let (data, response) = try await URLSession.shared.data(for: request)
         if let httpResponse = response as? HTTPURLResponse, !(200..<300).contains(httpResponse.statusCode) {
             let body = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-            OpenCodeGoWebLoginController.debugLog("native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))")
-            throw OpenCodeGoWebLoginController.LoginError.requestFailed("OpenCode Go HTTP \(httpResponse.statusCode): \(body.prefix(160))")
+            WebSessionLog.debugLog(
+                "native request failed HTTP \(httpResponse.statusCode), body=\(body.prefix(220))",
+                providerTitle: Self.providerTitle
+            )
+            throw WebSessionError.requestFailed(
+                providerTitle: Self.providerTitle,
+                message: "OpenCode Go HTTP \(httpResponse.statusCode): \(body.prefix(160))"
+            )
         }
-        OpenCodeGoWebLoginController.debugLog("native request succeeded, bytes=\(data.count)")
+        WebSessionLog.debugLog("native request succeeded, bytes=\(data.count)", providerTitle: Self.providerTitle)
         return data
     }
 }

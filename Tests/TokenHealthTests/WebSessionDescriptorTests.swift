@@ -122,9 +122,10 @@ struct WebSessionDescriptorTests {
     }
 
     @Test
-    func factoryOnlyKnowsDeepSeekForNow() {
+    func factoryKnowsEveryMigratedProvider() {
         let factory = WebSessionDescriptorFactory()
         #expect(factory.descriptor(for: .deepSeek) != nil)
+        #expect(factory.descriptor(for: .openCodeGo) != nil)
         #expect(factory.descriptor(for: .kimiCode) == nil)
         #expect(factory.descriptor(for: .demo) == nil)
     }
