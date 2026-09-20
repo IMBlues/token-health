@@ -115,9 +115,9 @@ struct VolcengineArkWebSessionDescriptorTests {
 
     @Test
     func rejectsAnEmptyTextBody() {
-        #expect(throws: WebSessionError.self) {
-            _ = try descriptor.usageData(fromScriptResult: #"{"ok":true,"status":200,"text":""}"#)
-        }
+        expectInvalidResponse(#"{"ok":true,"status":200,"text":""}"#)
+        expectInvalidResponse(#"{"ok":true,"status":200,"hasCSRF":true}"#)
+        expectInvalidResponse("not json")
     }
 
     @Test
@@ -143,5 +143,16 @@ struct VolcengineArkWebSessionDescriptorTests {
         #expect(descriptor.missingSessionMessage == "No session found. Make sure Volcengine Ark is logged in.")
         #expect(descriptor.loginURL.absoluteString == "https://console.volcengine.com/ark/region:cn-beijing/subscription/agent-plan")
         #expect(descriptor.originHost == descriptor.loginURL.host)
+    }
+
+    private func expectInvalidResponse(_ scriptResult: String) {
+        do {
+            _ = try descriptor.usageData(fromScriptResult: scriptResult)
+            Issue.record("expected an invalidResponse error for \(scriptResult)")
+        } catch WebSessionError.invalidResponse(let providerTitle) {
+            #expect(providerTitle == "Volcengine Ark")
+        } catch {
+            Issue.record("unexpected error \(error) for \(scriptResult)")
+        }
     }
 }

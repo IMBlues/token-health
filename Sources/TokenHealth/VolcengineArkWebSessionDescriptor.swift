@@ -95,35 +95,16 @@ struct VolcengineArkWebSessionDescriptor: WebSessionDescriptor {
     }
 
     func usageData(fromScriptResult scriptResultJSON: String) throws -> Data {
-        guard let object = WebSessionScriptEnvelope.object(from: scriptResultJSON),
-              let text = object["text"] as? String,
-              !text.isEmpty,
-              let data = text.data(using: .utf8) else {
+        // The envelope's `text` is the site response body, and the kernel reports a missing field
+        // as the empty string, so empty text has to be rejected here rather than passed on.
+        guard let envelope = WebSessionScriptEnvelope.parse(scriptResultJSON), !envelope.text.isEmpty else {
             throw WebSessionError.invalidResponse(providerTitle: providerTitle)
         }
-        return data
+        return Data(envelope.text.utf8)
     }
 
     func accountLabel(fromCredential credential: String) -> String? {
         VolcengineArkWebSessionCredential.decode(from: credential)?.accountLabel
-    }
-
-    /// Matches the cookie name before the first "=" — never a prefix, so a "csrfTokenV2" cookie
-    /// cannot satisfy a lookup for "csrfToken". The kernel joins with "; ", unencoded.
-    private nonisolated static func cookieValue(named name: String, in cookieHeader: String?) -> String? {
-        guard let cookieHeader else {
-            return nil
-        }
-        for pair in cookieHeader.components(separatedBy: "; ") {
-            guard let separator = pair.firstIndex(of: "=") else {
-                continue
-            }
-            let candidateName = String(pair[..<separator])
-            if candidateName == name {
-                return String(pair[pair.index(after: separator)...])
-            }
-        }
-        return nil
     }
 
     /// Copied verbatim from the old controller (lines 312-317): the console's Chinese page title

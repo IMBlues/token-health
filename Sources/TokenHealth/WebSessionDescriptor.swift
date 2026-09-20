@@ -82,6 +82,27 @@ extension WebSessionDescriptor {
         loginURL.host ?? ""
     }
 
+    /// Pulls one named cookie out of the kernel's joined `name=value; name=value` header. The match
+    /// is on the full name before the first `=`, never on a prefix — `csrfToken` and a hypothetical
+    /// `csrfTokenV2` are different cookies. Values are returned raw (unencoded) and may themselves
+    /// contain `=`.
+    nonisolated static func cookieValue(named name: String, in cookieHeader: String?) -> String? {
+        guard let cookieHeader else {
+            return nil
+        }
+        for pair in cookieHeader.components(separatedBy: ";") {
+            let trimmed = pair.trimmingCharacters(in: .whitespaces)
+            guard let separatorIndex = trimmed.firstIndex(of: "=") else {
+                continue
+            }
+            guard trimmed[trimmed.startIndex ..< separatorIndex] == name else {
+                continue
+            }
+            return String(trimmed[trimmed.index(after: separatorIndex)...])
+        }
+        return nil
+    }
+
     /// Default: the envelope reports a failure with a 401 or 403 status. Override when a site
     /// signals an expired session differently.
     func isAuthenticationFailure(scriptResultJSON: String) -> Bool {

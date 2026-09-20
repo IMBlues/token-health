@@ -45,6 +45,38 @@ struct KimiWebSessionDescriptorTests {
     }
 
     @Test
+    func acceptsABareJWTAccessToken() {
+        // The nested fixture above only reaches the key-name heuristic (`looksLikeAccessTokenKey`).
+        // This one reaches the JWT heuristic: the key path below contains neither "access" nor
+        // "token", so `looksLikeAccessTokenKey` is false, and the value has no "Bearer " prefix —
+        // only the three-part JWT shape can admit it. A JWT-shaped value is stored unchanged.
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        let extraction = #"{"localStorage":{"session_credential":"\#(jwt)"}}"#
+        let encoded = descriptor.encodeCredential(
+            extractionJSON: extraction,
+            cookieHeader: "theme=dark",
+            pageTitle: nil
+        )
+
+        #expect(KimiWebSessionCredential.decode(from: encoded ?? "")?.accessToken == jwt)
+    }
+
+    @Test
+    func stripsTheBearerPrefixFromTheAccessToken() {
+        // The other value-shape branch: the key path contains neither "access" nor "token", so the
+        // "Bearer " prefix is the only reason this candidate qualifies, and the stored token must
+        // come back with the prefix stripped.
+        let extraction = #"{"sessionStorage":{"web_session":"Bearer kimi-token-0123456789abcdef"}}"#
+        let encoded = descriptor.encodeCredential(
+            extractionJSON: extraction,
+            cookieHeader: "theme=dark",
+            pageTitle: nil
+        )
+
+        #expect(KimiWebSessionCredential.decode(from: encoded ?? "")?.accessToken == "kimi-token-0123456789abcdef")
+    }
+
+    @Test
     func keepsATrafficIDOnlyExtraction() {
         // The pre-gate inside the moved `sessionCredential` nulls a wholly empty extraction but
         // must keep one that found no token yet does carry an embedded traffic id. Dropping the

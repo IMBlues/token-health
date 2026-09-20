@@ -98,10 +98,29 @@ struct ZhipuWebSessionDescriptorTests {
     }
 
     @Test
-    func returnsNilForMalformedExtraction() {
-        // Inherited from the kernel: a non-JSON extraction aborts the import instead of falling
-        // back to a cookie-only credential (the old controller's `storageCredential ?? new`).
-        #expect(descriptor.encodeCredential(extractionJSON: "not json", cookieHeader: "bigmodel_token_production=tok-1", pageTitle: nil) == nil)
+    func importsOnCookiesAloneWhenTheExtractionProducedNothing() {
+        // The kernel passes "" as the extraction result when the page's script did not run, and the
+        // old controller's `storageCredential ?? ZhipuWebSessionCredential()` fell through to a
+        // cookie-only credential. A non-JSON (or empty) extraction must therefore still import
+        // whenever cookies exist, exactly as Volcengine Ark already does.
+        let malformed = descriptor.encodeCredential(
+            extractionJSON: "not json",
+            cookieHeader: "theme=dark",
+            pageTitle: nil
+        )
+        #expect(ZhipuWebSessionCredential.decode(from: malformed ?? "")?.cookieHeader == "theme=dark")
+
+        let noScript = descriptor.encodeCredential(
+            extractionJSON: "",
+            cookieHeader: "theme=dark",
+            pageTitle: nil
+        )
+        #expect(ZhipuWebSessionCredential.decode(from: noScript ?? "")?.cookieHeader == "theme=dark")
+
+        // A wholly empty input — no cookies and no extraction — still returns nil.
+        #expect(descriptor.encodeCredential(extractionJSON: "not json", cookieHeader: nil, pageTitle: nil) == nil)
+        #expect(descriptor.encodeCredential(extractionJSON: "not json", cookieHeader: "", pageTitle: nil) == nil)
+        #expect(descriptor.encodeCredential(extractionJSON: "", cookieHeader: nil, pageTitle: nil) == nil)
     }
 
     @Test
@@ -160,6 +179,9 @@ struct ZhipuWebSessionDescriptorTests {
         #expect(descriptor.loginInstructions == "Log in with Zhipu, wait for usage stats to load, then import.")
         #expect(descriptor.missingSessionMessage == "No session found. Make sure Zhipu is logged in.")
         #expect(descriptor.loginURL.absoluteString == "https://bigmodel.cn/coding-plan/team/usage-stats")
+        // The literal pins the default: the login page, usage endpoint and native endpoints all
+        // share this host, so a future override would break the headless WebView's origin check.
+        #expect(descriptor.originHost == "bigmodel.cn")
         #expect(descriptor.originHost == descriptor.loginURL.host)
     }
 

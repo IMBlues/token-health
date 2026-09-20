@@ -531,43 +531,11 @@ struct SettingsView: View {
         }
 
         switch provider {
-        case .zhipuCode:
+        case .kimiCode, .deepSeek, .zhipuCode, .miniMax, .volcengineArk, .openCodeGo:
             guard let config = appState.configs.first(where: { $0.id == selectedID }),
                   let controller = WebSessionRegistry.shared.controller(for: config) else {
                 isWebLoginInProgress = false
-                appState.lastError = WebSessionError.unsupportedProvider.localizedDescription
-                return
-            }
-            controller.startLogin(completion: completion)
-        case .kimiCode, .deepSeek:
-            guard let config = appState.configs.first(where: { $0.id == selectedID }),
-                  let controller = WebSessionRegistry.shared.controller(for: config) else {
-                isWebLoginInProgress = false
-                appState.lastError = WebSessionError.unsupportedProvider.localizedDescription
-                return
-            }
-            controller.startLogin(completion: completion)
-        case .miniMax:
-            guard let config = appState.configs.first(where: { $0.id == selectedID }),
-                  let controller = WebSessionRegistry.shared.controller(for: config) else {
-                isWebLoginInProgress = false
-                appState.lastError = WebSessionError.unsupportedProvider.localizedDescription
-                return
-            }
-            controller.startLogin(completion: completion)
-        case .volcengineArk:
-            guard let config = appState.configs.first(where: { $0.id == selectedID }),
-                  let controller = WebSessionRegistry.shared.controller(for: config) else {
-                isWebLoginInProgress = false
-                appState.lastError = WebSessionError.unsupportedProvider.localizedDescription
-                return
-            }
-            controller.startLogin(completion: completion)
-        case .openCodeGo:
-            guard let config = appState.configs.first(where: { $0.id == selectedID }),
-                  let controller = WebSessionRegistry.shared.controller(for: config) else {
-                isWebLoginInProgress = false
-                appState.lastError = WebSessionError.unsupportedProvider.localizedDescription
+                appState.lastError = "This session is being removed. Try again in a moment."
                 return
             }
             controller.startLogin(completion: completion)

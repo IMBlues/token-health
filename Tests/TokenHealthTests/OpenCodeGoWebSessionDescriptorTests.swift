@@ -71,6 +71,9 @@ struct OpenCodeGoWebSessionDescriptorTests {
         #expect(descriptor.providerTitle == "OpenCode Go")
         #expect(descriptor.loginInstructions == "Log in with GitHub or Google at opencode.ai/auth, wait for the console to load, then import.")
         #expect(descriptor.missingSessionMessage == "No session found. Make sure the OpenCode console is logged in.")
+        // The literal pins the default origin: the usage script requests relative paths, so the
+        // headless page must stay on console.opencode.ai.
+        #expect(descriptor.originHost == "console.opencode.ai")
         #expect(descriptor.originHost == descriptor.loginURL.host)
     }
 }

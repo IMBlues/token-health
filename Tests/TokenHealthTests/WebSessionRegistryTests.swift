@@ -214,4 +214,11 @@ struct WebSessionRegistryTests {
         await WebSessionRegistry.removePersistentProfile(UUID())
         #expect(Bool(true))
     }
+
+    @Test(.timeLimit(.minutes(1)))
+    func queriesTheRealStoreForAnIdentifierWithNoProfile() async {
+        // Exercises the real SDK query rather than the injected stub: an identifier this app has
+        // never written must report false, and the call must return promptly.
+        #expect(await WebSessionRegistry.hasPersistentProfile(UUID()) == false)
+    }
 }

@@ -143,28 +143,6 @@ struct MiniMaxWebSessionDescriptor: WebSessionDescriptor {
         )
     }
 
-    /// Pulls one named cookie out of the kernel's joined header. The match is on the full name
-    /// before the first `=`, never on a prefix: `minimax_group_id_v2` and a hypothetical
-    /// `minimax_group_id_v2_x` are different cookies, and only the first match (in WebKit's own
-    /// order, which the join preserves) corresponds to the old `first(where:)` lookup.
-    private nonisolated static func cookieValue(named name: String, in cookieHeader: String?) -> String? {
-        guard let cookieHeader else {
-            return nil
-        }
-        for pair in cookieHeader.split(separator: ";") {
-            let trimmed = pair.trimmingCharacters(in: .whitespaces)
-            guard let separatorIndex = trimmed.firstIndex(of: "=") else {
-                continue
-            }
-            let cookieName = String(trimmed[trimmed.startIndex..<separatorIndex])
-            guard cookieName == name else {
-                continue
-            }
-            return String(trimmed[trimmed.index(after: separatorIndex)...])
-        }
-        return nil
-    }
-
     private nonisolated static func accountNameFromPageTitle(_ title: String?) -> String? {
         guard let title, !title.isEmpty, !title.contains("MiniMax") else {
             return nil

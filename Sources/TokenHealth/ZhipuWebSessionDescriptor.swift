@@ -24,18 +24,20 @@ struct ZhipuWebSessionDescriptor: WebSessionDescriptor {
     }
 
     func encodeCredential(extractionJSON: String, cookieHeader: String?, pageTitle: String?) -> String? {
-        guard let data = extractionJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return nil
+        var credential = ZhipuWebSessionCredential()
+        if let object = WebSessionScriptEnvelope.object(from: extractionJSON) {
+            credential.organizationID = object["organizationID"] as? String
+            credential.projectID = object["projectID"] as? String
+            credential.planName = PlanNameExtractor().find(in: object) ?? Self.planNameFromPageTitle(pageTitle)
         }
-
-        let credential = ZhipuWebSessionCredential(
-            accessToken: Self.cookieValue(named: "bigmodel_token_production", in: cookieHeader),
-            cookieHeader: cookieHeader,
-            organizationID: object["organizationID"] as? String,
-            projectID: object["projectID"] as? String,
-            planName: PlanNameExtractor().find(in: object) ?? Self.planNameFromPageTitle(pageTitle)
-        )
+        credential.cookieHeader = cookieHeader
+        // The kernel hands over a joined "name=value; name=value" header instead of the cookie
+        // store, so the named value the old controller read from the cookie store
+        // ("bigmodel_token_production") is pulled back out of the header. The old controller's
+        // `storageCredential ?? ZhipuWebSessionCredential()` only fell through to this lookup when
+        // the storage extraction produced no JSON — a cookie-only import — which is why the
+        // extraction block above is non-fatal and a missing/empty extraction does not abort.
+        credential.accessToken = Self.cookieValue(named: "bigmodel_token_production", in: cookieHeader)
         guard !credential.isEmpty else {
             return nil
         }
@@ -87,25 +89,6 @@ struct ZhipuWebSessionDescriptor: WebSessionDescriptor {
         // Same shape as DeepSeek; ZhipuWebSessionCredential.accountLabel is nil because the struct
         // carries a plan name, not an account name.
         ZhipuWebSessionCredential.decode(from: credential)?.accountLabel
-    }
-
-    /// Pulls one named cookie out of the kernel's joined `name=value; name=value` header. Matches
-    /// the whole name before the first `=`, never a prefix, and keeps everything after the first
-    /// `=` as the value, because cookie values may contain `=`. No decoding: the old Swift import
-    /// stored `WKHTTPCookie.value` undecoded.
-    private nonisolated static func cookieValue(named name: String, in cookieHeader: String?) -> String? {
-        guard let cookieHeader else {
-            return nil
-        }
-        for pair in cookieHeader.components(separatedBy: "; ") {
-            guard let separatorIndex = pair.firstIndex(of: "=") else {
-                continue
-            }
-            if pair[..<separatorIndex] == name {
-                return String(pair[pair.index(after: separatorIndex)...])
-            }
-        }
-        return nil
     }
 
     private nonisolated static func planNameFromPageTitle(_ title: String?) -> String? {
