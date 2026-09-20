@@ -10,9 +10,13 @@ struct WebSessionRegistryTests {
         var removed: [UUID] = []
     }
 
-    private func makeRegistry(spy: ProfileRemovalSpy) -> WebSessionRegistry {
+    private func makeRegistry(
+        spy: ProfileRemovalSpy,
+        existingProfiles: Set<UUID> = []
+    ) -> WebSessionRegistry {
         WebSessionRegistry(
             makeDataStore: { _ in .nonPersistent() },
+            hasStoredProfile: { existingProfiles.contains($0) },
             removeProfile: { id in spy.removed.append(id) }
         )
     }
@@ -163,8 +167,8 @@ struct WebSessionRegistryTests {
     @Test
     func evictClearsTheProfileAfterTheKernelWasDroppedByAProviderChange() async {
         let spy = ProfileRemovalSpy()
-        let registry = makeRegistry(spy: spy)
         var config = deepSeekConfig()
+        let registry = makeRegistry(spy: spy, existingProfiles: [config.id])
         _ = registry.controller(for: config)
 
         config.providerKind = .demo
@@ -173,6 +177,34 @@ struct WebSessionRegistryTests {
         await registry.evict(config: config)
 
         #expect(spy.removed == [config.id])
+    }
+
+    @Test
+    func evictClearsAProfileThatOutlivedTheAppRun() async {
+        // This account had a profile on disk from an earlier run, and this run never built a kernel
+        // for it (the provider kind was changed away from a web-login kind, then the app restarted).
+        // Neither the cache nor the current kind can answer "was there a profile?" — only the store
+        // query can. The config must therefore be one the factory rejects, or the descriptor arm of
+        // the guard short-circuits and this test would pass against the old bookkeeping too.
+        let spy = ProfileRemovalSpy()
+        var config = deepSeekConfig()
+        config.providerKind = .demo
+        let registry = makeRegistry(spy: spy, existingProfiles: [config.id])
+
+        await registry.evict(config: config)
+
+        #expect(spy.removed == [config.id])
+    }
+
+    @Test
+    func evictLeavesProfilesThatNeverExisted() async {
+        let spy = ProfileRemovalSpy()
+        let config = ServiceConfig(displayName: "Demo", providerKind: .demo, authMode: .api)
+        let registry = makeRegistry(spy: spy)
+
+        await registry.evict(config: config)
+
+        #expect(spy.removed.isEmpty)
     }
 
     @Test(.timeLimit(.minutes(1)))

@@ -6,18 +6,18 @@ final class WebSessionRegistry {
     static let shared = WebSessionRegistry()
 
     private let makeDataStore: @MainActor (UUID) -> WKWebsiteDataStore
+    private let hasStoredProfile: @MainActor (UUID) async -> Bool
     private let removeProfile: @MainActor (UUID) async -> Void
     private var controllers: [UUID: (kind: ProviderKind, controller: WebSessionController)] = [:]
     private var evictionsInFlight: Set<UUID> = []
-    /// Ids that have ever had a kernel built for them. The cache alone cannot answer "did this
-    /// config ever have a browser profile?" once a kernel has been dropped by a provider change.
-    private var configuredProfileIDs: Set<UUID> = []
 
     init(
         makeDataStore: @escaping @MainActor (UUID) -> WKWebsiteDataStore = { WKWebsiteDataStore(forIdentifier: $0) },
+        hasStoredProfile: @escaping @MainActor (UUID) async -> Bool = { await WebSessionRegistry.hasPersistentProfile($0) },
         removeProfile: @escaping @MainActor (UUID) async -> Void = { await WebSessionRegistry.removePersistentProfile($0) }
     ) {
         self.makeDataStore = makeDataStore
+        self.hasStoredProfile = hasStoredProfile
         self.removeProfile = removeProfile
     }
 
@@ -50,7 +50,6 @@ final class WebSessionRegistry {
             dataStore: makeDataStore(config.id)
         )
         controllers[config.id] = (kind: config.providerKind, controller: controller)
-        configuredProfileIDs.insert(config.id)
         return controller
     }
 
@@ -73,12 +72,25 @@ final class WebSessionRegistry {
         if let removed {
             await removed.controller.teardown()
         }
-        let hadRecordedProfile = configuredProfileIDs.remove(config.id) != nil
-        let hadProfile = removed != nil || hadRecordedProfile
-        guard hadProfile || WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil else {
+        // Whether this config ever had a profile cannot be answered by this run's bookkeeping: the
+        // provider kind may have changed, and the app may have restarted since. Ask the store.
+        // (`||` cannot take an `await` on its right side, hence the two-step guard.)
+        var hadProfile = removed != nil
+            || WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil
+        if !hadProfile {
+            hadProfile = await hasStoredProfile(config.id)
+        }
+        guard hadProfile else {
             return
         }
         await removeProfile(config.id)
+    }
+
+    /// Whether a persistent profile for this id exists on disk. Unlike anything kept in memory, this
+    /// answer survives an app restart.
+    static func hasPersistentProfile(_ id: UUID) async -> Bool {
+        let identifiers = await WKWebsiteDataStore.allDataStoreIdentifiers
+        return identifiers.contains(id)
     }
 
     /// The caller must guarantee that no WKWebView using this store is still alive (a hard SDK
