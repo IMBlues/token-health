@@ -127,6 +127,7 @@ struct WebSessionDescriptorTests {
         #expect(factory.descriptor(for: .deepSeek) != nil)
         #expect(factory.descriptor(for: .openCodeGo) != nil)
         #expect(factory.descriptor(for: .volcengineArk) != nil)
+        #expect(factory.descriptor(for: .zhipuCode) != nil)
         #expect(factory.descriptor(for: .kimiCode) == nil)
         #expect(factory.descriptor(for: .demo) == nil)
     }

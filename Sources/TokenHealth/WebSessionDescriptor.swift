@@ -106,7 +106,9 @@ struct WebSessionDescriptorFactory {
             VolcengineArkWebSessionDescriptor()
         case .openCodeGo:
             OpenCodeGoWebSessionDescriptor()
-        case .kimiCode, .zhipuCode, .miniMax,
+        case .zhipuCode:
+            ZhipuWebSessionDescriptor()
+        case .kimiCode, .miniMax,
              .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
             nil
         }

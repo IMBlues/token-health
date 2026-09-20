@@ -1,6 +1,8 @@
 import Foundation
 
-struct ZhipuWebSessionCredential: Codable, Equatable, Sendable {
+struct ZhipuWebSessionCredential: WebSessionCredential, Codable, Equatable, Sendable {
+    static let storagePrefix = "zhipu-web-session:"
+
     var accessToken: String?
     var cookieHeader: String?
     var organizationID: String?
@@ -11,6 +13,12 @@ struct ZhipuWebSessionCredential: Codable, Equatable, Sendable {
         (accessToken ?? "").isEmpty && (cookieHeader ?? "").isEmpty
     }
 
+    /// No account name is available: `planName` names a plan tier, not an account, so two accounts
+    /// on the same plan would show the same label.
+    var accountLabel: String? {
+        nil
+    }
+
     var debugSummary: String {
         let accessTokenStatus = (accessToken ?? "").isEmpty ? "no" : "yes"
         let cookieStatus = (cookieHeader ?? "").isEmpty ? "no" : "yes"
@@ -18,24 +26,5 @@ struct ZhipuWebSessionCredential: Codable, Equatable, Sendable {
         let projectStatus = (projectID ?? "").isEmpty ? "no" : "yes"
         let planStatus = (planName ?? "").isEmpty ? "no" : "yes"
         return "accessToken=\(accessTokenStatus) cookie=\(cookieStatus) org=\(orgStatus) project=\(projectStatus) plan=\(planStatus)"
-    }
-
-    func encodedForStorage() -> String {
-        guard let data = try? JSONEncoder().encode(self),
-              let string = String(data: data, encoding: .utf8) else {
-            return ""
-        }
-        return "zhipu-web-session:\(string)"
-    }
-
-    static func decode(from value: String) -> ZhipuWebSessionCredential? {
-        guard value.hasPrefix("zhipu-web-session:") else {
-            return nil
-        }
-        let json = String(value.dropFirst("zhipu-web-session:".count))
-        guard let data = json.data(using: .utf8) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(ZhipuWebSessionCredential.self, from: data)
     }
 }
