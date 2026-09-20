@@ -531,8 +531,6 @@ struct SettingsView: View {
         }
 
         switch provider {
-        case .kimiCode:
-            KimiWebLoginController.shared.startLogin(completion: completion)
         case .zhipuCode:
             guard let config = appState.configs.first(where: { $0.id == selectedID }),
                   let controller = WebSessionRegistry.shared.controller(for: config) else {
@@ -541,7 +539,7 @@ struct SettingsView: View {
                 return
             }
             controller.startLogin(completion: completion)
-        case .deepSeek:
+        case .kimiCode, .deepSeek:
             guard let config = appState.configs.first(where: { $0.id == selectedID }),
                   let controller = WebSessionRegistry.shared.controller(for: config) else {
                 isWebLoginInProgress = false
