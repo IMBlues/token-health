@@ -1805,6 +1805,16 @@ Expected: 与 Step 2 相比，属于 B 的目录消失，A 的还在。
 
 ---
 
+## 已知窄缺口（评审发现，阶段二处理）
+
+- **`configuredProfileIDs` 只在内存里**。组合路径：把某个 DeepSeek 配置的 Provider 改成不支持登录的类型
+  → 退出 App → 重新打开 → 删除该配置。此时 `removed == nil`、当前 kind 也拿不到 descriptor，
+  `evict` 会提前返回，那个账号留在磁盘上的 profile（含 cookie）就永远留着了。
+  正确的修法是别再自己做簿记，直接问系统：`await WKWebsiteDataStore.allDataStoreIdentifiers`
+  返回本 App 所有持久化 store 的 id，用它判断"这个 id 到底有没有 profile"，可以把
+  `configuredProfileIDs` 整个删掉。测试里把"查询是否存在"做成可注入的闭包即可。
+  只影响改过 Provider 类型又重启过的那一类配置，阶段一暂不处理。
+
 ## 阶段二（不在本计划内）
 
 按 spec §9：把 Kimi、Zhipu、MiniMax、Volcengine Ark、OpenCode Go 的描述符补齐
