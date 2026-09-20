@@ -409,7 +409,7 @@ git commit -m "Migrate Kimi to the shared web session kernel"
 ```bash
 bash scripts/build-app.sh
 ```
-先单独构建成功，再做后面的替换——**不要**把构建和替换写成一个 `&&` 之外的链条，否则构建失败也会把已装的 App 删掉。
+先单独构建成功，**再做后面的替换**——两者分成两步，避免构建失败时把已装的 App 删掉。
 
 - [ ] **Step 2: 安装并前台启动（带调试开关）**
 
