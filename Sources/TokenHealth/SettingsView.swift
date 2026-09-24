@@ -59,59 +59,15 @@ struct SettingsView: View {
                         .tag(Self.reportingSelectionID)
                     }
                 }
+                // 增删放在列表底部：这是 macOS 源码列表的惯例位置（Xcode、邮件、磁盘工具的列表都这样），
+                // 一条带分隔线的整宽行，贴着列表而不是悬在上方。
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    sidebarActionBar
+                }
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 240)
         } detail: {
             detail
-        }
-        // SwiftUI 会在工具栏最前面塞一个弹性空位，把侧边栏开关和增删按钮一起推到中间；
-        // 没有 API 关掉它，只能在窗口出现后摘。
-        .background(
-            WindowTuner { window in
-                SettingsToolbarTuner.tune(window)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    SettingsToolbarTuner.tune(window)
-                }
-            }
-        )
-        .toolbar {
-            // 挂在 NavigationSplitView 上，而不是侧边栏内容上 —— 这两种写法走的是不同的路径：
-            // 挂在侧边栏内容上时，macOS 26 会把条目摆到标题下方的中间区域；挂在整个分栏视图上
-            // 才会成为窗口工具栏的条目，落在侧边栏开关旁边，与系统设置一致。
-            //
-            // 两个都必须去掉工具栏默认的胶囊底：默认样式会给 Menu 与 Button 各套一个背景，
-            // 而 + 带菜单小箭头、− 不带，胶囊宽度就对不齐，看着像两个大小不一的泡泡。
-            // 两个**独立**的 ToolbarItem，不是一个 ToolbarItemGroup —— macOS 26 会把 Group
-            // 当成一簇摆放。两边都给同一个固定尺寸：实测不设时宿主视图一个是 33×14、
-            // 一个是 13.5×3.5，工具栏照各自的尺寸套胶囊，就成了两个宽窄高低都不一样的泡泡。
-            ToolbarItem(placement: .navigation) {
-                Menu {
-                    ForEach(ProviderKind.allCases) { kind in
-                        Button(kind.title) {
-                            addConfig(kind)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .menuStyle(.borderlessButton)
-                // frame 要加在 Menu 上，不是它的 label 上：宿主视图的尺寸取的是 Menu 自己的
-                // （含菜单小箭头），加在内部 Image 上量出来仍是 33×14。
-                .frame(width: 22, height: 22)
-                .help("Add a provider")
-            }
-
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    removeSelectedConfig()
-                } label: {
-                    Image(systemName: "minus")
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.borderless)
-                .disabled(!canRemoveSelection)
-                .help("Remove the selected provider")
-            }
         }
         .onAppear {
             if selectedID == nil {
@@ -129,6 +85,47 @@ struct SettingsView: View {
             if selectedID != appState.settingsSelectedID {
                 selectedID = appState.settingsSelectedID
             }
+        }
+    }
+
+    /// 侧边栏底部的增删条。
+    ///
+    /// 两个按钮都做成无边框的**等尺寸符号**：这里是 `Menu` + `Button` 混排，`Menu` 天生带一个小箭头，
+    /// 不把箭头隐掉、不给两边同样的 frame，就会渲染成两个宽窄不一的泡泡 —— 那正是之前被说丑的原因。
+    private var sidebarActionBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 0) {
+                // 两边都钉同一个外框尺寸（不是给内部的 Image 加 frame）：`Menu` 与 `Button`
+                // 量出来的布局尺寸本来就不一样，只在内层约束的话，外框仍会一个宽一个窄。
+                Menu {
+                    ForEach(ProviderKind.allCases) { kind in
+                        Button(kind.title) {
+                            addConfig(kind)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 24, height: 22)
+                .help("Add a provider")
+
+                Button {
+                    removeSelectedConfig()
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .buttonStyle(.borderless)
+                .frame(width: 24, height: 22)
+                .disabled(!canRemoveSelection)
+                .help("Remove the selected provider")
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
         }
     }
 
