@@ -136,11 +136,31 @@ enum DeepSeekUsageDetail {
         for day in byDay.values {
             totals.add(tokens: day)
         }
+
+        // 命中率的分母只有 prompt tokens（命中 + 未命中）。输出 tokens 不进缓存，
+        // 混进分母会把命中率压低，看起来像缓存失效了。
+        let promptTokens = totals.cacheHitTokens + totals.cacheMissTokens
+        let hitRate = promptTokens > 0
+            ? Double(totals.cacheHitTokens) / Double(promptTokens)
+            : nil
+
         return [
             DetailStat(label: "Output", value: UsageAmountFormatter.compactAmount(totals.outputTokens)),
             DetailStat(label: "Cache hit", value: UsageAmountFormatter.compactAmount(totals.cacheHitTokens)),
-            DetailStat(label: "Cache miss", value: UsageAmountFormatter.compactAmount(totals.cacheMissTokens))
+            DetailStat(label: "Cache miss", value: UsageAmountFormatter.compactAmount(totals.cacheMissTokens)),
+            DetailStat(label: "Hit rate", value: hitRate.map(percentText) ?? "—")
         ]
+    }
+
+    /// 一位小数的百分比。命中率在 97% 和 98% 之间差别很实在，整数会把它抹平。
+    private static func percentText(_ ratio: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 1
+        formatter.maximumFractionDigits = 1
+        let percent = NSNumber(value: ratio * 100)
+        return "\(formatter.string(from: percent) ?? "0")%"
     }
 
     // MARK: - table

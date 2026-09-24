@@ -156,7 +156,11 @@ struct DetailTableRow: Equatable, Sendable, Identifiable {
 
 ### 5.5 tokens 构成（breakdown）
 
-本月三个 token type 各自的合计，label 用 §7.3 文案表里的 `Output` / `Cache hit` / `Cache miss`。
+本月三个 token type 各自的合计，label 用 §7.3 文案表里的 `Output` / `Cache hit` / `Cache miss`，
+外加一个 `Hit rate`：**命中 /（命中 + 未命中）**，一位小数。
+
+输出 tokens 不进这个分母 —— 输出本来就不过缓存，混进去会把命中率压低，看着像缓存坏了。
+命中 + 未命中为 0 时显示 `—`，不拿一个除零出来的数字糊弄人。
 
 ### 5.6 按模型（table）
 
@@ -248,7 +252,7 @@ struct DetailPopoverView: View {
 | --- | --- |
 | 分组标题 | `Today` / `This month` |
 | 分组与表格里的三个值 | `Requests` / `Tokens` / `Cost` |
-| tokens 构成 | `Output` / `Cache hit` / `Cache miss` |
+| tokens 构成 | `Output` / `Cache hit` / `Cache miss` / `Hit rate` |
 | 表格标题与表头 | `By model · this month` / `Model` `Requests` `Tokens` `Cost` |
 | 趋势图标题 | `Tokens this month` |
 | 没有模型名 | `Unknown model` |

@@ -80,7 +80,8 @@ struct DetailPopoverRenderTests {
             breakdown: [
                 DetailStat(label: "Output", value: "8.1M"),
                 DetailStat(label: "Cache hit", value: "9.4M"),
-                DetailStat(label: "Cache miss", value: "0.7M")
+                DetailStat(label: "Cache miss", value: "0.7M"),
+                DetailStat(label: "Hit rate", value: "93.1%")
             ],
             table: DetailTable(
                 title: "By model · this month",

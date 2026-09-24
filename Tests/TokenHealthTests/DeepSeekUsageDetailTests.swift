@@ -157,8 +157,30 @@ struct DeepSeekUsageDetailTests {
             DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: nil), balances: [], today: period)
         )
 
-        #expect(detail.breakdown.map(\.label) == ["Output", "Cache hit", "Cache miss"])
-        #expect(detail.breakdown.map(\.value) == ["100", "900", "20"])
+        #expect(detail.breakdown.map(\.label) == ["Output", "Cache hit", "Cache miss", "Hit rate"])
+        #expect(detail.breakdown.map(\.value) == ["100", "900", "20", "97.8%"], "命中率 = 900 / (900 + 20)")
+    }
+
+    @Test
+    func reportsNoHitRateWhenThereWereNoPromptTokens() throws {
+        let detail = try #require(
+            DeepSeekUsageDetail.make(bundle: bundle(amountDays: "[]", costDays: nil), balances: [], today: period)
+        )
+
+        let rate = try #require(detail.breakdown.first { $0.label == "Hit rate" })
+        #expect(rate.value == "—", "没有 prompt token 时不拿一个除零出来的数字糊弄人")
+    }
+
+    @Test
+    func theHitRateIgnoresOutputTokens() throws {
+        // 输出不进缓存，不该混进命中率的分母。
+        let amount = "[\(day("2026-09-10", model: "m", requests: 1, output: 8_000, hit: 600, miss: 400))]"
+        let detail = try #require(
+            DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: nil), balances: [], today: period)
+        )
+
+        let rate = try #require(detail.breakdown.first { $0.label == "Hit rate" })
+        #expect(rate.value == "60.0%", "600 / (600 + 400)，8000 输出不参与")
     }
 
     @Test
