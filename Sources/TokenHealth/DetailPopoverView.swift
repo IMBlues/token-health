@@ -80,26 +80,32 @@ struct DetailPopoverView: View {
             }
         }
 
-        ForEach(detail.groups) { group in
-            VStack(alignment: .leading, spacing: 3) {
-                Text(group.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    // 最后一个值是花费，靠右；其余依次横排，每个都带上自己的标签 ——
-                    // 光有数字「6 · 240」是读不懂的。
-                    ForEach(Array(group.values.dropLast().enumerated()), id: \.element.id) { index, stat in
-                        if index > 0 {
-                            Text("·").font(.caption).foregroundStyle(.tertiary)
-                        }
-                        HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text(stat.label).font(.caption2).foregroundStyle(.secondary)
-                            Text(stat.value).font(.caption.monospacedDigit())
-                        }
+        // 「Today」「This month」排成一张表：行是时间范围，列是 Requests / Tokens / Cost，
+        // 同一列在所有行里对齐。做成流水式的一行行文字，两行的数字会各自起头、读起来像散句。
+        if let firstGroup = detail.groups.first, !firstGroup.values.isEmpty {
+            Grid(horizontalSpacing: 8, verticalSpacing: 4) {
+                GridRow {
+                    Text("")
+                        .gridColumnAlignment(.leading)
+                    ForEach(firstGroup.values) { stat in
+                        Text(stat.label)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            // Grid 默认居中，数字列要右对齐才能让位数对齐。
+                            .gridColumnAlignment(.trailing)
                     }
-                    Spacer(minLength: 8)
-                    if let cost = group.values.last {
-                        Text(cost.value).font(.caption.monospacedDigit())
+                }
+                ForEach(detail.groups) { group in
+                    GridRow {
+                        Text(group.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .gridColumnAlignment(.leading)
+                        ForEach(group.values) { stat in
+                            Text(stat.value)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -155,6 +161,7 @@ struct DetailPopoverView: View {
                             Text(column)
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
+                                .gridColumnAlignment(.trailing)
                         }
                     }
                     ForEach(table.rows) { row in
