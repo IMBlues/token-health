@@ -168,6 +168,38 @@ struct SettingsView: View {
                     Toggle("Enabled", isOn: binding.isEnabled)
                 }
 
+                Section("Menu Bar") {
+                    Toggle("Pin to menu bar", isOn: pinBinding(for: binding))
+
+                    if binding.wrappedValue.providerKind == .deepSeek {
+                        Picker("Display currency", selection: binding.displayCurrency) {
+                            Text("Original").tag(String?.none)
+                            Text("CNY").tag(String?.some("CNY"))
+                            Text("USD").tag(String?.some("USD"))
+                        }
+
+                        LabeledContent("Exchange rate") {
+                            HStack(spacing: 6) {
+                                Text(exchangeRateSummary)
+                                    .foregroundStyle(.secondary)
+                                Button {
+                                    Task {
+                                        await appState.refreshExchangeRate(force: true)
+                                    }
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Refresh exchange rate")
+                            }
+                        }
+                    }
+
+                    Text("Shows one thin bar per quota window next to the provider logo. The other icon keeps managing everything.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section {
                     if binding.wrappedValue.providerKind.usesLocalLogin {
                         LabeledContent("Source", value: localLoginSource(for: binding.wrappedValue.providerKind))
@@ -466,6 +498,34 @@ struct SettingsView: View {
             appState.reportHookConfig.providerConfigIDs = appState.configs.compactMap { candidate in
                 selectedIDs.contains(candidate.id) ? candidate.id : nil
             }
+        }
+    }
+
+    private func pinBinding(for binding: Binding<ServiceConfig>) -> Binding<Bool> {
+        Binding {
+            appState.pinnedConfigID == binding.wrappedValue.id
+        } set: { isPinned in
+            if isPinned {
+                appState.setPinnedConfigID(binding.wrappedValue.id)
+            } else if appState.pinnedConfigID == binding.wrappedValue.id {
+                appState.setPinnedConfigID(nil)
+            }
+        }
+    }
+
+    private var exchangeRateSummary: String {
+        let table = appState.exchangeRate
+        guard let rate = table.rate(from: "USD", to: "CNY") else {
+            return "Unavailable"
+        }
+        let value = String(format: "%.4f", locale: Locale(identifier: "en_US_POSIX"), rate)
+        switch table.origin {
+        case .live:
+            return "USD → CNY \(value) · live · \(StatusMenuSummary.relativeAge(from: table.fetchedAt, now: Date()))"
+        case .cache:
+            return "USD → CNY \(value) · cached · \(StatusMenuSummary.relativeAge(from: table.fetchedAt, now: Date()))"
+        case .fallback:
+            return "USD → CNY \(value) · built-in default, never fetched"
         }
     }
 
