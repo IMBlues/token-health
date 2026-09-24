@@ -1160,6 +1160,9 @@ Expected: 编译失败，`value of type 'AppState' has no member 'refresh'`
 
 ```swift
     /// 只重取一个账号，供详情浮层用。与整体刷新共用 `isRefreshing` 互斥。
+    ///
+    /// 刻意**不**更新 `lastRefreshAt`、也不重排定时器：面板表头那句「N/M updated · Xm ago」
+    /// 讲的是整体刷新的新鲜度，只刷了一个账号却显示「刚刚刷新」是在撒谎。
     func refresh(configID: UUID) async {
         guard !isRefreshing,
               let config = configs.first(where: { $0.id == configID }),
@@ -1167,10 +1170,7 @@ Expected: 编译失败，`value of type 'AppState' has no member 'refresh'`
             return
         }
         isRefreshing = true
-        defer {
-            isRefreshing = false
-            lastRefreshAt = Date()
-        }
+        defer { isRefreshing = false }
 
         let secrets = config.providerKind.usesLocalLogin
             ? ProviderSecrets.empty
