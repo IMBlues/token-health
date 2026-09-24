@@ -79,21 +79,4 @@ struct MenuBarItemRendererTests {
 
         #expect(opaquePixelCount(image) > 0)
     }
-
-    /// 数出至少部分不透明的像素。用来区分「画了东西」和「交了张空白图」。
-    private func opaquePixelCount(_ image: NSImage) -> Int {
-        guard let rep = image.representations.first as? NSBitmapImageRep,
-              let data = rep.bitmapData else {
-            return 0
-        }
-        let samples = rep.samplesPerPixel
-        let alphaIndex = samples - 1
-        var count = 0
-        for y in 0..<rep.pixelsHigh {
-            for x in 0..<rep.pixelsWide where data[y * rep.bytesPerRow + x * samples + alphaIndex] > 0 {
-                count += 1
-            }
-        }
-        return count
-    }
 }

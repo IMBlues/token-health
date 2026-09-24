@@ -52,6 +52,9 @@ final class PinnedStatusItemController: NSObject {
         cancellables.removeAll()
         appearanceObservation?.invalidate()
         appearanceObservation = nil
+        // 排队中的重绘会把刚移除的状态项又建回来。
+        pendingRedraw?.cancel()
+        pendingRedraw = nil
         removeStatusItem()
     }
 

@@ -46,7 +46,10 @@ struct ExchangeRateTable: Codable, Equatable, Sendable {
         }
         // Double 的二进制误差会顺着 Decimal 乘法传下去，先截到 6 位再转成十进制。
         let text = String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), rate)
-        guard let decimalRate = Decimal(string: text, locale: Locale(identifier: "en_US_POSIX")) else {
+        guard let decimalRate = Decimal(string: text, locale: Locale(identifier: "en_US_POSIX")),
+              decimalRate > 0 else {
+            // 极端汇率（例如 1 CNY = 2e7 USD）会截成 0。与其返回一个静默变成 0 的金额，
+            // 不如当作换不了，让调用方回退到原币种。
             return nil
         }
         return amount * decimalRate

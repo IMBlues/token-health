@@ -29,17 +29,34 @@ struct UsageMetricSelectionTests {
     }
 
     @Test
-    func classifiesRollingQuotaWindowsOnly() {
-        #expect(UsageMetricSelection.isRollingQuota(TokenUsage(window: .fiveHours, used: 1, limit: 10)))
-        #expect(UsageMetricSelection.isRollingQuota(TokenUsage(window: .week, used: 1, limit: 10)))
-        #expect(UsageMetricSelection.isRollingQuota(TokenUsage(window: .month, used: 1, limit: 10)))
-        #expect(UsageMetricSelection.isRollingQuota(TokenUsage(window: .mcpMonth, used: 1, limit: 10)))
-        #expect(UsageMetricSelection.isRollingQuota(TokenUsage(window: .videoGift, used: 1, limit: 10)))
+    func classifiesQuotaWindows() {
+        #expect(UsageMetricSelection.isQuotaWindow(TokenUsage(window: .fiveHours, used: 1, limit: 10)))
+        #expect(UsageMetricSelection.isQuotaWindow(TokenUsage(window: .week, used: 1, limit: 10)))
+        #expect(UsageMetricSelection.isQuotaWindow(TokenUsage(window: .month, used: 1, limit: 10)))
+        #expect(UsageMetricSelection.isQuotaWindow(TokenUsage(window: .mcpMonth, used: 1, limit: 10)))
+        #expect(UsageMetricSelection.isQuotaWindow(TokenUsage(window: .videoGift, used: 1, limit: 10)))
+        // GenericHTTP 的总额度：卡片对它也画进度条，钉住项不能漏。
+        #expect(UsageMetricSelection.isQuotaWindow(TokenUsage(window: .tokenQuota, used: 1, limit: 10)))
 
-        #expect(!UsageMetricSelection.isRollingQuota(TokenUsage(window: .balance, used: 0, limit: nil)))
-        #expect(!UsageMetricSelection.isRollingQuota(TokenUsage(window: .todayCost, used: 0, limit: nil)))
-        #expect(!UsageMetricSelection.isRollingQuota(TokenUsage(window: .sevenDaysTokens, label: "7d Token total", used: 5, limit: nil)))
-        #expect(!UsageMetricSelection.isRollingQuota(TokenUsage(window: .sevenDaysTools, used: 5, limit: nil)))
+        #expect(!UsageMetricSelection.isQuotaWindow(TokenUsage(window: .balance, used: 0, limit: nil)))
+        #expect(!UsageMetricSelection.isQuotaWindow(TokenUsage(window: .todayCost, used: 0, limit: nil)))
+        #expect(!UsageMetricSelection.isQuotaWindow(TokenUsage(window: .todayTokens, used: 0, limit: nil)))
+        #expect(!UsageMetricSelection.isQuotaWindow(TokenUsage(window: .todayRequests, used: 0, limit: nil)))
+        #expect(!UsageMetricSelection.isQuotaWindow(TokenUsage(window: .sevenDaysTokens, label: "7d Token total", used: 5, limit: nil)))
+        #expect(!UsageMetricSelection.isQuotaWindow(TokenUsage(window: .sevenDaysTools, used: 5, limit: nil)))
+    }
+
+    @Test
+    func pinnedMetricsIncludeTheTotalTokenQuota() {
+        // 同一个窗口不能在卡片上有比例、在菜单栏上却是空槽。
+        // tokenQuota 的 rank 是 4，排在 5h 的 10 之前，沿用卡片既有顺序。
+        let usages = [
+            TokenUsage(window: .fiveHours, used: 10, limit: 100),
+            TokenUsage(window: .tokenQuota, used: 40, limit: 100)
+        ]
+        let pinned = UsageMetricSelection.pinnedMetrics(from: usages, kind: .genericHTTP)
+
+        #expect(pinned.map(\.window) == [.tokenQuota, .fiveHours])
     }
 
     @Test

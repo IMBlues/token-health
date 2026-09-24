@@ -3,16 +3,8 @@ import Foundation
 import Testing
 @testable import TokenHealth
 
+@MainActor
 struct ProviderIconTests {
-    @Test
-    func everyProviderResolvesToOneFormOfIcon() {
-        for kind in ProviderKind.allCases {
-            let hasAsset = ProviderIcon.assetName(for: kind) != nil
-            let hasSymbol = !ProviderIcon.symbolName(for: kind).isEmpty
-            #expect(hasAsset || hasSymbol, "\(kind) has neither a logo asset nor a fallback symbol")
-        }
-    }
-
     @Test
     func brandedProvidersDeclareAnAsset() {
         #expect(ProviderIcon.assetName(for: .kimiCode) == "kimi")
@@ -36,20 +28,28 @@ struct ProviderIconTests {
         }
     }
 
+    /// 写错一个 SF Symbol 名字不会报错，只会静默画出一张空白图。
     @Test
-    func loadsTheBundledLogoAtTheRequestedSize() {
-        let image = ProviderIcon.image(for: .kimiCode, size: 16, tint: .black)
-
-        #expect(image.size.width == 16)
-        #expect(image.size.height == 16)
-        #expect(!image.isTemplate, "the composed menu bar image must keep its colors")
+    func everyFallbackSymbolNameIsReal() {
+        for kind in ProviderKind.allCases {
+            let name = ProviderIcon.symbolName(for: kind)
+            #expect(
+                NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil,
+                "\(name) is not a valid SF Symbol, so \(kind) would silently draw a blank image"
+            )
+        }
     }
 
+    /// 不管走 logo 还是走 SF Symbol，每个 Provider 都得真的落墨。
     @Test
-    func fallsBackToASymbolForProvidersWithoutALogo() {
-        let image = ProviderIcon.image(for: .genericHTTP, size: 16, tint: .black)
+    func everyProviderDrawsSomething() {
+        for kind in ProviderKind.allCases {
+            let image = ProviderIcon.image(for: kind, size: 16, tint: .black)
 
-        #expect(image.size.width == 16)
-        #expect(image.size.height == 16)
+            #expect(image.size.width == 16)
+            #expect(image.size.height == 16)
+            #expect(!image.isTemplate, "the composed menu bar image must keep its colors")
+            #expect(opaquePixelCount(image) > 8, "\(kind) drew (almost) nothing")
+        }
     }
 }

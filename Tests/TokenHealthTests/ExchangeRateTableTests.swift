@@ -39,6 +39,14 @@ struct ExchangeRateTableTests {
     }
 
     @Test
+    func refusesARateThatRoundsToZero() {
+        // 1 CNY = 2e7 USD 这种量级截到 6 位小数会变成 0。宁可当作换不了，
+        // 也不要返回一个静默变成 0 的金额。
+        let extreme = ExchangeRateTable(base: "USD", rates: ["CNY": 2e7], fetchedAt: Date(), origin: .live)
+        #expect(extreme.convert(1, from: "CNY", to: "USD") == nil)
+    }
+
+    @Test
     func fallbackShipsAFixedRate() {
         #expect(ExchangeRateTable.fallback.origin == .fallback)
         #expect(ExchangeRateTable.fallback.rate(from: "USD", to: "CNY") == 7.2)

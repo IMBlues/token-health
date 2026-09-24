@@ -16,13 +16,17 @@ enum UsageMetricSelection {
         (usage.label ?? "").lowercased().contains("total")
     }
 
-    /// 滚动额度窗口：5h / 周 / 月 / MCP 月 / 视频赠送。
-    /// 余额、今日用量、7 日明细都是计数或金额，没有比例可画。
-    static func isRollingQuota(_ usage: TokenUsage) -> Bool {
+    /// 有比例可画的额度窗口：5h / 周 / 月 / MCP 月 / 视频赠送，外加总额度（`tokenQuota`，
+    /// GenericHTTP 一类的 `total_used` / `total_granted`）。
+    ///
+    /// `tokenQuota` 必须算进来：卡片对它也是画进度条的（`primaryUsages` 让 `.tokenQuota` 通过，
+    /// 只要有 ratio 就渲染 ProgressView）。少算它会让同一个窗口在卡片上有比例、在钉住项上却是空槽。
+    /// 余额、今日用量、7 日明细则是计数或金额，本来就没有比例。
+    static func isQuotaWindow(_ usage: TokenUsage) -> Bool {
         switch usage.window {
-        case .fiveHours, .week, .month, .mcpMonth, .videoGift:
+        case .fiveHours, .week, .month, .mcpMonth, .videoGift, .tokenQuota:
             true
-        case .balance, .tokenQuota, .todayCost, .todayTokens, .todayRequests,
+        case .balance, .todayCost, .todayTokens, .todayRequests,
              .sevenDaysTokens, .sevenDaysTools:
             false
         }
@@ -90,11 +94,11 @@ enum UsageMetricSelection {
 
     /// 钉住项要画的全部额度指标，按显示顺序。
     ///
-    /// 没有 `limit` 的滚动窗口会被跳过：卡片在这种情况下根本不画进度条，
+    /// 没有 `limit` 的窗口会被跳过：卡片在这种情况下根本不画进度条，
     /// 钉住项若画一根空槽，会被读成「用了 0%」而不是「不知道」。
     static func pinnedMetrics(from usages: [TokenUsage], kind: ProviderKind) -> [TokenUsage] {
         let quota = usages.filter { usage in
-            guard isRollingQuota(usage), usage.ratio != nil else {
+            guard isQuotaWindow(usage), usage.ratio != nil else {
                 return false
             }
             return kind == .codex ? isAccountLevel(usage) : true

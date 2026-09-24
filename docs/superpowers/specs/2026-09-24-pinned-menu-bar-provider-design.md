@@ -32,8 +32,10 @@
 
 - **pin**：被钉住的账号，记录形式是该 `ServiceConfig` 的 id。
 - **指标（metric）**：菜单栏项上要画的一个额度窗口，对应一根竖条（或 DeepSeek 的一个金额）。
-- **额度窗口**：`UsageWindow` 中带 `limit` 的滚动额度，即 `fiveHours / week / month / mcpMonth / videoGift`。
-  同类型但 `limit` 缺失（或为 0）的项**不算**额度窗口 —— 卡片在这种情况下本来就不画进度条，
+- **额度窗口**：`UsageWindow` 中凡是有比例可画的窗口 —— 滚动额度 `fiveHours / week / month /
+  mcpMonth / videoGift`，外加总额度 `tokenQuota`（GenericHTTP 一类的 `total_used` / `total_granted`）。
+  余额、今日用量、7 日明细都是计数或金额，本来就没有比例。
+  窗口类型对但 `limit` 缺失（或为 0）的项也**不算**额度窗口 —— 卡片在这种情况下不画进度条，
   钉住项必须一致，否则一根空槽会被读成「用了 0%」而不是「不知道」。
 - **状态项**：AppKit 的 `NSStatusItem`，即菜单栏上的一块区域。
 
@@ -135,8 +137,9 @@ enum UsageMetricSelection {
 
 `pinnedMetrics` 的规则：
 
-1. 取 `isRollingQuota` 的项，且必须 `ratio != nil`（即 `limit` 存在且大于 0）；Codex 额外要求账号级，
-   排除模型额度桶。
+1. 取 `isQuotaWindow` 的项，且必须 `ratio != nil`（即 `limit` 存在且大于 0）；Codex 额外要求账号级，
+   排除模型额度桶。`isQuotaWindow` 必须包含 `.tokenQuota`：卡片对它也是画进度条的，
+   少算它会让同一个窗口在卡片上有比例、在钉住项上却是空槽。
 2. Cursor 的 `.month` 池（Auto + Composer / API / Grokbot）天然满足 1。
 3. 按 `rank` 升序（5h → 周 → 月 → MCP 月 → 视频赠送）。
 4. 全部落空时返回空数组 —— 由调用方决定退化成什么（DeepSeek 走金额分支，其余走空槽分支）。
