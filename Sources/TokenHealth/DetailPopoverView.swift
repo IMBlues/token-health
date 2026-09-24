@@ -83,16 +83,14 @@ struct DetailPopoverView: View {
         // 「Today」「This month」排成一张表：行是时间范围，列是 Requests / Tokens / Cost，
         // 同一列在所有行里对齐。做成流水式的一行行文字，两行的数字会各自起头、读起来像散句。
         if let firstGroup = detail.groups.first, !firstGroup.values.isEmpty {
-            Grid(horizontalSpacing: 8, verticalSpacing: 4) {
+            // 显式 .leading：Grid 不给对齐参数时是居中，去掉对齐覆盖并不会回到左对齐。
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
                 GridRow {
                     Text("")
-                        .gridColumnAlignment(.leading)
                     ForEach(firstGroup.values) { stat in
                         Text(stat.label)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                            // Grid 默认居中，数字列要右对齐才能让位数对齐。
-                            .gridColumnAlignment(.trailing)
                     }
                 }
                 ForEach(detail.groups) { group in
@@ -100,7 +98,6 @@ struct DetailPopoverView: View {
                         Text(group.title)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
-                            .gridColumnAlignment(.leading)
                         ForEach(group.values) { stat in
                             Text(stat.value)
                                 .font(.caption.monospacedDigit())
@@ -151,17 +148,15 @@ struct DetailPopoverView: View {
                     .foregroundStyle(.secondary)
                 // 用 Grid 而不是手拼 HStack：同一列在所有行里会按最宽的那个单元格对齐。
                 // 用固定的 minWidth 各撑各的，表头与数值就会错开。
-                Grid(horizontalSpacing: 8, verticalSpacing: 4) {
+                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
                     GridRow {
                         Text(table.columns.first ?? "")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                            .gridColumnAlignment(.leading)
                         ForEach(Array(table.columns.dropFirst().enumerated()), id: \.offset) { _, column in
                             Text(column)
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
-                                .gridColumnAlignment(.trailing)
                         }
                     }
                     ForEach(table.rows) { row in
@@ -170,7 +165,6 @@ struct DetailPopoverView: View {
                                 .font(.caption)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                                .gridColumnAlignment(.leading)
                             ForEach(Array(row.cells.enumerated()), id: \.offset) { _, cell in
                                 Text(cell)
                                     .font(.caption.monospacedDigit())
