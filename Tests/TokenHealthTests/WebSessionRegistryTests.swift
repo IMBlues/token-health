@@ -6,18 +6,14 @@ import WebKit
 @Suite
 @MainActor
 struct WebSessionRegistryTests {
-    private final class ProfileRemovalSpy {
-        var removed: [UUID] = []
+    private final class ProfileClearSpy {
+        var cleared: [UUID] = []
     }
 
-    private func makeRegistry(
-        spy: ProfileRemovalSpy,
-        existingProfiles: Set<UUID> = []
-    ) -> WebSessionRegistry {
+    private func makeRegistry(spy: ProfileClearSpy) -> WebSessionRegistry {
         WebSessionRegistry(
             makeDataStore: { _ in .nonPersistent() },
-            hasStoredProfile: { existingProfiles.contains($0) },
-            removeProfile: { id in spy.removed.append(id) }
+            clearProfile: { id in spy.cleared.append(id) }
         )
     }
 
@@ -27,7 +23,7 @@ struct WebSessionRegistryTests {
 
     @Test
     func reusesControllerForSameConfig() {
-        let registry = makeRegistry(spy: ProfileRemovalSpy())
+        let registry = makeRegistry(spy: ProfileClearSpy())
         let config = deepSeekConfig()
 
         let first = registry.controller(for: config)
@@ -39,7 +35,7 @@ struct WebSessionRegistryTests {
 
     @Test
     func separatesControllersPerConfig() {
-        let registry = makeRegistry(spy: ProfileRemovalSpy())
+        let registry = makeRegistry(spy: ProfileClearSpy())
         let first = deepSeekConfig()
         let second = deepSeekConfig()
 
@@ -50,62 +46,80 @@ struct WebSessionRegistryTests {
 
     @Test
     func returnsNilForProvidersWithoutDescriptor() {
-        let registry = makeRegistry(spy: ProfileRemovalSpy())
+        let registry = makeRegistry(spy: ProfileClearSpy())
         let config = ServiceConfig(displayName: "Demo", providerKind: .demo, authMode: .api)
 
         #expect(registry.controller(for: config) == nil)
     }
 
     @Test
-    func evictRemovesControllerAndProfile() async {
-        let spy = ProfileRemovalSpy()
+    func evictRemovesControllerAndClearsProfile() async {
+        let spy = ProfileClearSpy()
         let registry = makeRegistry(spy: spy)
         let config = deepSeekConfig()
         let first = registry.controller(for: config)
 
         await registry.evict(config: config)
 
-        #expect(spy.removed == [config.id])
+        #expect(spy.cleared == [config.id])
         #expect(registry.controller(for: config) !== first)
     }
 
+    /// 「添加一个 provider 再删掉，这次运行没建过 kernel」—— 崩在这里第一次。
+    /// 以前这一支会去问 `allDataStoreIdentifiers`，那个调用本身就会 SIGSEGV。
     @Test
-    func evictClearsProfileEvenWithoutController() async {
-        // 这次运行没建过 kernel，但盘上确实有 profile（App 重启过）。
-        // 与下面那个用例的区别：这里 provider 类型**没变**，所以它只考验「缓存答不了就问 store」，
-        // 不牵扯「类型变了」那条路径。
-        let spy = ProfileRemovalSpy()
-        let config = deepSeekConfig()
-        let registry = makeRegistry(spy: spy, existingProfiles: [config.id])
-
-        await registry.evict(config: config)
-
-        #expect(spy.removed == [config.id])
-    }
-
-    @Test
-    func evictLeavesOtherProvidersAlone() async {
-        let spy = ProfileRemovalSpy()
+    func evictClearsTheProfileOfAConfigThatNeverBuiltAKernel() async {
+        let spy = ProfileClearSpy()
         let registry = makeRegistry(spy: spy)
-        let config = ServiceConfig(displayName: "Demo", providerKind: .demo, authMode: .api)
+        let config = deepSeekConfig()
 
         await registry.evict(config: config)
 
-        #expect(spy.removed.isEmpty)
+        #expect(spy.cleared == [config.id])
+    }
+
+    /// 加完就删、还没登录过的账号走的就是这条：没有 kernel，也不该被跳过。
+    @Test
+    func evictClearsTheProfileOfAFreshlyAddedAccount() async {
+        let spy = ProfileClearSpy()
+        let registry = makeRegistry(spy: spy)
+        var config = deepSeekConfig()
+        _ = registry.controller(for: config)
+
+        // 改掉 provider 类型，缓存里那个 kernel 会被丢掉 —— 但盘上的 profile 还在。
+        config.providerKind = .demo
+        _ = registry.controller(for: config)
+
+        await registry.evict(config: config)
+
+        #expect(spy.cleared == [config.id])
     }
 
     @Test
-    func evictTearsTheKernelDownBeforeRemovingTheProfile() async {
-        let spy = ProfileRemovalSpy()
-        var tornDownWhenProfileRemoved: Bool?
+    func evictClearsTheProfileForProvidersWithoutAWebSession() async {
+        let spy = ProfileClearSpy()
+        let registry = makeRegistry(spy: spy)
+        // codex / cursor 这类没有网页会话的账号也走 evict：清一遍是安全的，
+        // 而「先判断有没有 profile」反而要付出崩溃的代价。
+        let config = ServiceConfig(displayName: "Codex", providerKind: .codex, authMode: .api)
+
+        await registry.evict(config: config)
+
+        #expect(spy.cleared == [config.id])
+    }
+
+    @Test
+    func evictTearsTheKernelDownBeforeClearingTheProfile() async {
+        let spy = ProfileClearSpy()
+        var tornDownWhenProfileCleared: Bool?
         var controller: WebSessionController?
         let registry = WebSessionRegistry(
             makeDataStore: { _ in .nonPersistent() },
-            removeProfile: { id in
+            clearProfile: { id in
                 // Read at the SDK call, not after evict returns: a post-hoc assertion would stay
-                // green if evict were reordered to remove the profile first.
-                tornDownWhenProfileRemoved = controller?.isTornDown
-                spy.removed.append(id)
+                // green if evict were reordered to clear the profile first.
+                tornDownWhenProfileCleared = controller?.isTornDown
+                spy.cleared.append(id)
             }
         )
         let config = deepSeekConfig()
@@ -113,8 +127,8 @@ struct WebSessionRegistryTests {
 
         await registry.evict(config: config)
 
-        #expect(tornDownWhenProfileRemoved == true)
-        #expect(spy.removed == [config.id])
+        #expect(tornDownWhenProfileCleared == true)
+        #expect(spy.cleared == [config.id])
     }
 
     @Test
@@ -125,21 +139,21 @@ struct WebSessionRegistryTests {
         var registry: WebSessionRegistry!
         registry = WebSessionRegistry(
             makeDataStore: { _ in .nonPersistent() },
-            removeProfile: { _ in rebuiltDuringEviction = registry.controller(for: config) }
+            clearProfile: { _ in rebuiltDuringEviction = registry.controller(for: config) }
         )
         _ = registry.controller(for: config)
 
         await registry.evict(config: config)
 
         // The probe fires while `evict` is suspended mid-flight (kernel already torn down, profile
-        // not yet removed). Without the tombstone it would build a new kernel on the profile that
-        // the same `evict` is about to delete, violating the SDK's release-first precondition.
+        // not yet cleared). Without the tombstone it would build a new kernel on the profile that
+        // the same `evict` is about to clear.
         #expect(rebuiltDuringEviction == nil)
     }
 
     @Test
     func rebuildingAfterEvictionYieldsAFreshKernel() async {
-        let registry = makeRegistry(spy: ProfileRemovalSpy())
+        let registry = makeRegistry(spy: ProfileClearSpy())
         let config = deepSeekConfig()
         let first = registry.controller(for: config)
 
@@ -152,7 +166,7 @@ struct WebSessionRegistryTests {
 
     @Test
     func changingTheProviderKindReplacesTheCachedKernel() async {
-        let registry = makeRegistry(spy: ProfileRemovalSpy())
+        let registry = makeRegistry(spy: ProfileClearSpy())
         var config = deepSeekConfig()
         let deepSeekKernel = registry.controller(for: config)
 
@@ -166,75 +180,51 @@ struct WebSessionRegistryTests {
         let rebuilt = registry.controller(for: config)
         #expect(rebuilt !== deepSeekKernel)
     }
+}
+
+/// `WKWebsiteDataStore.allDataStoreIdentifiers` 和 `WKWebsiteDataStore.remove(forIdentifier:)`
+/// 在某些 macOS 上会让 WebKit 在 `WebsiteDataStoreIO` 队列里 SIGSEGV（`os_unfair_lock_lock`
+/// 踩在地址 0x40 上，一个只调这一句的空 App 都能复现）。这两条已经删掉了，但单元测试挡不住
+/// 有人再把它们加回来 —— swift-testing 进程不是真正的 App bundle，那两个调用在测试里永远是
+/// 绿的，只有在真 App 里才崩。所以这里从源码层面钉死。
+@Suite
+struct WebKitDataStoreAPIGuardTests {
+    private static let forbidden = [
+        "allDataStoreIdentifiers",
+        "remove(forIdentifier:",
+    ]
 
     @Test
-    func evictClearsTheProfileAfterTheKernelWasDroppedByAProviderChange() async {
-        let spy = ProfileRemovalSpy()
-        var config = deepSeekConfig()
-        let registry = makeRegistry(spy: spy, existingProfiles: [config.id])
-        _ = registry.controller(for: config)
+    func noSourceFileCallsTheCrashingDataStoreAPIs() throws {
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // TokenHealthTests
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // package root
+            .appendingPathComponent("Sources")
 
-        config.providerKind = .demo
-        _ = registry.controller(for: config)
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)
+        var offenders: [String] = []
+        var scanned = 0
+        while let file = files?.nextObject() as? URL {
+            guard file.pathExtension == "swift" else {
+                continue
+            }
+            scanned += 1
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for (index, rawLine) in text.components(separatedBy: .newlines).enumerated() {
+                // 注释里点名这些 API 是有意的（解释为什么不能用），只查真正的代码。
+                let code = rawLine.components(separatedBy: "//").first ?? rawLine
+                for token in Self.forbidden where code.contains(token) {
+                    let name = file.lastPathComponent
+                    offenders.append("\(name):\(index + 1) 用了 \(token)")
+                }
+            }
+        }
 
-        await registry.evict(config: config)
-
-        #expect(spy.removed == [config.id])
-    }
-
-    @Test
-    func evictClearsAProfileThatOutlivedTheAppRun() async {
-        // This account had a profile on disk from an earlier run, and this run never built a kernel
-        // for it (the provider kind was changed away from a web-login kind, then the app restarted).
-        // Neither the cache nor the current kind can answer "was there a profile?" — only the store
-        // query can.
-        let spy = ProfileRemovalSpy()
-        var config = deepSeekConfig()
-        config.providerKind = .demo
-        let registry = makeRegistry(spy: spy, existingProfiles: [config.id])
-
-        await registry.evict(config: config)
-
-        #expect(spy.removed == [config.id])
-    }
-
-    @Test
-    func evictLeavesProfilesThatNeverExisted() async {
-        let spy = ProfileRemovalSpy()
-        // 网页会话型 provider：有 descriptor，但这台机器上从来没有它的 profile。
-        // 这正是「新加一个 provider 再删掉」的路径 —— 无条件去删一个不存在的 store，
-        // 会让 WebKit 在 removeDataStoreWithIdentifierImpl 里 SIGSEGV。
-        let config = deepSeekConfig()
-        let registry = makeRegistry(spy: spy)
-
-        await registry.evict(config: config)
-
-        #expect(spy.removed.isEmpty, "没有 profile 就不该去删，否则 WebKit 会崩")
-    }
-
-    @Test
-    func evictLeavesProfilesThatNeverExistedForProvidersWithoutADescriptor() async {
-        let spy = ProfileRemovalSpy()
-        let config = ServiceConfig(displayName: "Demo", providerKind: .demo, authMode: .api)
-        let registry = makeRegistry(spy: spy)
-
-        await registry.evict(config: config)
-
-        #expect(spy.removed.isEmpty)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func removePersistentProfileCompletesForAnUnknownIdentifier() async {
-        // Exercises the one path that calls the SDK removal API; a completion handler that never
-        // fires would suspend this forever.
-        await WebSessionRegistry.removePersistentProfile(UUID())
-        #expect(Bool(true))
-    }
-
-    @Test(.timeLimit(.minutes(1)))
-    func queriesTheRealStoreForAnIdentifierWithNoProfile() async {
-        // Exercises the real SDK query rather than the injected stub: an identifier this app has
-        // never written must report false, and the call must return promptly.
-        #expect(await WebSessionRegistry.hasPersistentProfile(UUID()) == false)
+        #expect(scanned > 0, "没扫到任何源文件，路径算错了")
+        #expect(
+            offenders.isEmpty,
+            "这些 API 会让 WebKit 段错误，改走 WebSessionRegistry.clearPersistentProfile：\(offenders)"
+        )
     }
 }

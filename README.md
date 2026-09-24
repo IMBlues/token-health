@@ -4,6 +4,8 @@
 >
 > 原生 macOS 菜单栏仪表盘，给正在写代码的人。
 
+简体中文 | [English](README.en.md)
+
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black)
 ![Swift 6](https://img.shields.io/badge/Swift-6.0-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -129,6 +131,19 @@ bash scripts/test.sh
 
 `scripts/test.sh` 只是把 CommandLineTools 里 swift-testing 的 `Testing.framework` 路径喂给 `swift test`。
 没装 Xcode 的机器上直接用 `swift test` 会以 `no such module 'Testing'` 失败，看起来像代码坏了，其实不是。
+
+### provider 生命周期 QA
+
+```bash
+bash scripts/qa-provider-lifecycle.sh
+```
+
+添加 / 删除 provider 走的是 WebKit 的 per-identifier data store，而这条路上的崩溃**单元测试挡不住**：
+swift-testing 进程不是真正的 App bundle，同样的调用在测试里永远是绿的，只有在真 App 里才段错误。
+所以这个脚本真的构建、真的以 App 身份把「添加一个 provider、删掉它、再删一个从没建过会话的账号」跑一遍，
+按退出码判定 —— 崩了就是 139。
+
+它会把构建产物复制一份、换成 `local.token-health.qa` 再跑，不会动到你自己的 WebKit 数据。
 
 这是一个小而原生的 SwiftUI 项目。入口从 `Sources/TokenHealth/StatusMenuView.swift`、`SettingsView.swift` 和各 Provider 实现开始。
 

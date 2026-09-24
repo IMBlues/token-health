@@ -20,7 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-@main
 struct TokenHealthApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appState: AppState

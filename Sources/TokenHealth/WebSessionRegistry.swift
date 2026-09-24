@@ -6,19 +6,16 @@ final class WebSessionRegistry {
     static let shared = WebSessionRegistry()
 
     private let makeDataStore: @MainActor (UUID) -> WKWebsiteDataStore
-    private let hasStoredProfile: @MainActor (UUID) async -> Bool
-    private let removeProfile: @MainActor (UUID) async -> Void
+    private let clearProfile: @MainActor (UUID) async -> Void
     private var controllers: [UUID: (kind: ProviderKind, controller: WebSessionController)] = [:]
     private var evictionsInFlight: Set<UUID> = []
 
     init(
         makeDataStore: @escaping @MainActor (UUID) -> WKWebsiteDataStore = { WKWebsiteDataStore(forIdentifier: $0) },
-        hasStoredProfile: @escaping @MainActor (UUID) async -> Bool = { await WebSessionRegistry.hasPersistentProfile($0) },
-        removeProfile: @escaping @MainActor (UUID) async -> Void = { await WebSessionRegistry.removePersistentProfile($0) }
+        clearProfile: @escaping @MainActor (UUID) async -> Void = { await WebSessionRegistry.clearPersistentProfile($0) }
     ) {
         self.makeDataStore = makeDataStore
-        self.hasStoredProfile = hasStoredProfile
-        self.removeProfile = removeProfile
+        self.clearProfile = clearProfile
     }
 
     /// Returns this config's kernel, creating it on first use; nil when the provider cannot log in
@@ -55,15 +52,13 @@ final class WebSessionRegistry {
 
     /// Deletes an account: evicts the kernel and clears the profile on disk.
     /// `config.id` is tombstoned for the duration of the eviction, so `controller(for:)` cannot
-    /// build a new kernel on a profile that is about to be removed. The profile is cleared if this
-    /// config ever had one — even if no kernel was created in this run (app restarted, then deleted
+    /// build a new kernel on a profile that is about to be removed. The profile is cleared
+    /// unconditionally — even if no kernel was created in this run (app restarted, then deleted
     /// the account), or if its provider kind has since changed to something the factory no longer
     /// recognises.
     ///
     /// `teardown()` first unblocks any in-flight load or script wait, closes the login window and
-    /// yields once so those tasks get a chance to release their WebView; only then is the store
-    /// removed (the SDK requires the WKWebViews using that store to be released first). It is
-    /// **not** a hard barrier, so do not treat it here as "already drained".
+    /// yields once so those tasks get a chance to release their WebView.
     func evict(config: ServiceConfig) async {
         evictionsInFlight.insert(config.id)
         defer { evictionsInFlight.remove(config.id) }
@@ -72,44 +67,27 @@ final class WebSessionRegistry {
         if let removed {
             await removed.controller.teardown()
         }
-        // Whether this config ever had a profile cannot be answered by this run's bookkeeping: the
-        // provider kind may have changed, and the app may have restarted since. Ask the store.
-        //
-        // 别把「这个 provider 类型用网页会话」当成有 profile 的证据（这里曾经就是那么写的）：
-        // 刚添加、还没登录过的账号从来没有 store，而对一个不存在的 identifier 调
-        // `WKWebsiteDataStore.remove(forIdentifier:)` 会让 WebKit 在
-        // `removeDataStoreWithIdentifierImpl` 里 SIGSEGV —— 这正是「添加一个 provider 再删掉」的崩因。
-        // (`||` cannot take an `await` on its right side, hence the two-step guard.)
-        var hadProfile = removed != nil
-        if !hadProfile {
-            hadProfile = await hasStoredProfile(config.id)
-        }
-        guard hadProfile else {
-            return
-        }
-        await removeProfile(config.id)
+        await clearProfile(config.id)
     }
 
-    /// Whether a persistent profile for this id exists on disk. Unlike anything kept in memory, this
-    /// answer survives an app restart.
-    static func hasPersistentProfile(_ id: UUID) async -> Bool {
-        let identifiers = await WKWebsiteDataStore.allDataStoreIdentifiers
-        return identifiers.contains(id)
-    }
-
-    /// The caller must guarantee that no WKWebView using this store is still alive (a hard SDK
-    /// requirement); `evict` reaches here only after `teardown()`.
-    static func removePersistentProfile(_ id: UUID) async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            WKWebsiteDataStore.remove(forIdentifier: id) { error in
-                if let error {
-                    WebSessionLog.error(
-                        "profile removal failed for \(id.uuidString): \(error.localizedDescription)",
-                        providerTitle: "WebSession"
-                    )
-                }
-                continuation.resume()
-            }
-        }
+    /// 清掉这个 id 在 WebKit 里的全部网页数据。
+    ///
+    /// 别改回「先问有没有 profile，再 `remove(forIdentifier:)`」那套。那两条路在某些 macOS
+    /// 上都会让 WebKit 在 `WebsiteDataStoreIO` 队列里 SIGSEGV（`os_unfair_lock_lock` 踩在
+    /// 地址 0x40 上；一个只调这一句的空 App 都能复现）：`allDataStoreIdentifiers` 无条件崩，
+    /// 对没有 store 的 id 调 `remove` 则崩在 `removeDataStoreWithIdentifierImpl` 里。
+    ///
+    /// 而且 `remove` 就算不崩也不见得有用：它要求 store 无人使用，但 `teardown()` 明确不是
+    /// 屏障，WebView 往往还活着，于是它以 "Data store is in use" 失败 —— 数据一点没清掉。
+    ///
+    /// `dataStoreForIdentifier:` 文档保证「不存在就创建」，是安全的；建出来直接把数据擦干。
+    /// 代价是给从没有过 profile 的账号也留一个空的 store 目录（约 180K），换来这条路永远
+    /// 不崩、也永远真的清掉。
+    static func clearPersistentProfile(_ id: UUID) async {
+        let store = WKWebsiteDataStore(forIdentifier: id)
+        await store.removeData(
+            ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
+            modifiedSince: .distantPast
+        )
     }
 }
