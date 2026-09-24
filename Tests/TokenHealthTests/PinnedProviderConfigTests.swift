@@ -9,16 +9,48 @@ struct PinnedProviderConfigTests {
     }
 
     @Test
-    func pinnedConfigIDRoundTrips() {
+    func pinnedConfigIDsRoundTrip() {
         let store = makeStore()
-        #expect(store.loadPinnedConfigID() == nil)
+        #expect(store.loadPinnedConfigIDs().isEmpty)
 
-        let id = UUID()
-        store.savePinnedConfigID(id)
-        #expect(store.loadPinnedConfigID() == id)
+        let first = UUID()
+        let second = UUID()
+        store.savePinnedConfigIDs([first, second])
+        #expect(store.loadPinnedConfigIDs() == [first, second])
 
-        store.savePinnedConfigID(nil)
-        #expect(store.loadPinnedConfigID() == nil)
+        store.savePinnedConfigIDs([])
+        #expect(store.loadPinnedConfigIDs().isEmpty)
+    }
+
+    @Test
+    func keepsTheOrderItWasGiven() {
+        let store = makeStore()
+        let ids = (0..<4).map { _ in UUID() }
+        store.savePinnedConfigIDs(ids.reversed())
+        #expect(store.loadPinnedConfigIDs() == Array(ids.reversed()))
+    }
+
+    @Test
+    func migratesTheSingleLegacyPin() {
+        let suite = UserDefaults(suiteName: "pinned-provider-tests-\(UUID().uuidString)")!
+        let legacyID = UUID()
+        // 旧版只存一个 id，是裸字符串。
+        suite.set(legacyID.uuidString, forKey: "pinned-provider.config.v1")
+
+        let store = ConfigStore(defaults: suite, secretStore: InMemorySecretStore())
+        #expect(store.loadPinnedConfigIDs() == [legacyID])
+    }
+
+    @Test
+    func prefersTheStoredListOverTheLegacyPin() {
+        let suite = UserDefaults(suiteName: "pinned-provider-tests-\(UUID().uuidString)")!
+        suite.set(UUID().uuidString, forKey: "pinned-provider.config.v1")
+
+        let store = ConfigStore(defaults: suite, secretStore: InMemorySecretStore())
+        let current = UUID()
+        store.savePinnedConfigIDs([current])
+
+        #expect(store.loadPinnedConfigIDs() == [current])
     }
 
     @Test

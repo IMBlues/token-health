@@ -6,7 +6,9 @@ final class ConfigStore {
     private let legacyDefaultsKey = "service.configs.v1"
     private let reportHookDefaultsKey = "usage-report-hook.config.v1"
     private let refreshIntervalDefaultsKey = "refresh-interval.config.v1"
-    private let pinnedProviderDefaultsKey = "pinned-provider.config.v1"
+    private let pinnedProvidersDefaultsKey = "pinned-provider.config.v2"
+    // 只存单个 pin 的旧键。只读不写：读到就当作一个元素的列表，与其他历史键的处理一致。
+    private let legacyPinnedProviderDefaultsKey = "pinned-provider.config.v1"
     private let exchangeRateDefaultsKey = "exchange-rate.config.v1"
     private let secretsPrefix = "service.secrets.v1"
     private let defaults: UserDefaults
@@ -61,19 +63,23 @@ final class ConfigStore {
         defaults.set(interval, forKey: refreshIntervalDefaultsKey)
     }
 
-    func loadPinnedConfigID() -> UUID? {
-        guard let raw = defaults.string(forKey: pinnedProviderDefaultsKey) else {
-            return nil
+    func loadPinnedConfigIDs() -> [UUID] {
+        if let data = defaults.data(forKey: pinnedProvidersDefaultsKey),
+           let ids = try? JSONDecoder().decode([UUID].self, from: data) {
+            return ids
         }
-        return UUID(uuidString: raw)
+        if let raw = defaults.string(forKey: legacyPinnedProviderDefaultsKey),
+           let id = UUID(uuidString: raw) {
+            return [id]
+        }
+        return []
     }
 
-    func savePinnedConfigID(_ id: UUID?) {
-        if let id {
-            defaults.set(id.uuidString, forKey: pinnedProviderDefaultsKey)
-        } else {
-            defaults.removeObject(forKey: pinnedProviderDefaultsKey)
+    func savePinnedConfigIDs(_ ids: [UUID]) {
+        guard let data = try? JSONEncoder().encode(ids) else {
+            return
         }
+        defaults.set(data, forKey: pinnedProvidersDefaultsKey)
     }
 
     func loadExchangeRate() -> ExchangeRateTable? {

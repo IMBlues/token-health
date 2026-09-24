@@ -28,68 +28,124 @@ struct AppStatePinnedProviderTests {
     }
 
     @Test
-    func pinningIsExclusiveAndPersists() {
+    func pinningSeveralAccountsKeepsThemApart() {
         let defaults = makeDefaults()
         let state = makeState(defaults: defaults)
         let first = state.addConfig(providerKind: .kimiCode)
         let second = state.addConfig(providerKind: .zhipuCode)
 
-        state.setPinnedConfigID(first)
-        #expect(state.pinnedConfigID == first)
+        state.setPinned(first, true)
+        #expect(state.isPinned(first))
+        #expect(!state.isPinned(second))
 
-        state.setPinnedConfigID(second)
-        #expect(state.pinnedConfigID == second)
-        #expect(ConfigStore(defaults: defaults).loadPinnedConfigID() == second)
+        state.setPinned(second, true)
+        #expect(state.isPinned(first), "pinning a second account must not evict the first")
+        #expect(state.isPinned(second))
+        #expect(ConfigStore(defaults: defaults, secretStore: InMemorySecretStore()).loadPinnedConfigIDs().count == 2)
     }
 
     @Test
-    func unpinningClearsTheStoredValue() {
+    func pinnedConfigsFollowTheAccountListOrder() {
+        let state = makeState(defaults: makeDefaults())
+        let first = state.addConfig(providerKind: .kimiCode)
+        let second = state.addConfig(providerKind: .zhipuCode)
+        let third = state.addConfig(providerKind: .openCodeGo)
+
+        // 倒着钉，顺序仍然按账号列表来。
+        state.setPinned(third, true)
+        state.setPinned(first, true)
+        state.setPinned(second, true)
+
+        #expect(state.pinnedConfigs.map(\.id) == [first, second, third])
+    }
+
+    @Test
+    func unpinningRemovesOnlyThatAccount() {
         let defaults = makeDefaults()
         let state = makeState(defaults: defaults)
-        let id = state.addConfig(providerKind: .kimiCode)
+        let first = state.addConfig(providerKind: .kimiCode)
+        let second = state.addConfig(providerKind: .zhipuCode)
 
-        state.setPinnedConfigID(id)
-        state.setPinnedConfigID(nil)
+        state.setPinned(first, true)
+        state.setPinned(second, true)
+        state.setPinned(first, false)
 
-        #expect(state.pinnedConfigID == nil)
-        #expect(ConfigStore(defaults: defaults).loadPinnedConfigID() == nil)
+        #expect(!state.isPinned(first))
+        #expect(state.isPinned(second))
+        #expect(state.pinnedConfigs.map(\.id) == [second])
+        #expect(ConfigStore(defaults: defaults, secretStore: InMemorySecretStore()).loadPinnedConfigIDs() == [second])
     }
 
     @Test
-    func deletingThePinnedConfigClearsThePin() {
-        let defaults = makeDefaults()
-        let state = makeState(defaults: defaults)
-        let pinned = state.addConfig(providerKind: .kimiCode)
-        let other = state.addConfig(providerKind: .zhipuCode)
-
-        state.setPinnedConfigID(pinned)
-        #expect(state.deleteConfig(id: pinned))
-
-        #expect(state.pinnedConfigID == nil)
-        #expect(state.pinnedConfigID != other)
-    }
-
-    @Test
-    func deletingAnotherConfigKeepsThePin() {
-        let defaults = makeDefaults()
-        let state = makeState(defaults: defaults)
-        let pinned = state.addConfig(providerKind: .kimiCode)
-        let other = state.addConfig(providerKind: .zhipuCode)
-
-        state.setPinnedConfigID(pinned)
-        #expect(state.deleteConfig(id: other))
-
-        #expect(state.pinnedConfigID == pinned)
-    }
-
-    @Test
-    func pinnedSnapshotIsReachableByID() {
+    func pinningTwiceIsIdempotent() {
         let state = makeState(defaults: makeDefaults())
         let id = state.addConfig(providerKind: .kimiCode)
-        state.setPinnedConfigID(id)
 
-        #expect(state.pinnedConfig?.id == id)
-        #expect(state.pinnedSnapshot == nil)
+        state.setPinned(id, true)
+        state.setPinned(id, true)
+
+        #expect(state.pinnedConfigIDs == [id])
+    }
+
+    @Test
+    func deletingOnePinnedAccountLeavesTheOthers() {
+        let state = makeState(defaults: makeDefaults())
+        let first = state.addConfig(providerKind: .kimiCode)
+        let second = state.addConfig(providerKind: .zhipuCode)
+        let third = state.addConfig(providerKind: .openCodeGo)
+
+        state.setPinned(first, true)
+        state.setPinned(second, true)
+        state.setPinned(third, true)
+        #expect(state.deleteConfig(id: second))
+
+        #expect(state.pinnedConfigIDs == [first, third])
+        #expect(state.pinnedConfigs.map(\.id) == [first, third])
+    }
+
+    @Test
+    func aStoredPinPointingAtADeletedAccountIsDroppedOnLaunch() {
+        let defaults = makeDefaults()
+        let first = makeState(defaults: defaults)
+        let kept = first.addConfig(providerKind: .kimiCode)
+        let gone = first.addConfig(providerKind: .zhipuCode)
+        first.setPinned(kept, true)
+        first.setPinned(gone, true)
+
+        // 模拟另一个会话把第二个账号删了，只留下一个悬空的 pin。
+        let store = ConfigStore(defaults: defaults, secretStore: InMemorySecretStore())
+        store.saveConfigs(store.loadConfigs().filter { $0.id != gone })
+
+        let relaunched = makeState(defaults: defaults)
+
+        #expect(relaunched.pinnedConfigIDs == [kept])
+        #expect(store.loadPinnedConfigIDs() == [kept])
+    }
+
+    @Test
+    func pilingUpPinsSurvivesARelaunch() {
+        let defaults = makeDefaults()
+        let first = makeState(defaults: defaults)
+        let ids = [
+            first.addConfig(providerKind: .kimiCode),
+            first.addConfig(providerKind: .zhipuCode)
+        ]
+        ids.forEach { first.setPinned($0, true) }
+
+        let reloaded = makeState(defaults: defaults)
+
+        #expect(reloaded.pinnedConfigIDs == ids)
+        #expect(reloaded.pinnedConfigs.map(\.id) == ids)
+    }
+
+    @Test
+    func aPinnedAccountExposesItsSnapshot() throws {
+        let state = makeState(defaults: makeDefaults())
+        let id = state.addConfig(providerKind: .kimiCode)
+        state.setPinned(id, true)
+
+        #expect(state.pinnedConfigs.map(\.id) == [id])
+        #expect(state.snapshots[id] == nil, "还没有刷新过")
 
         state.snapshots[id] = ProviderUsageSnapshot(
             id: id,
@@ -101,34 +157,14 @@ struct AppStatePinnedProviderTests {
             updatedAt: Date()
         )
 
-        #expect(state.pinnedSnapshot?.usages.count == 1)
-    }
-
-    @Test
-    func pinnedConfigIsNilWhenThePinPointsNowhere() {
-        let state = makeState(defaults: makeDefaults())
-        state.setPinnedConfigID(UUID())
-
-        #expect(state.pinnedConfig == nil)
-        #expect(state.pinnedSnapshot == nil)
-    }
-
-    @Test
-    func aStoredPinPointingAtADeletedAccountIsDroppedOnLaunch() {
-        let defaults = makeDefaults()
-        let store = ConfigStore(defaults: defaults)
-        store.savePinnedConfigID(UUID())
-
-        let state = makeState(defaults: defaults)
-
-        #expect(state.pinnedConfigID == nil)
-        #expect(store.loadPinnedConfigID() == nil)
+        let pinned = try #require(state.pinnedConfigs.first)
+        #expect(state.snapshots[pinned.id]?.usages.count == 1)
     }
 
     @Test
     func theExchangeRateStartsFromTheCachedValue() {
         let defaults = makeDefaults()
-        ConfigStore(defaults: defaults).saveExchangeRate(
+        ConfigStore(defaults: defaults, secretStore: InMemorySecretStore()).saveExchangeRate(
             ExchangeRateTable(
                 base: "USD",
                 rates: ["CNY": 6.6],

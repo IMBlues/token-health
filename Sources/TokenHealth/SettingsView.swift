@@ -195,7 +195,7 @@ struct SettingsView: View {
                         }
                     }
 
-                    Text("Shows one thin bar per quota window next to the provider logo. The other icon keeps managing everything.")
+                    Text("Each pinned account gets its own menu bar item: the provider logo, then one thin bar per quota window. Items follow the order of the account list above. The other icon keeps managing everything.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -503,13 +503,9 @@ struct SettingsView: View {
 
     private func pinBinding(for binding: Binding<ServiceConfig>) -> Binding<Bool> {
         Binding {
-            appState.pinnedConfigID == binding.wrappedValue.id
+            appState.isPinned(binding.wrappedValue.id)
         } set: { isPinned in
-            if isPinned {
-                appState.setPinnedConfigID(binding.wrappedValue.id)
-            } else if appState.pinnedConfigID == binding.wrappedValue.id {
-                appState.setPinnedConfigID(nil)
-            }
+            appState.setPinned(binding.wrappedValue.id, isPinned)
         }
     }
 

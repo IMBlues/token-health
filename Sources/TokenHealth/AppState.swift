@@ -14,7 +14,7 @@ final class AppState: ObservableObject {
     @Published var nextRefreshAt: Date
     @Published var refreshInterval: TimeInterval
     @Published var lastRefreshAt: Date?
-    @Published var pinnedConfigID: UUID?
+    @Published var pinnedConfigIDs: [UUID]
     @Published private(set) var exchangeRate: ExchangeRateTable
     @Published var reportHookConfig: ReportHookConfig
     @Published var isReporting = false
@@ -42,9 +42,9 @@ final class AppState: ObservableObject {
         refreshInterval = interval
         nextRefreshAt = Date().addingTimeInterval(interval)
         exchangeRate = resolvedRateStore.table
-        pinnedConfigID = configStore.loadPinnedConfigID()
+        pinnedConfigIDs = configStore.loadPinnedConfigIDs()
         normalizeReportProviderSelection()
-        normalizePinnedConfigID()
+        normalizePinnedConfigIDs()
         do {
             try configStore.migrateLegacySecrets(for: configs)
         } catch {
@@ -118,8 +118,8 @@ final class AppState: ObservableObject {
         do {
             try configStore.deleteConfig(config, from: &configs)
             snapshots[id] = nil
-            if pinnedConfigID == id {
-                setPinnedConfigID(nil)
+            if pinnedConfigIDs.contains(id) {
+                setPinned(id, false)
             }
             normalizeReportProviderSelection()
             lastError = nil
@@ -138,34 +138,41 @@ final class AppState: ObservableObject {
         }
     }
 
-    var pinnedConfig: ServiceConfig? {
-        guard let pinnedConfigID else {
-            return nil
-        }
-        return configs.first { $0.id == pinnedConfigID }
+    /// 被钉住的账号，**按账号列表的顺序**给出 —— 菜单栏项就按这个顺序摆。
+    var pinnedConfigs: [ServiceConfig] {
+        configs.filter { pinnedConfigIDs.contains($0.id) }
     }
 
-    var pinnedSnapshot: ProviderUsageSnapshot? {
-        guard let pinnedConfigID else {
-            return nil
-        }
-        return snapshots[pinnedConfigID]
+    func isPinned(_ id: UUID) -> Bool {
+        pinnedConfigIDs.contains(id)
     }
 
-    func setPinnedConfigID(_ id: UUID?) {
-        guard pinnedConfigID != id else {
+    func setPinned(_ id: UUID, _ isPinned: Bool) {
+        var ids = pinnedConfigIDs
+        if isPinned {
+            guard !ids.contains(id) else {
+                return
+            }
+            ids.append(id)
+        } else {
+            guard ids.contains(id) else {
+                return
+            }
+            ids.removeAll { $0 == id }
+        }
+        pinnedConfigIDs = ids
+        configStore.savePinnedConfigIDs(ids)
+    }
+
+    /// 指向已不存在的账号时清掉，避免菜单栏项一直等一个不会来的配置。
+    private func normalizePinnedConfigIDs() {
+        let known = Set(configs.map(\.id))
+        let surviving = pinnedConfigIDs.filter(known.contains)
+        guard surviving != pinnedConfigIDs else {
             return
         }
-        pinnedConfigID = id
-        configStore.savePinnedConfigID(id)
-    }
-
-    /// 指向已不存在的账号时清掉，避免界面一直等一个不会来的配置。
-    private func normalizePinnedConfigID() {
-        guard let pinnedConfigID, !configs.contains(where: { $0.id == pinnedConfigID }) else {
-            return
-        }
-        setPinnedConfigID(nil)
+        pinnedConfigIDs = surviving
+        configStore.savePinnedConfigIDs(surviving)
     }
 
     func refreshExchangeRate(force: Bool = false) async {
