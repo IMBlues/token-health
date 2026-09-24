@@ -62,12 +62,13 @@ enum DeepSeekUsageDetail {
 
     // MARK: - headline
 
+    /// 余额：label 是币种代码，值只放金额 —— 币种已经在 label 上了，值里再来一遍是重复。
     private static func headline(from balances: [TokenUsage]) -> [DetailStat] {
         balances.compactMap { balance in
             guard let currency = balance.unit, !currency.isEmpty, let amount = balance.amount else {
                 return nil
             }
-            return DetailStat(label: currency, value: money(amount, currency: currency))
+            return DetailStat(label: currency, value: UsageAmountFormatter.moneyText(amount))
         }
     }
 

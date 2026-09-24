@@ -53,7 +53,7 @@ struct DeepSeekUsageDetailTests {
         )
 
         #expect(detail.headline.map(\.label) == ["CNY", "USD"])
-        #expect(detail.headline.map(\.value) == ["1,284.60 CNY", "3.00 USD"])
+        #expect(detail.headline.map(\.value) == ["1,284.60", "3.00"], "币种在 label 上，值里不重复")
     }
 
     @Test
