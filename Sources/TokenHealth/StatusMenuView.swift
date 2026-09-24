@@ -291,68 +291,74 @@ private struct UsageCard: View {
     }
 
     private func primaryUsages(from usages: [TokenUsage]) -> [TokenUsage] {
-        usages.filter { usage in
+        let selected = usages.filter { usage in
             switch usage.window {
             case .sevenDaysTokens:
-                return isTokenTotal(usage)
+                return UsageMetricSelection.isTokenTotal(usage)
             case .sevenDaysTools:
                 return false
             case .balance, .tokenQuota:
                 return true
             case .todayCost, .todayTokens, .todayRequests:
-                return isTodayTotal(usage)
+                return UsageMetricSelection.isTodayTotal(usage)
             case .fiveHours, .week, .month, .mcpMonth, .videoGift:
                 return true
             }
         }
-        .sorted(by: usageSort)
+        return UsageMetricSelection.sorted(selected, kind: config.providerKind)
     }
 
     private func detailUsages(from usages: [TokenUsage]) -> [TokenUsage] {
-        usages.filter { usage in
+        let selected = usages.filter { usage in
             switch usage.window {
             case .sevenDaysTokens:
-                return !isTokenTotal(usage)
+                return !UsageMetricSelection.isTokenTotal(usage)
             case .sevenDaysTools:
                 return true
             case .balance, .tokenQuota:
                 return false
             case .todayCost, .todayTokens, .todayRequests:
-                return !isTodayTotal(usage)
+                return !UsageMetricSelection.isTodayTotal(usage)
             case .fiveHours, .week, .month, .mcpMonth, .videoGift:
                 return false
             }
         }
-        .sorted(by: usageSort)
+        return UsageMetricSelection.sorted(selected, kind: config.providerKind)
     }
 
     private func compactUsages(from usages: [TokenUsage]) -> [TokenUsage] {
         if config.providerKind == .deepSeek {
-            return Array(usages.filter { $0.window == .balance }.sorted(by: usageSort).prefix(1))
+            let balances = UsageMetricSelection.sorted(
+                usages.filter { $0.window == .balance },
+                kind: config.providerKind
+            )
+            return Array(balances.prefix(1))
         }
         if config.providerKind == .codex {
-            let accountQuota = usages
-                .filter {
-                    ($0.window == .fiveHours || $0.window == .week)
-                        && ($0.label == nil || $0.label?.contains(" · ") == false)
-                }
-                .sorted(by: usageSort)
+            let accountQuota = UsageMetricSelection.sorted(
+                usages.filter {
+                    ($0.window == .fiveHours || $0.window == .week) && UsageMetricSelection.isAccountLevel($0)
+                },
+                kind: config.providerKind
+            )
             if !accountQuota.isEmpty {
                 return Array(accountQuota.prefix(2))
             }
         }
         if config.providerKind == .cursor {
-            let monthlyPools = usages
-                .filter { $0.window == .month }
-                .sorted(by: usageSort)
+            let monthlyPools = UsageMetricSelection.sorted(
+                usages.filter { $0.window == .month },
+                kind: config.providerKind
+            )
             if !monthlyPools.isEmpty {
                 return Array(monthlyPools.prefix(3))
             }
         }
 
-        let rollingQuota = usages
-            .filter { $0.window == .fiveHours || $0.window == .week }
-            .sorted(by: usageSort)
+        let rollingQuota = UsageMetricSelection.sorted(
+            usages.filter { $0.window == .fiveHours || $0.window == .week },
+            kind: config.providerKind
+        )
         if !rollingQuota.isEmpty {
             return Array(rollingQuota.prefix(2))
         }
@@ -360,77 +366,11 @@ private struct UsageCard: View {
         return Array(primaryUsages(from: usages).prefix(2))
     }
 
-    private func isTokenTotal(_ usage: TokenUsage) -> Bool {
-        (usage.label ?? "").lowercased().contains("total")
-    }
-
-    private func isTodayTotal(_ usage: TokenUsage) -> Bool {
-        (usage.label ?? "").lowercased().contains("total")
-    }
-
     private func isSensitiveAmount(_ usage: TokenUsage) -> Bool {
         guard config.providerKind == .deepSeek else {
             return false
         }
         return usage.window == .balance || usage.window == .todayCost
-    }
-
-    private func usageSort(_ lhs: TokenUsage, _ rhs: TokenUsage) -> Bool {
-        let leftRank = usageRank(lhs)
-        let rightRank = usageRank(rhs)
-        if leftRank != rightRank {
-            return leftRank < rightRank
-        }
-        if config.providerKind == .cursor, lhs.window == .month, rhs.window == .month {
-            let leftLabelRank = cursorLabelRank(lhs.label)
-            let rightLabelRank = cursorLabelRank(rhs.label)
-            if leftLabelRank != rightLabelRank {
-                return leftLabelRank < rightLabelRank
-            }
-        }
-        return (lhs.label ?? lhs.window.title) < (rhs.label ?? rhs.window.title)
-    }
-
-    private func cursorLabelRank(_ label: String?) -> Int {
-        switch label {
-        case "Auto + Composer":
-            0
-        case "API":
-            1
-        case "Grokbot", "Grokbot (included in Auto)":
-            2
-        default:
-            3
-        }
-    }
-
-    private func usageRank(_ usage: TokenUsage) -> Int {
-        return switch usage.window {
-        case .balance:
-            0
-        case .tokenQuota:
-            4
-        case .todayCost:
-            1
-        case .todayTokens:
-            2
-        case .todayRequests:
-            3
-        case .fiveHours:
-            10
-        case .week:
-            11
-        case .month:
-            12
-        case .mcpMonth:
-            13
-        case .videoGift:
-            14
-        case .sevenDaysTokens:
-            isTokenTotal(usage) ? 15 : 20
-        case .sevenDaysTools:
-            30
-        }
     }
 }
 
