@@ -143,32 +143,32 @@ struct DetailPopoverView: View {
                 Text(table.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                // 列名：首列是模型名，其余与 cells 一一对应。没有它，
-                // 「980 / 14.2M / 31.20 CNY」得靠读者自己猜哪列是次数。
-                HStack(spacing: 8) {
-                    Text(table.columns.first ?? "")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Spacer(minLength: 6)
-                    ForEach(Array(table.columns.dropFirst().enumerated()), id: \.offset) { _, column in
-                        Text(column)
+                // 用 Grid 而不是手拼 HStack：同一列在所有行里会按最宽的那个单元格对齐。
+                // 用固定的 minWidth 各撑各的，表头与数值就会错开。
+                Grid(horizontalSpacing: 8, verticalSpacing: 4) {
+                    GridRow {
+                        Text(table.columns.first ?? "")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                            .frame(minWidth: 46, alignment: .trailing)
+                            .gridColumnAlignment(.leading)
+                        ForEach(Array(table.columns.dropFirst().enumerated()), id: \.offset) { _, column in
+                            Text(column)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
-                }
-                ForEach(table.rows) { row in
-                    HStack(spacing: 8) {
-                        Text(row.name)
-                            .font(.caption)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer(minLength: 6)
-                        ForEach(Array(row.cells.enumerated()), id: \.offset) { _, cell in
-                            Text(cell)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(minWidth: 46, alignment: .trailing)
+                    ForEach(table.rows) { row in
+                        GridRow {
+                            Text(row.name)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .gridColumnAlignment(.leading)
+                            ForEach(Array(row.cells.enumerated()), id: \.offset) { _, cell in
+                                Text(cell)
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -190,14 +190,22 @@ struct DetailPopoverView: View {
                 maxHeight: proxy.size.height,
                 minimumVisibleHeight: 1.5
             )
-            HStack(alignment: .bottom, spacing: spacing) {
-                ForEach(Array(zip(series.points, heights)), id: \.0.id) { _, height in
-                    Rectangle()
-                        .fill(Color.accentColor.opacity(0.75))
-                        .frame(width: barWidth, height: height)
+            ZStack(alignment: .bottomLeading) {
+                // 基线：没有用量的日子是空着的（柱高 0）。缺了这条线，整片空白会被读成
+                // 「图没画出来」，而不是「那几天没有用量」。
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.25))
+                    .frame(height: 1)
+
+                HStack(alignment: .bottom, spacing: spacing) {
+                    ForEach(Array(zip(series.points, heights)), id: \.0.id) { _, height in
+                        Rectangle()
+                            .fill(Color.accentColor.opacity(0.75))
+                            .frame(width: barWidth, height: height)
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
         .frame(height: 44)
     }
