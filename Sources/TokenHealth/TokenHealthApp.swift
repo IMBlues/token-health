@@ -2,8 +2,21 @@ import AppKit
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var appearanceObservation: NSKeyValueObservation?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        applyApplicationIcon()
+        // 亮/暗版是两张图，跟着系统外观换。
+        appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            self?.applyApplicationIcon()
+        }
+    }
+
+    private func applyApplicationIcon() {
+        if let icon = AppIcon.applicationImage(for: NSApp.effectiveAppearance) {
+            NSApp.applicationIconImage = icon
+        }
     }
 }
 
@@ -34,7 +47,11 @@ struct TokenHealthApp: App {
                 .environmentObject(appState)
                 .frame(width: 360)
         } label: {
-            Image(systemName: "bolt.circle")
+            if let image = AppIcon.menuBarImage() {
+                Image(nsImage: image)
+            } else {
+                Image(systemName: "bolt.circle")
+            }
         }
         .menuBarExtraStyle(.window)
 

@@ -18,6 +18,7 @@ final class PinnedStatusItemController: NSObject {
     private var detailHosts: [UUID: NSHostingController<DetailPopoverView>] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var appearanceObservation: NSKeyValueObservation?
+    private var buttonAppearanceObservations: [UUID: NSKeyValueObservation] = [:]
     private var pendingRedraw: DispatchWorkItem?
 
     /// 状态项在 NSApplication 启动完成前创建会被系统丢掉，所以首次重绘挂在启动通知上。
@@ -39,6 +40,8 @@ final class PinnedStatusItemController: NSObject {
             .store(in: &cancellables)
 
         // 菜单栏外观变化时 logo 要跟着反色。AppKit 没有对应的通知，只能 KVO。
+        // 系统外观是一层，菜单栏自己还有一层（壁纸深浅会单独影响它，葫芦走的就是那一层
+        // 的模板着色），所以按钮上的外观也要盯住，否则会出现「葫芦白了、账号 logo 还是黑」。
         appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
             Task { @MainActor in
                 self?.scheduleRedraw()
@@ -110,14 +113,15 @@ final class PinnedStatusItemController: NSObject {
             rateTable: appState.exchangeRate
         )
         let displayMetrics = metrics.isEmpty ? [MenuBarMetrics.placeholder] : metrics
-        let iconColor = Self.iconColor(for: NSApp.effectiveAppearance)
+        let item = statusItem(for: config.id)
+        // 菜单栏自己的外观优先：它决定葫芦（模板图）画成什么颜色，账号 logo 得跟它一致。
+        let iconColor = Self.iconColor(for: item.button?.effectiveAppearance ?? NSApp.effectiveAppearance)
         let layout = MenuBarItemLayout.make(
             metrics: displayMetrics,
             hasIcon: true,
             amountWidth: MenuBarItemRenderer.amountWidth(for: displayMetrics)
         )
 
-        let item = statusItem(for: config.id)
         let image = MenuBarItemRenderer.image(
             layout: layout,
             kind: config.providerKind,
@@ -160,12 +164,19 @@ final class PinnedStatusItemController: NSObject {
         created.autosaveName = "TokenHealthPinned-\(id.uuidString)"
         // 按钮没有 representedObject，靠 identifier 认领它是哪个账号。设一次就够，重绘间不变。
         created.button?.identifier = NSUserInterfaceItemIdentifier(id.uuidString)
+        // 壁纸或深浅色一变，菜单栏给按钮的外观就变了：这时要重画 logo。
+        buttonAppearanceObservations[id] = created.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+            Task { @MainActor in
+                self?.scheduleRedraw()
+            }
+        }
         statusItems[id] = created
         return created
     }
 
     private func removeStatusItem(for id: UUID) {
         closePopover(for: id)
+        buttonAppearanceObservations.removeValue(forKey: id)?.invalidate()
         guard let item = statusItems.removeValue(forKey: id) else {
             return
         }
@@ -178,9 +189,10 @@ final class PinnedStatusItemController: NSObject {
         }
     }
 
-    /// 菜单栏外观决定 logo 画成白还是黑 —— 这正是「单色模板」想要的效果，
-    /// 但整张图必须保留竖条的颜色，所以只能自己解析。
-    private static func iconColor(for appearance: NSAppearance) -> NSColor {
+    /// 菜单栏外观决定 logo 画成白还是黑 —— 葫芦是模板图，系统按菜单栏给的外观着色，
+    /// 账号 logo 想跟它一致就只能按同一处外观自己解析；整张图又必须保留竖条的颜色，
+    /// 所以不能直接用模板图。
+    static func iconColor(for appearance: NSAppearance) -> NSColor {
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .white : .black
     }
 
