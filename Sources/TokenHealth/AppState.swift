@@ -351,12 +351,47 @@ final class AppState: ObservableObject {
         for config in configs where config.isEnabled {
             let secrets = config.providerKind.usesLocalLogin ? ProviderSecrets.empty : configStore.loadSecrets(for: config.id)
             let provider = providerFactory.provider(for: config)
-            snapshots[config.id] = await provider.fetchUsage(config: config, secrets: secrets)
+            storeSnapshot(await provider.fetchUsage(config: config, secrets: secrets), for: config.id)
         }
 
         if reportHookConfig.isEnabled {
             await reportUsage()
         }
+    }
+
+    /// 快照的**唯一**写入路径：整体刷新与单账号刷新都走它。
+    /// 标成 internal（而非 private）是为了让测试能直接验证合并规则本身。
+    func storeSnapshot(_ snapshot: ProviderUsageSnapshot, for id: UUID) {
+        var incoming = snapshot
+        // 取数失败时 Provider 给的是 unavailable 快照、detail 为空。直接覆盖会把上次的数字抹掉，
+        // 浮层被清空、菜单栏项还会被打回旧菜单 —— 所以非 ready 时把旧 detail 留下来。
+        if incoming.state != .ready, incoming.detail == nil, let previous = snapshots[id], previous.detail != nil {
+            incoming.detail = previous.detail
+            // updatedAt 在这个 App 里表示「这些数字是什么时候取到的」。用失败那刻的时间会让
+            // 浮层表头显示「刚刚」，而数字其实是十分钟前的。
+            incoming.updatedAt = previous.updatedAt
+        }
+        snapshots[id] = incoming
+    }
+
+    /// 只重取一个账号，供详情浮层用。与整体刷新共用 `isRefreshing` 互斥。
+    ///
+    /// 刻意**不**更新 `lastRefreshAt`、也不重排定时器：面板表头那句「N/M updated · Xm ago」
+    /// 讲的是整体刷新的新鲜度，只刷了一个账号却显示「刚刚刷新」是在撒谎。
+    func refresh(configID: UUID) async {
+        guard !isRefreshing,
+              let config = configs.first(where: { $0.id == configID }),
+              config.isEnabled else {
+            return
+        }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        let secrets = config.providerKind.usesLocalLogin
+            ? ProviderSecrets.empty
+            : configStore.loadSecrets(for: config.id)
+        let provider = providerFactory.provider(for: config)
+        storeSnapshot(await provider.fetchUsage(config: config, secrets: secrets), for: config.id)
     }
 
     private func normalizeReportProviderSelection() {
