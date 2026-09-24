@@ -10,11 +10,11 @@ final class ConfigStore {
     private let exchangeRateDefaultsKey = "exchange-rate.config.v1"
     private let secretsPrefix = "service.secrets.v1"
     private let defaults: UserDefaults
-    private let keychain: KeychainStore
+    private let secretStore: any SecretStoring
 
-    init(defaults: UserDefaults = .standard, keychain: KeychainStore = KeychainStore()) {
+    init(defaults: UserDefaults = .standard, secretStore: any SecretStoring = KeychainStore()) {
         self.defaults = defaults
-        self.keychain = keychain
+        self.secretStore = secretStore
     }
 
     func loadConfigs() -> [ServiceConfig] {
@@ -91,19 +91,19 @@ final class ConfigStore {
     }
 
     func loadReportHookToken() -> String {
-        keychain.loadReportHookToken()
+        secretStore.loadReportHookToken()
     }
 
     func saveReportHookToken(_ token: String) throws {
-        try keychain.saveReportHookToken(token)
+        try secretStore.saveReportHookToken(token)
     }
 
     func migrateLegacySecrets(for configs: [ServiceConfig]) throws {
-        try keychain.migrateLegacyItems(for: Set(configs.map(\.id)))
+        try secretStore.migrateLegacyItems(for: Set(configs.map(\.id)))
     }
 
     func loadSecrets(for configID: UUID) -> ProviderSecrets {
-        let stored = keychain.loadSecrets(for: configID)
+        let stored = secretStore.loadSecrets(for: configID)
         if !stored.apiKey.isEmpty || !stored.password.isEmpty {
             return stored
         }
@@ -113,7 +113,7 @@ final class ConfigStore {
             password: defaults.string(forKey: secretKey(configID, "password")) ?? ""
         )
         if !legacy.apiKey.isEmpty || !legacy.password.isEmpty {
-            if (try? keychain.saveSecrets(legacy, for: configID)) != nil {
+            if (try? secretStore.saveSecrets(legacy, for: configID)) != nil {
                 removeLegacySecrets(for: configID)
             }
         }
@@ -121,12 +121,12 @@ final class ConfigStore {
     }
 
     func saveSecrets(_ secrets: ProviderSecrets, for configID: UUID) throws {
-        try keychain.saveSecrets(secrets, for: configID)
+        try secretStore.saveSecrets(secrets, for: configID)
         removeLegacySecrets(for: configID)
     }
 
     func deleteConfig(_ config: ServiceConfig, from configs: inout [ServiceConfig]) throws {
-        try keychain.deleteSecrets(for: config.id)
+        try secretStore.deleteSecrets(for: config.id)
         configs.removeAll { $0.id == config.id }
         removeLegacySecrets(for: config.id)
         saveConfigs(configs)

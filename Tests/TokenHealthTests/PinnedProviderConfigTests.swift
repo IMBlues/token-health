@@ -5,7 +5,7 @@ import Testing
 struct PinnedProviderConfigTests {
     private func makeStore() -> ConfigStore {
         let suite = UserDefaults(suiteName: "pinned-provider-tests-\(UUID().uuidString)")!
-        return ConfigStore(defaults: suite)
+        return ConfigStore(defaults: suite, secretStore: InMemorySecretStore())
     }
 
     @Test

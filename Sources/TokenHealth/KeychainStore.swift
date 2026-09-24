@@ -2,7 +2,18 @@ import Foundation
 import LocalAuthentication
 import Security
 
-final class KeychainStore {
+/// 凭据的存放处。抽成协议是为了让 ConfigStore 与 AppState 能在测试里不碰真实钥匙串 ——
+/// 测试进程读钥匙串会触发系统授权，在无人值守时会直接卡住。
+protocol SecretStoring {
+    func loadSecrets(for id: UUID) -> ProviderSecrets
+    func saveSecrets(_ secrets: ProviderSecrets, for id: UUID) throws
+    func deleteSecrets(for id: UUID) throws
+    func loadReportHookToken() -> String
+    func saveReportHookToken(_ token: String) throws
+    func migrateLegacyItems(for activeConfigIDs: Set<UUID>) throws
+}
+
+final class KeychainStore: SecretStoring {
     private struct CredentialVault: Codable {
         var providerSecrets: [String: ProviderSecrets]
         var reportHookToken: String?
