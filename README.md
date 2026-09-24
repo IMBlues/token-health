@@ -81,6 +81,16 @@ Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后�
 }
 ```
 
+### 钉住一个账号
+
+在设置的账号详情里打开 **Menu Bar → Pin to menu bar**，菜单栏会出现第二个图标：左边是该 Provider 的官方 logo，
+右边是每个额度窗口一根细竖条，条越高用得越多，颜色随用量从绿转橙转红，悬停可以看到各窗口的具体百分比。
+原来的 `bolt.circle` 仍然是全局入口，两者互不影响，同一时间只能钉一个账号。
+
+DeepSeek 账号还可以在同一个分区里选显示币种（原币种 / CNY / USD）。汇率每天自动从 ECB 数据源取一次，
+取不到时沿用上一次的缓存；首次使用又拿不到汇率时会用内置默认值，并在设置里明确标出。
+换算只影响菜单栏那个数字，卡片与设置里始终显示原币种原值。
+
 ## 隐私
 
 - 没有 Token Health 服务端，也没有云端同步。
@@ -92,8 +102,11 @@ Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后�
 
 ```bash
 swift build
-swift test
+bash scripts/test.sh
 ```
+
+`scripts/test.sh` 只是把 CommandLineTools 里 swift-testing 的 `Testing.framework` 路径喂给 `swift test`。
+没装 Xcode 的机器上直接用 `swift test` 会以 `no such module 'Testing'` 失败，看起来像代码坏了，其实不是。
 
 这是一个小而原生的 SwiftUI 项目。入口从 `Sources/TokenHealth/StatusMenuView.swift`、`SettingsView.swift` 和各 Provider 实现开始。
 
