@@ -189,6 +189,9 @@ struct TokenUsage: Codable, Equatable, Identifiable, Sendable {
     var resetDate: Date?
     var unit: String? = nil
     var displayValue: String? = nil
+    /// 金额型窗口的数值本身（`unit` 是币种代码）。卡片读 `displayValue`；
+    /// 需要重新换算的展示（钉住的菜单栏项）读这个。
+    var amount: Decimal? = nil
 
     var id: String {
         "\(window.rawValue):\(label ?? "")"
