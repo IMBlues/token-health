@@ -21,20 +21,14 @@ struct SettingsView: View {
             VStack(spacing: 0) {
                 List(selection: $selectedID) {
                     ForEach(appState.configs) { config in
-                        HStack {
+                        // 单行。provider 类型不再占第二行 —— 详情面板里的 Provider 字段已经有了。
+                        // 行尾也刻意不放拖拽把手：macOS 的可重排列表不画那个符号，直接拖行本身就重排。
+                        HStack(spacing: 10) {
                             Image(nsImage: ProviderIcon.image(for: config.providerKind, size: 16, tint: .labelColor))
                                 .frame(width: 18)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(config.displayName)
-                                    .lineLimit(1)
-                                Text(config.providerKind.title)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: "line.3.horizontal")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
+                            Text(config.displayName)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
                         }
                         .contentShape(Rectangle())
                         .tag(config.id)
@@ -44,78 +38,36 @@ struct SettingsView: View {
                     }
 
                     Section("General") {
-                        HStack {
+                        HStack(spacing: 10) {
                             Image(systemName: "clock.arrow.circlepath")
                                 .frame(width: 18)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Refresh")
-                                Text("Interval")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("Refresh")
+                            Spacer(minLength: 0)
                         }
                         .contentShape(Rectangle())
                         .tag(Self.generalSelectionID)
                     }
 
                     Section("Integrations") {
-                        HStack {
+                        HStack(spacing: 10) {
                             Image(systemName: "arrow.up.forward.app")
                                 .frame(width: 18)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Usage reporting")
-                                Text("HTTPS hook")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("Usage reporting")
+                            Spacer(minLength: 0)
                         }
                         .contentShape(Rectangle())
                         .tag(Self.reportingSelectionID)
                     }
                 }
 
+                // 增删作为列表下方真实的一行页脚。
+                //
+                // 试过 `.safeAreaInset(edge: .bottom)`：那条没有背景，列表内容会从它底下透出来，
+                // 直接叠在最后一行上（实测截图里和 “Usage reporting” 重叠、还被窗口底边切掉）。
+                // 放进 VStack 就是普通的一行，不存在透出与重叠。
                 Divider()
 
-                HStack {
-                    Menu {
-                        Button("New plan") {
-                            selectedID = appState.addConfig()
-                            loadSecretsIfNeeded(force: true)
-                        }
-                        Divider()
-                        ForEach(ProviderKind.allCases.filter(\.supportsWebLogin)) { kind in
-                            Button("Add \(kind.title) account") {
-                                selectedID = appState.addConfig(providerKind: kind)
-                                loadSecretsIfNeeded(force: true)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("Add plan or account")
-
-                    Button {
-                        if let selectedID {
-                            if appState.deleteConfig(id: selectedID) {
-                                self.selectedID = appState.configs.first?.id ?? Self.reportingSelectionID
-                                loadSecretsIfNeeded(force: true)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "minus")
-                    }
-                    .disabled(
-                        selectedID == nil ||
-                        selectedID == Self.reportingSelectionID ||
-                        selectedID == Self.generalSelectionID
-                    )
-                    .help("Remove plan")
-
-                    Spacer()
-                }
-                .padding(10)
+                sidebarActionBar
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 240)
         } detail: {
@@ -138,6 +90,44 @@ struct SettingsView: View {
                 selectedID = appState.settingsSelectedID
             }
         }
+    }
+
+    /// 侧边栏底部的增删条。
+    ///
+    /// 两个按钮都做成无边框的**等尺寸符号**：这里是 `Menu` + `Button` 混排，`Menu` 天生带一个小箭头，
+    /// 不把箭头隐掉、不给两边同样的 frame，就会渲染成两个宽窄不一的泡泡 —— 那正是之前被说丑的原因。
+    private var sidebarActionBar: some View {
+        HStack(spacing: 0) {
+                // 两边都钉同一个外框尺寸（不是给内部的 Image 加 frame）：`Menu` 与 `Button`
+                // 量出来的布局尺寸本来就不一样，只在内层约束的话，外框仍会一个宽一个窄。
+                Menu {
+                    ForEach(ProviderKind.allCases) { kind in
+                        Button(kind.title) {
+                            addConfig(kind)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 24, height: 22)
+                .help("Add a provider")
+
+                Button {
+                    removeSelectedConfig()
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .buttonStyle(.borderless)
+                .frame(width: 24, height: 22)
+                .disabled(!canRemoveSelection)
+                .help("Remove the selected provider")
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
     }
 
     @ViewBuilder
@@ -259,24 +249,16 @@ struct SettingsView: View {
                         .font(.caption)
                 }
 
-                HStack {
-                    Button("Save") {
-                        saveCurrentSecrets()
-                        appState.saveConfigs()
-                        Task {
-                            await appState.refreshAll()
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-
-                    Button("Refresh") {
-                        saveCurrentSecrets()
-                        appState.saveConfigs()
-                        Task {
-                            await appState.refreshAll()
-                        }
+                // 这里原来是 Save 与 Refresh 两个按钮 —— 它们做的事一模一样（保存密钥 + 保存配置 +
+                // 刷新全部），只是其中一个带回车快捷键。合并成一个。
+                Button("Save & Refresh") {
+                    saveCurrentSecrets()
+                    appState.saveConfigs()
+                    Task {
+                        await appState.refreshAll()
                     }
                 }
+                .keyboardShortcut(.defaultAction)
             }
             .formStyle(.grouped)
             .padding()
@@ -478,6 +460,30 @@ struct SettingsView: View {
             return nil
         }
         return $appState.configs[index]
+    }
+
+    /// 加号菜单里列**全部** provider。以前只有登录型的能加，Cursor / Codex / OpenAI 这些
+    /// 得先「New plan」再进详情页改 Provider —— 那正是「配置 UI 别扭」的来源之一。
+    private func addConfig(_ kind: ProviderKind) {
+        selectedID = appState.addConfig(providerKind: kind)
+        loadSecretsIfNeeded(force: true)
+    }
+
+    private var canRemoveSelection: Bool {
+        guard let selectedID else {
+            return false
+        }
+        return appState.configs.contains { $0.id == selectedID }
+    }
+
+    private func removeSelectedConfig() {
+        guard let selectedID, canRemoveSelection else {
+            return
+        }
+        if appState.deleteConfig(id: selectedID) {
+            self.selectedID = appState.configs.first?.id ?? Self.reportingSelectionID
+            loadSecretsIfNeeded(force: true)
+        }
     }
 
     private var selectedEnabledReportProviders: [ServiceConfig] {

@@ -15,10 +15,10 @@
 Token Health 读取官方用量，压成几张清爽的小卡片。不开代理，不碰请求，不做额度魔法，也没有自建后端。
 
 把常看的账号钉到菜单栏，不点开也一眼看得到还剩多少 —— 左边是该 Provider 的官方 logo，
-右边每个额度窗口一根细竖条，条越高用得越多：
+右边每个额度窗口一根细竖条，条越高用得越多。最右边那枚葫芦是全局入口：
 
 <p align="center">
-  <img src="docs/images/token-health-pinned.png" alt="Pinned accounts in the menu bar, dark and light" width="500">
+  <img src="docs/images/token-health-pinned.png" alt="Pinned accounts in the menu bar, with the gourd entry at the right" width="520">
 </p>
 
 ## 支持的服务
@@ -95,10 +95,19 @@ Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后�
 条越高用得越多，颜色随用量从绿转橙转红，悬停可以看到各窗口的具体百分比。再点一次即取消钉住。
 
 图标按设置里账号列表的顺序排列，数量不设上限 —— 菜单栏位置由系统排布，可以 ⌘ 拖拽调整。
-原来的 `bolt.circle` 仍然是全局入口，两者互不影响。
+那枚葫芦是全局入口（认的是葫芦里的水位，也就是余量），和钉住的账号互不影响。
+
+菜单栏里的图形只用黑白两色：系统按菜单栏的深浅把葫芦和各家 logo 一起画成黑或白，竖条的绿/橙/红是唯一保留的颜色。
 
 DeepSeek 没有额度比例，钉住时直接显示余额数字（不带单位），并可以在设置里选显示币种（原币种 / CNY / USD）。
 汇率每天从 ECB 数据源取一次，取不到就沿用上一次的缓存。换算只影响菜单栏那个数字，卡片与设置里始终显示原币种原值。
+
+点钉住的 DeepSeek 项会弹出详情浮层：余额、`Today` 与 `This month` 的请求数 / tokens / 花费、本月按天趋势、
+tokens 构成（`Output` / `Cache hit` / `Cache miss`），以及 `By model · this month` 的按模型拆分。
+数据全部来自刷新时已经取回的那次响应，不额外发请求。
+
+它只做展示 —— 没有筛选、没有日期范围、不能下钻。要看更细的分析请回厂商的控制台。
+详情里的数字超过 5 分钟会在打开时自动刷新一次，右上角也可以手动刷新；取数失败时保留上一次的数字并标出错误。
 
 DeepSeek 账号还可以在同一个分区里选显示币种（原币种 / CNY / USD）。汇率每天自动从 ECB 数据源取一次，
 取不到时沿用上一次的缓存；首次使用又拿不到汇率时会用内置默认值，并在设置里明确标出。
@@ -122,6 +131,19 @@ bash scripts/test.sh
 没装 Xcode 的机器上直接用 `swift test` 会以 `no such module 'Testing'` 失败，看起来像代码坏了，其实不是。
 
 这是一个小而原生的 SwiftUI 项目。入口从 `Sources/TokenHealth/StatusMenuView.swift`、`SettingsView.swift` 和各 Provider 实现开始。
+
+### 图标
+
+品牌图形只有一份底稿：`AppSupport/GourdBrand/gourd-transparent.png`（倾斜的葫芦、口上系着飘带、白色液体停在液面）。
+图标、菜单栏图形都由它生成：
+
+```bash
+python3 scripts/generate-icons.py
+```
+
+出来三样东西：`AppSupport/TokenHealth.icns`（Finder / DMG 用的图标，按 Apple 图标网格摆放）、
+`Sources/TokenHealth/Resources/TokenHealthMark.png`（菜单栏那枚，模板图，系统按菜单栏明暗自动着色）、
+以及 `TokenHealthIconLight/Dark.png`（App 图标的亮暗两版，暗版由亮版反色而来）。
 
 ## License
 

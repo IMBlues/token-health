@@ -71,9 +71,12 @@ struct WebSessionRegistryTests {
 
     @Test
     func evictClearsProfileEvenWithoutController() async {
+        // 这次运行没建过 kernel，但盘上确实有 profile（App 重启过）。
+        // 与下面那个用例的区别：这里 provider 类型**没变**，所以它只考验「缓存答不了就问 store」，
+        // 不牵扯「类型变了」那条路径。
         let spy = ProfileRemovalSpy()
-        let registry = makeRegistry(spy: spy)
         let config = deepSeekConfig()
+        let registry = makeRegistry(spy: spy, existingProfiles: [config.id])
 
         await registry.evict(config: config)
 
@@ -184,8 +187,7 @@ struct WebSessionRegistryTests {
         // This account had a profile on disk from an earlier run, and this run never built a kernel
         // for it (the provider kind was changed away from a web-login kind, then the app restarted).
         // Neither the cache nor the current kind can answer "was there a profile?" — only the store
-        // query can. The config must therefore be one the factory rejects, or the descriptor arm of
-        // the guard short-circuits and this test would pass against the old bookkeeping too.
+        // query can.
         let spy = ProfileRemovalSpy()
         var config = deepSeekConfig()
         config.providerKind = .demo
@@ -198,6 +200,20 @@ struct WebSessionRegistryTests {
 
     @Test
     func evictLeavesProfilesThatNeverExisted() async {
+        let spy = ProfileRemovalSpy()
+        // 网页会话型 provider：有 descriptor，但这台机器上从来没有它的 profile。
+        // 这正是「新加一个 provider 再删掉」的路径 —— 无条件去删一个不存在的 store，
+        // 会让 WebKit 在 removeDataStoreWithIdentifierImpl 里 SIGSEGV。
+        let config = deepSeekConfig()
+        let registry = makeRegistry(spy: spy)
+
+        await registry.evict(config: config)
+
+        #expect(spy.removed.isEmpty, "没有 profile 就不该去删，否则 WebKit 会崩")
+    }
+
+    @Test
+    func evictLeavesProfilesThatNeverExistedForProvidersWithoutADescriptor() async {
         let spy = ProfileRemovalSpy()
         let config = ServiceConfig(displayName: "Demo", providerKind: .demo, authMode: .api)
         let registry = makeRegistry(spy: spy)

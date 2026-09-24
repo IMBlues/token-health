@@ -5,6 +5,24 @@ protocol UsageProvider: Sendable {
 }
 
 struct ProviderFactory {
+    /// 这个 config 会不会产出 `UsageDetail` —— 也就是点它的菜单栏项该弹浮层还是弹小菜单。
+    ///
+    /// 按 **Provider 能力**判断而不是按快照内容判断：首次刷新还没回来时也得能弹出浮层，
+    /// 否则会出现「先弹菜单、快照回来后再改行为」的漂移。
+    ///
+    /// 注意这个判断只看得到 config、看不到 Keychain：`DeepSeekUsageProvider.fetchUsage` 是先看
+    /// 凭据里有没有网页会话、再看 `authMode` 的。所以一个配成 API 模式、但 Keychain 里还留着
+    /// 网页会话的账号实际上会取回带明细的平台数据，而这里回报 false。无害（只是不给它弹浮层），
+    /// 但别把「API 模式一定走公开余额接口」当成事实写进注释。
+    static func producesUsageDetail(for config: ServiceConfig) -> Bool {
+        switch config.providerKind {
+        case .deepSeek:
+            config.authMode == .browserLogin
+        default:
+            false
+        }
+    }
+
     func provider(for config: ServiceConfig) -> any UsageProvider {
         switch config.providerKind {
         case .demo:

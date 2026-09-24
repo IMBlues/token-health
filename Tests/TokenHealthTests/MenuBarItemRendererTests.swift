@@ -79,4 +79,15 @@ struct MenuBarItemRendererTests {
 
         #expect(opaquePixelCount(image) > 0)
     }
+
+    /// 葫芦是模板图，颜色由系统按菜单栏的外观来；账号 logo 想跟它一致，就只能按
+    /// 同一处外观自己解析 —— 系统的深浅色和菜单栏的深浅色是两层，会不一致。
+    @Test
+    func logoColorFollowsTheMenuBarAppearance() throws {
+        let light = try #require(NSAppearance(named: .aqua))
+        let dark = try #require(NSAppearance(named: .darkAqua))
+
+        #expect(PinnedStatusItemController.iconColor(for: light) == .black)
+        #expect(PinnedStatusItemController.iconColor(for: dark) == .white)
+    }
 }
