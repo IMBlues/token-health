@@ -145,6 +145,7 @@ private struct EmptyStateView: View {
 private struct UsageCard: View {
     let config: ServiceConfig
     let snapshot: ProviderUsageSnapshot?
+    @EnvironmentObject private var appState: AppState
     @State private var isExpanded = false
     @State private var showsDetails = false
     @State private var revealsSensitiveAmounts = false
@@ -164,6 +165,17 @@ private struct UsageCard: View {
                 Text(statusText)
                     .font(.caption2)
                     .foregroundStyle(statusColor)
+
+                Button {
+                    appState.setPinned(config.id, !isPinned)
+                } label: {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.caption)
+                        .foregroundStyle(isPinned ? Color.accentColor : Color.secondary)
+                        .frame(width: 16, height: 16)
+                }
+                .buttonStyle(.borderless)
+                .help(isPinned ? "Unpin from the menu bar" : "Pin to the menu bar")
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.16)) {
@@ -280,6 +292,10 @@ private struct UsageCard: View {
             return .secondary
         }
         return snapshot.state == .ready ? .green : .orange
+    }
+
+    private var isPinned: Bool {
+        appState.isPinned(config.id)
     }
 
     private var subtitle: String {
