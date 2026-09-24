@@ -19,42 +19,6 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                // 增删按钮放在列表正上方，无边框、同一尺寸。
-                //
-                // 曾按「进窗口工具栏」试过 `ToolbarItemGroup(placement: .navigation)`：在 macOS 26 上
-                // 它把两个按钮摆到了标题下方的中间区域，还各套一个宽度不一的胶囊底。工具栏的落位
-                // 我这边既渲染不出、也（因为设置窗口无法程序化打开）测量不到，所以改成这个完全
-                // 受控的布局 —— 视觉位置和系统设置的 +/− 一致，且不会再出现胶囊。
-                HStack(spacing: 2) {
-                    Menu {
-                        ForEach(ProviderKind.allCases) { kind in
-                            Button(kind.title) {
-                                addConfig(kind)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .frame(width: 20, height: 20)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("Add a provider")
-
-                    Button {
-                        removeSelectedConfig()
-                    } label: {
-                        Image(systemName: "minus")
-                            .frame(width: 20, height: 20)
-                    }
-                    .buttonStyle(.borderless)
-                    .disabled(!canRemoveSelection)
-                    .help("Remove the selected provider")
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-
                 List(selection: $selectedID) {
                     ForEach(appState.configs) { config in
                         // 单行。provider 类型不再占第二行 —— 详情面板里的 Provider 字段已经有了。
@@ -99,6 +63,37 @@ struct SettingsView: View {
             .navigationSplitViewColumnWidth(min: 210, ideal: 240)
         } detail: {
             detail
+        }
+        .toolbar {
+            // 挂在 NavigationSplitView 上，而不是侧边栏内容上 —— 这两种写法走的是不同的路径：
+            // 挂在侧边栏内容上时，macOS 26 会把条目摆到标题下方的中间区域；挂在整个分栏视图上
+            // 才会成为窗口工具栏的条目，落在侧边栏开关旁边，与系统设置一致。
+            //
+            // 两个都必须去掉工具栏默认的胶囊底：默认样式会给 Menu 与 Button 各套一个背景，
+            // 而 + 带菜单小箭头、− 不带，胶囊宽度就对不齐，看着像两个大小不一的泡泡。
+            ToolbarItemGroup(placement: .navigation) {
+                Menu {
+                    ForEach(ProviderKind.allCases) { kind in
+                        Button(kind.title) {
+                            addConfig(kind)
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Add a provider")
+
+                Button {
+                    removeSelectedConfig()
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!canRemoveSelection)
+                .help("Remove the selected provider")
+            }
         }
         .onAppear {
             if selectedID == nil {
