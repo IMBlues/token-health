@@ -6,7 +6,7 @@ import AppKit
 /// 所以一个资源同时服务亮色和暗色菜单栏；App 图标则分亮/暗两版资源，按外观取。
 enum AppIcon {
     static func menuBarImage() -> NSImage? {
-        guard let url = Bundle.module.url(forResource: "TokenHealthMark", withExtension: "png"),
+        guard let url = ResourceBundle.module?.url(forResource: "TokenHealthMark", withExtension: "png"),
               let image = NSImage(contentsOf: url) else {
             return nil
         }
@@ -18,7 +18,7 @@ enum AppIcon {
     static func applicationImage(for appearance: NSAppearance) -> NSImage? {
         let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let name = isDark ? "TokenHealthIconDark" : "TokenHealthIconLight"
-        guard let url = Bundle.module.url(forResource: name, withExtension: "png"),
+        guard let url = ResourceBundle.module?.url(forResource: name, withExtension: "png"),
               let image = NSImage(contentsOf: url) else {
             return nil
         }

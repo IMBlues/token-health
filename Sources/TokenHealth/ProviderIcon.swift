@@ -43,13 +43,13 @@ enum ProviderIcon {
         return tinted(source, color: tint, size: size)
     }
 
-    /// 供测试断言资源确实打进了包 —— 测试进程里的 `Bundle.module` 指向测试自己的
-    /// bundle，只有经这里才能真正查到 App 的资源。
+    /// 供测试断言资源确实打进了包 —— 测试进程里 `Bundle.main` 是测试自己的 bundle，
+    /// 只有经 ResourceBundle 才走得到 App 的资源。
     static func bundledLogoURL(for kind: ProviderKind) -> URL? {
         guard let name = assetName(for: kind) else {
             return nil
         }
-        return Bundle.module.url(forResource: name, withExtension: "pdf")
+        return ResourceBundle.module?.url(forResource: name, withExtension: "pdf")
     }
 
     static func bundledLogo(for kind: ProviderKind) -> NSImage? {

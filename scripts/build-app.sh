@@ -51,6 +51,19 @@ cp "$BUILT_BINARY" "$APP_DIR/Contents/MacOS/TokenHealth"
 cp "$ROOT/AppSupport/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT/AppSupport/TokenHealth.icns" "$APP_DIR/Contents/Resources/TokenHealth.icns"
 cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/"
+
+if [[ ! -d "$APP_DIR/Contents/Resources/TokenHealth_TokenHealth.bundle" ]]; then
+  echo "Missing $APP_DIR/Contents/Resources/TokenHealth_TokenHealth.bundle; the Provider logos would not load." >&2
+  exit 1
+fi
+
 codesign --force --deep --sign - "$APP_DIR"
+
+# 资源包必须落在 Contents 里，散在 .app 根目录会让签名「unsealed」，别人那台机器
+# 直接把它当损坏的 App。这里把验证钉进构建，免得哪天又被挪出去。
+if ! codesign --verify --deep --strict "$APP_DIR"; then
+  echo "Code signature verification failed for $APP_DIR" >&2
+  exit 1
+fi
 
 echo "$APP_DIR"
