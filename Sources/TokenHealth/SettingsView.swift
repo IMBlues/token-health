@@ -22,7 +22,7 @@ struct SettingsView: View {
                 List(selection: $selectedID) {
                     ForEach(appState.configs) { config in
                         HStack {
-                            Image(systemName: iconName(for: config.providerKind))
+                            Image(nsImage: ProviderIcon.image(for: config.providerKind, size: 16, tint: .labelColor))
                                 .frame(width: 18)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(config.displayName)
@@ -336,7 +336,7 @@ struct SettingsView: View {
                     ForEach(appState.configs) { config in
                         Toggle(isOn: reportProviderSelectionBinding(for: config)) {
                             HStack(spacing: 10) {
-                                Image(systemName: iconName(for: config.providerKind))
+                                Image(nsImage: ProviderIcon.image(for: config.providerKind, size: 16, tint: .labelColor))
                                     .frame(width: 18)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(config.displayName)
@@ -669,34 +669,5 @@ struct SettingsView: View {
 
     private func localLoginAccess(for provider: ProviderKind) -> String {
         provider == .cursor ? "Monthly quota" : "Quota only"
-    }
-
-    private func iconName(for provider: ProviderKind) -> String {
-        switch provider {
-        case .openAI:
-            "sparkles"
-        case .anthropic:
-            "text.bubble"
-        case .cursor:
-            "cursorarrow"
-        case .codex:
-            "chevron.left.forwardslash.chevron.right"
-        case .kimiCode:
-            "moon.stars"
-        case .zhipuCode:
-            "brain.head.profile"
-        case .deepSeek:
-            "waveform.path.ecg"
-        case .miniMax:
-            "m.circle"
-        case .volcengineArk:
-            "flame"
-        case .openCodeGo:
-            "terminal"
-        case .genericHTTP:
-            "network"
-        case .demo:
-            "chart.bar"
-        }
     }
 }
