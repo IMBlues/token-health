@@ -63,6 +63,9 @@ struct SettingsView: View {
             .navigationSplitViewColumnWidth(min: 210, ideal: 240)
             .toolbar {
                 // 增删放工具栏，底部那条按钮条整条去掉 —— 与现在的系统设置一致。
+                //
+                // 两个都必须显式去掉工具栏默认的胶囊底：默认样式会给 Menu 与 Button 各套一个背景，
+                // 而 + 带菜单小箭头、− 不带，胶囊宽度就对不齐，看着像两个大小不一的泡泡。
                 ToolbarItemGroup(placement: .navigation) {
                     Menu {
                         ForEach(ProviderKind.allCases) { kind in
@@ -71,15 +74,18 @@ struct SettingsView: View {
                             }
                         }
                     } label: {
-                        Label("Add", systemImage: "plus")
+                        Image(systemName: "plus")
                     }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
                     .help("Add a provider")
 
                     Button {
                         removeSelectedConfig()
                     } label: {
-                        Label("Remove", systemImage: "minus")
+                        Image(systemName: "minus")
                     }
+                    .buttonStyle(.borderless)
                     .disabled(!canRemoveSelection)
                     .help("Remove the selected provider")
                 }
