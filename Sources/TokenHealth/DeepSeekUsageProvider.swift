@@ -44,13 +44,40 @@ struct DeepSeekUsageProvider: UsageProvider {
                 )
             }
 
-            let usages = try DeepSeekUsageParser().parsePlatformBundle(data: bundleData, today: period.day)
+            return platformSnapshot(
+                config: config,
+                bundle: bundleData,
+                period: period,
+                accountName: session.accountName
+            )
+        } catch {
+            return ProviderUsageSnapshot.unavailable(config: config, message: error.localizedDescription)
+        }
+    }
+
+    /// 把一次取回的 bundle 变成快照。
+    ///
+    /// 抽出来是因为 `fetchUsage` 永远会打真实网络（失败还回落到 WebKit 会话），没有注入点 ——
+    /// 拿合成 bundle 测这一层，才不用去碰 platform.deepseek.com。
+    func platformSnapshot(
+        config: ServiceConfig,
+        bundle: Data,
+        period: DeepSeekUsagePeriod,
+        accountName: String?
+    ) -> ProviderUsageSnapshot {
+        do {
+            let usages = try DeepSeekUsageParser().parsePlatformBundle(data: bundle, today: period.day)
             return ProviderUsageSnapshot(
                 id: config.id,
                 serviceName: config.displayName,
                 providerTitle: config.providerKind.title,
-                planName: session.accountName,
+                planName: accountName,
                 usages: usages,
+                detail: DeepSeekUsageDetail.make(
+                    bundle: bundle,
+                    balances: usages.filter { $0.window == .balance },
+                    today: period
+                ),
                 state: .ready,
                 statusMessage: "DeepSeek Platform",
                 updatedAt: Date()
