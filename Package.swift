@@ -13,6 +13,9 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "TokenHealth",
+            resources: [
+                .process("Resources")
+            ],
             linkerSettings: [
                 .linkedFramework("LocalAuthentication"),
                 .linkedFramework("Network"),

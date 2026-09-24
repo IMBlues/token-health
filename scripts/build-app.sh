@@ -39,11 +39,18 @@ if [[ "$BUILT_SDK" != "$SDK_VERSION" ]]; then
   exit 1
 fi
 
+RESOURCE_BUNDLE="$SCRATCH_PATH/release/TokenHealth_TokenHealth.bundle"
+if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
+  echo "Missing $RESOURCE_BUNDLE; the Provider logo resources did not build." >&2
+  exit 1
+fi
+
 rm -rf "$APP_DIR" "$LEGACY_APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BUILT_BINARY" "$APP_DIR/Contents/MacOS/TokenHealth"
 cp "$ROOT/AppSupport/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT/AppSupport/TokenHealth.icns" "$APP_DIR/Contents/Resources/TokenHealth.icns"
+cp -R "$RESOURCE_BUNDLE" "$APP_DIR/Contents/Resources/"
 codesign --force --deep --sign - "$APP_DIR"
 
 echo "$APP_DIR"
