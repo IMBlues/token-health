@@ -14,6 +14,13 @@
 
 Token Health 读取官方用量，压成几张清爽的小卡片。不开代理，不碰请求，不做额度魔法，也没有自建后端。
 
+把常看的账号钉到菜单栏，不点开也一眼看得到还剩多少 —— 左边是该 Provider 的官方 logo，
+右边每个额度窗口一根细竖条，条越高用得越多：
+
+<p align="center">
+  <img src="docs/images/token-health-pinned.png" alt="Pinned accounts in the menu bar, dark and light" width="500">
+</p>
+
 ## 支持的服务
 
 | Provider | 你能看到 |
@@ -89,6 +96,9 @@ Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后�
 
 图标按设置里账号列表的顺序排列，数量不设上限 —— 菜单栏位置由系统排布，可以 ⌘ 拖拽调整。
 原来的 `bolt.circle` 仍然是全局入口，两者互不影响。
+
+DeepSeek 没有额度比例，钉住时直接显示余额数字（不带单位），并可以在设置里选显示币种（原币种 / CNY / USD）。
+汇率每天从 ECB 数据源取一次，取不到就沿用上一次的缓存。换算只影响菜单栏那个数字，卡片与设置里始终显示原币种原值。
 
 DeepSeek 账号还可以在同一个分区里选显示币种（原币种 / CNY / USD）。汇率每天自动从 ECB 数据源取一次，
 取不到时沿用上一次的缓存；首次使用又拿不到汇率时会用内置默认值，并在设置里明确标出。
