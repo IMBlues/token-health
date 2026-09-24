@@ -91,6 +91,8 @@ struct ServiceConfig: Codable, Identifiable, Equatable, Sendable {
     var usageDataPath: String
     var username: String
     var isEnabled: Bool
+    /// 展示币种（目前只有 DeepSeek 用）。nil 表示按原币种展示。
+    var displayCurrency: String?
 
     init(
         id: UUID = UUID(),
@@ -100,7 +102,8 @@ struct ServiceConfig: Codable, Identifiable, Equatable, Sendable {
         apiEndpoint: String = "",
         usageDataPath: String = "",
         username: String = "",
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        displayCurrency: String? = nil
     ) {
         self.id = id
         self.displayName = displayName
@@ -110,6 +113,7 @@ struct ServiceConfig: Codable, Identifiable, Equatable, Sendable {
         self.usageDataPath = usageDataPath
         self.username = username
         self.isEnabled = isEnabled
+        self.displayCurrency = displayCurrency
     }
 
     enum CodingKeys: String, CodingKey {
@@ -121,6 +125,7 @@ struct ServiceConfig: Codable, Identifiable, Equatable, Sendable {
         case usageDataPath
         case username
         case isEnabled
+        case displayCurrency
     }
 
     init(from decoder: Decoder) throws {
@@ -133,6 +138,7 @@ struct ServiceConfig: Codable, Identifiable, Equatable, Sendable {
         usageDataPath = try container.decodeIfPresent(String.self, forKey: .usageDataPath) ?? ""
         username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        displayCurrency = try container.decodeIfPresent(String.self, forKey: .displayCurrency)
     }
 }
 

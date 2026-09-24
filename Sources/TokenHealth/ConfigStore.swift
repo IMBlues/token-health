@@ -6,6 +6,8 @@ final class ConfigStore {
     private let legacyDefaultsKey = "service.configs.v1"
     private let reportHookDefaultsKey = "usage-report-hook.config.v1"
     private let refreshIntervalDefaultsKey = "refresh-interval.config.v1"
+    private let pinnedProviderDefaultsKey = "pinned-provider.config.v1"
+    private let exchangeRateDefaultsKey = "exchange-rate.config.v1"
     private let secretsPrefix = "service.secrets.v1"
     private let defaults: UserDefaults
     private let keychain: KeychainStore
@@ -57,6 +59,35 @@ final class ConfigStore {
 
     func saveRefreshInterval(_ interval: TimeInterval) {
         defaults.set(interval, forKey: refreshIntervalDefaultsKey)
+    }
+
+    func loadPinnedConfigID() -> UUID? {
+        guard let raw = defaults.string(forKey: pinnedProviderDefaultsKey) else {
+            return nil
+        }
+        return UUID(uuidString: raw)
+    }
+
+    func savePinnedConfigID(_ id: UUID?) {
+        if let id {
+            defaults.set(id.uuidString, forKey: pinnedProviderDefaultsKey)
+        } else {
+            defaults.removeObject(forKey: pinnedProviderDefaultsKey)
+        }
+    }
+
+    func loadExchangeRate() -> ExchangeRateTable? {
+        guard let data = defaults.data(forKey: exchangeRateDefaultsKey) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(ExchangeRateTable.self, from: data)
+    }
+
+    func saveExchangeRate(_ table: ExchangeRateTable) {
+        guard let data = try? JSONEncoder().encode(table) else {
+            return
+        }
+        defaults.set(data, forKey: exchangeRateDefaultsKey)
     }
 
     func loadReportHookToken() -> String {
