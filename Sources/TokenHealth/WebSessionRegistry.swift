@@ -74,9 +74,13 @@ final class WebSessionRegistry {
         }
         // Whether this config ever had a profile cannot be answered by this run's bookkeeping: the
         // provider kind may have changed, and the app may have restarted since. Ask the store.
+        //
+        // 别把「这个 provider 类型用网页会话」当成有 profile 的证据（这里曾经就是那么写的）：
+        // 刚添加、还没登录过的账号从来没有 store，而对一个不存在的 identifier 调
+        // `WKWebsiteDataStore.remove(forIdentifier:)` 会让 WebKit 在
+        // `removeDataStoreWithIdentifierImpl` 里 SIGSEGV —— 这正是「添加一个 provider 再删掉」的崩因。
         // (`||` cannot take an `await` on its right side, hence the two-step guard.)
         var hadProfile = removed != nil
-            || WebSessionDescriptorFactory().descriptor(for: config.providerKind) != nil
         if !hadProfile {
             hadProfile = await hasStoredProfile(config.id)
         }
