@@ -74,16 +74,6 @@ enum MenuBarMetrics {
         }
     }
 
-    static func moneyText(_ amount: Decimal) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.numberStyle = .decimal
-        formatter.minimumFractionDigits = 2
-        formatter.maximumFractionDigits = 2
-        formatter.usesGroupingSeparator = true
-        return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "\(amount)"
-    }
-
     /// DeepSeek 没有额度比例，退化成一个换算后的金额。
     private static func deepSeekMetrics(
         from usages: [TokenUsage],
@@ -102,7 +92,7 @@ enum MenuBarMetrics {
                   let amount = first.amount else {
                 return []
             }
-            return [MenuBarMetric(label: shortLabel(for: first), shape: .amount(moneyText(amount)), severity: nil)]
+            return [MenuBarMetric(label: shortLabel(for: first), shape: .amount(UsageAmountFormatter.moneyText(amount)), severity: nil)]
         }
 
         var total = Decimal(0)
@@ -118,12 +108,12 @@ enum MenuBarMetrics {
                 }
                 return [MenuBarMetric(
                     label: "\(shortLabel(for: fallback)) · rate unavailable",
-                    shape: .amount(moneyText(fallbackAmount)),
+                    shape: .amount(UsageAmountFormatter.moneyText(fallbackAmount)),
                     severity: nil
                 )]
             }
             total += converted
         }
-        return [MenuBarMetric(label: target, shape: .amount(moneyText(total)), severity: nil)]
+        return [MenuBarMetric(label: target, shape: .amount(UsageAmountFormatter.moneyText(total)), severity: nil)]
     }
 }
