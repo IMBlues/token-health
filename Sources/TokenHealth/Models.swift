@@ -223,6 +223,8 @@ struct ProviderUsageSnapshot: Identifiable, Equatable, Sendable {
     var providerTitle: String
     var planName: String? = nil
     var usages: [TokenUsage]
+    /// Provider 提供的明细。为 nil 就不弹详情浮层。
+    var detail: UsageDetail? = nil
     var state: State
     var statusMessage: String
     var updatedAt: Date
