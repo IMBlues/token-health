@@ -59,11 +59,15 @@ struct SettingsView: View {
                         .tag(Self.reportingSelectionID)
                     }
                 }
-                // 增删放在列表底部：这是 macOS 源码列表的惯例位置（Xcode、邮件、磁盘工具的列表都这样），
-                // 一条带分隔线的整宽行，贴着列表而不是悬在上方。
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    sidebarActionBar
-                }
+
+                // 增删作为列表下方真实的一行页脚。
+                //
+                // 试过 `.safeAreaInset(edge: .bottom)`：那条没有背景，列表内容会从它底下透出来，
+                // 直接叠在最后一行上（实测截图里和 “Usage reporting” 重叠、还被窗口底边切掉）。
+                // 放进 VStack 就是普通的一行，不存在透出与重叠。
+                Divider()
+
+                sidebarActionBar
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 240)
         } detail: {
@@ -93,9 +97,7 @@ struct SettingsView: View {
     /// 两个按钮都做成无边框的**等尺寸符号**：这里是 `Menu` + `Button` 混排，`Menu` 天生带一个小箭头，
     /// 不把箭头隐掉、不给两边同样的 frame，就会渲染成两个宽窄不一的泡泡 —— 那正是之前被说丑的原因。
     private var sidebarActionBar: some View {
-        VStack(spacing: 0) {
-            Divider()
-            HStack(spacing: 0) {
+        HStack(spacing: 0) {
                 // 两边都钉同一个外框尺寸（不是给内部的 Image 加 frame）：`Menu` 与 `Button`
                 // 量出来的布局尺寸本来就不一样，只在内层约束的话，外框仍会一个宽一个窄。
                 Menu {
@@ -122,11 +124,10 @@ struct SettingsView: View {
                 .disabled(!canRemoveSelection)
                 .help("Remove the selected provider")
 
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
     }
 
     @ViewBuilder
