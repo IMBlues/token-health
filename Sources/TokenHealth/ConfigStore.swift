@@ -5,6 +5,7 @@ final class ConfigStore {
     // Leave v1 untouched so older builds can still load their last compatible snapshot.
     private let legacyDefaultsKey = "service.configs.v1"
     private let reportHookDefaultsKey = "usage-report-hook.config.v1"
+    private let refreshIntervalDefaultsKey = "refresh-interval.config.v1"
     private let secretsPrefix = "service.secrets.v1"
     private let defaults: UserDefaults
     private let keychain: KeychainStore
@@ -46,6 +47,16 @@ final class ConfigStore {
             return
         }
         defaults.set(data, forKey: reportHookDefaultsKey)
+    }
+
+    /// Returns nil when nothing was stored, so the caller can apply its own default.
+    func loadRefreshInterval() -> TimeInterval? {
+        let stored = defaults.double(forKey: refreshIntervalDefaultsKey)
+        return stored > 0 ? stored : nil
+    }
+
+    func saveRefreshInterval(_ interval: TimeInterval) {
+        defaults.set(interval, forKey: refreshIntervalDefaultsKey)
     }
 
     func loadReportHookToken() -> String {

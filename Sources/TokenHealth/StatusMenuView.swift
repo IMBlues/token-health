@@ -11,9 +11,11 @@ struct StatusMenuView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Token Health")
                         .font(.headline)
-                    Text(summaryText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    TimelineView(.periodic(from: Date(), by: 30)) { timeline in
+                        Text(summaryText(now: timeline.date))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Spacer()
@@ -67,11 +69,13 @@ struct StatusMenuView: View {
         .padding(16)
     }
 
-    private var summaryText: String {
+    private func summaryText(now: Date) -> String {
         StatusMenuSummary.text(
             configs: appState.configs,
             snapshots: appState.snapshots,
-            isRefreshing: appState.isRefreshing
+            isRefreshing: appState.isRefreshing,
+            lastRefreshAt: appState.lastRefreshAt,
+            now: now
         )
     }
 }
@@ -80,7 +84,9 @@ enum StatusMenuSummary {
     static func text(
         configs: [ServiceConfig],
         snapshots: [UUID: ProviderUsageSnapshot],
-        isRefreshing: Bool
+        isRefreshing: Bool,
+        lastRefreshAt: Date? = nil,
+        now: Date = Date()
     ) -> String {
         guard !configs.isEmpty else {
             return "No plans"
@@ -96,7 +102,28 @@ enum StatusMenuSummary {
         let ready = enabledConfigs.filter { config in
             snapshots[config.id]?.state == .ready
         }.count
-        return "\(ready)/\(enabledConfigs.count) updated"
+        let summary = "\(ready)/\(enabledConfigs.count) updated"
+        guard let lastRefreshAt else {
+            return summary
+        }
+        return "\(summary) · \(relativeAge(from: lastRefreshAt, now: now))"
+    }
+
+    /// Compact age for the refresh timestamp: `just now`, `3m ago`, `2h ago`, `5d ago`.
+    static func relativeAge(from date: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(date)))
+        if seconds < 60 {
+            return "just now"
+        }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)m ago"
+        }
+        let hours = minutes / 60
+        if hours < 24 {
+            return "\(hours)h ago"
+        }
+        return "\(hours / 24)d ago"
     }
 }
 

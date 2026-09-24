@@ -60,6 +60,8 @@ bash scripts/build-dmg.sh
 
 点齿轮添加 Provider，按提示登录，刷新即可。网页型服务从官方控制台导入会话；API 型服务在设置里填 key。
 
+菜单顶部会标出最近一次刷新距今多久（`2/2 updated · 3m ago`）。自动刷新默认 15 分钟一次，打开菜单不会触发刷新；间隔可在设置 → General → Refresh 里自定义，最短 30 秒。
+
 ### Cursor
 
 Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后请求 Cursor 用量接口。接口提供独立数值时显示 Auto + Composer、API、Grokbot；如果 Cursor 把 Grokbot 合并进 Auto，会明确显示 **Grokbot (included in Auto)**，不会无声消失。

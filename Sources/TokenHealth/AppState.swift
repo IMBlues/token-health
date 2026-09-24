@@ -3,7 +3,8 @@ import Foundation
 
 @MainActor
 final class AppState: ObservableObject {
-    static let refreshInterval: TimeInterval = 60 * 15
+    static let defaultRefreshInterval: TimeInterval = 60 * 15
+    static let minimumRefreshInterval: TimeInterval = 30
 
     @Published var configs: [ServiceConfig]
     @Published var snapshots: [UUID: ProviderUsageSnapshot] = [:]
@@ -11,6 +12,8 @@ final class AppState: ObservableObject {
     @Published var lastError: String?
     @Published var settingsSelectedID: UUID?
     @Published var nextRefreshAt: Date
+    @Published var refreshInterval: TimeInterval
+    @Published var lastRefreshAt: Date?
     @Published var reportHookConfig: ReportHookConfig
     @Published var isReporting = false
     @Published var lastReportMessage: String?
@@ -26,7 +29,9 @@ final class AppState: ObservableObject {
         self.usageReporter = usageReporter
         configs = configStore.loadConfigs()
         reportHookConfig = configStore.loadReportHookConfig()
-        nextRefreshAt = Date().addingTimeInterval(Self.refreshInterval)
+        let interval = Self.normalizedRefreshInterval(configStore.loadRefreshInterval())
+        refreshInterval = interval
+        nextRefreshAt = Date().addingTimeInterval(interval)
         normalizeReportProviderSelection()
         do {
             try configStore.migrateLegacySecrets(for: configs)
@@ -43,12 +48,29 @@ final class AppState: ObservableObject {
 
     private func scheduleNextRefresh(from date: Date = Date()) {
         refreshTimer?.invalidate()
-        nextRefreshAt = date.addingTimeInterval(Self.refreshInterval)
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: Self.refreshInterval, repeats: false) { [weak self] _ in
+        nextRefreshAt = date.addingTimeInterval(refreshInterval)
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 await self?.refreshAll()
             }
         }
+    }
+
+    func setRefreshInterval(_ interval: TimeInterval) {
+        let normalized = Self.normalizedRefreshInterval(interval)
+        guard normalized != refreshInterval else {
+            return
+        }
+        refreshInterval = normalized
+        configStore.saveRefreshInterval(normalized)
+        scheduleNextRefresh()
+    }
+
+    static func normalizedRefreshInterval(_ interval: TimeInterval?) -> TimeInterval {
+        guard let interval, interval.isFinite, interval > 0 else {
+            return defaultRefreshInterval
+        }
+        return max(interval.rounded(), minimumRefreshInterval)
     }
 
     func addConfig(providerKind: ProviderKind = .kimiCode) -> UUID {
@@ -256,6 +278,7 @@ final class AppState: ObservableObject {
         isRefreshing = true
         defer {
             isRefreshing = false
+            lastRefreshAt = Date()
             scheduleNextRefresh()
         }
 

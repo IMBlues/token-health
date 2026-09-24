@@ -2,12 +2,14 @@ import SwiftUI
 
 struct SettingsView: View {
     private static let reportingSelectionID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+    private static let generalSelectionID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
 
     @EnvironmentObject private var appState: AppState
     @State private var selectedID: UUID?
     @State private var apiKey = ""
     @State private var password = ""
     @State private var reportBearerToken = ""
+    @State private var refreshIntervalText = ""
     @State private var loadedSecretID: UUID?
     @State private var storedAccountLabel: String?
     @State private var isWebLoginInProgress = false
@@ -39,6 +41,21 @@ struct SettingsView: View {
                     }
                     .onMove { source, destination in
                         appState.moveConfigs(fromOffsets: source, toOffset: destination)
+                    }
+
+                    Section("General") {
+                        HStack {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .frame(width: 18)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Refresh")
+                                Text("Interval")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                        .tag(Self.generalSelectionID)
                     }
 
                     Section("Integrations") {
@@ -89,7 +106,11 @@ struct SettingsView: View {
                     } label: {
                         Image(systemName: "minus")
                     }
-                    .disabled(selectedID == nil || selectedID == Self.reportingSelectionID)
+                    .disabled(
+                        selectedID == nil ||
+                        selectedID == Self.reportingSelectionID ||
+                        selectedID == Self.generalSelectionID
+                    )
                     .help("Remove plan")
 
                     Spacer()
@@ -123,6 +144,8 @@ struct SettingsView: View {
     private var detail: some View {
         if selectedID == Self.reportingSelectionID {
             reportHookDetail
+        } else if selectedID == Self.generalSelectionID {
+            generalDetail
         } else if let binding = selectedConfigBinding {
             Form {
                 Section {
@@ -242,6 +265,61 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var generalDetail: some View {
+        Form {
+            Section {
+                LabeledContent("Auto-refresh interval") {
+                    HStack(spacing: 6) {
+                        TextField("", text: $refreshIntervalText, prompt: Text("Seconds"))
+                            .frame(width: 80)
+                            .multilineTextAlignment(.trailing)
+                            .labelsHidden()
+                            .accessibilityLabel("Auto-refresh interval in seconds")
+                            .onSubmit(applyRefreshIntervalText)
+                        Text("seconds")
+                            .foregroundStyle(.secondary)
+                        Stepper(
+                            "",
+                            value: refreshIntervalSecondsBinding,
+                            in: Int(AppState.minimumRefreshInterval)...max(refreshIntervalSecondsBinding.wrappedValue, 86_400),
+                            step: 30
+                        )
+                        .labelsHidden()
+                    }
+                }
+                Text("Minimum \(Int(AppState.minimumRefreshInterval)) seconds. Press Return to apply a typed value.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear { refreshIntervalText = refreshIntervalDisplayText }
+        .onChange(of: appState.refreshInterval) { refreshIntervalText = refreshIntervalDisplayText }
+    }
+
+    private var refreshIntervalDisplayText: String {
+        String(Int(appState.refreshInterval.rounded()))
+    }
+
+    private var refreshIntervalSecondsBinding: Binding<Int> {
+        Binding {
+            Int(appState.refreshInterval.rounded())
+        } set: { seconds in
+            appState.setRefreshInterval(TimeInterval(seconds))
+        }
+    }
+
+    private func applyRefreshIntervalText() {
+        guard let seconds = Double(refreshIntervalText.trimmingCharacters(in: .whitespaces)),
+              seconds.isFinite else {
+            refreshIntervalText = refreshIntervalDisplayText
+            return
+        }
+        appState.setRefreshInterval(seconds)
+        refreshIntervalText = refreshIntervalDisplayText
     }
 
     private var reportHookDetail: some View {
@@ -397,6 +475,14 @@ struct SettingsView: View {
             password = ""
             loadedSecretID = nil
             storedAccountLabel = nil
+            return
+        }
+        if selectedID == Self.generalSelectionID {
+            apiKey = ""
+            password = ""
+            apiKeyStoredValue = false
+            storedAccountLabel = nil
+            loadedSecretID = selectedID
             return
         }
         if selectedID == Self.reportingSelectionID {

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TokenHealth
 
@@ -53,6 +54,57 @@ struct StatusMenuSummaryTests {
                 isRefreshing: false
             ) == "No enabled plans"
         )
+    }
+
+    @Test
+    func appendsRelativeAgeOfLastRefresh() {
+        let config = ServiceConfig(
+            displayName: "Cursor",
+            providerKind: .cursor,
+            authMode: .api
+        )
+        let now = Date()
+
+        #expect(
+            StatusMenuSummary.text(
+                configs: [config],
+                snapshots: [config.id: readySnapshot(for: config)],
+                isRefreshing: false,
+                lastRefreshAt: now.addingTimeInterval(-180),
+                now: now
+            ) == "1/1 updated · 3m ago"
+        )
+    }
+
+    @Test
+    func omitsRelativeAgeWithoutARefreshTimestamp() {
+        let config = ServiceConfig(
+            displayName: "Cursor",
+            providerKind: .cursor,
+            authMode: .api
+        )
+
+        #expect(
+            StatusMenuSummary.text(
+                configs: [config],
+                snapshots: [config.id: readySnapshot(for: config)],
+                isRefreshing: false,
+                lastRefreshAt: nil
+            ) == "1/1 updated"
+        )
+    }
+
+    @Test
+    func formatsRelativeAgeInMinutesHoursAndDays() {
+        let now = Date()
+
+        #expect(StatusMenuSummary.relativeAge(from: now, now: now) == "just now")
+        #expect(StatusMenuSummary.relativeAge(from: now.addingTimeInterval(-59), now: now) == "just now")
+        #expect(StatusMenuSummary.relativeAge(from: now.addingTimeInterval(5), now: now) == "just now")
+        #expect(StatusMenuSummary.relativeAge(from: now.addingTimeInterval(-60), now: now) == "1m ago")
+        #expect(StatusMenuSummary.relativeAge(from: now.addingTimeInterval(-59 * 60), now: now) == "59m ago")
+        #expect(StatusMenuSummary.relativeAge(from: now.addingTimeInterval(-3 * 3600 - 60), now: now) == "3h ago")
+        #expect(StatusMenuSummary.relativeAge(from: now.addingTimeInterval(-2 * 86_400), now: now) == "2d ago")
     }
 
     private func readySnapshot(for config: ServiceConfig) -> ProviderUsageSnapshot {
