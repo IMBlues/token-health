@@ -2901,3 +2901,47 @@ Expected: Task 0 起的全部提交都在分支上。
 | 状态项宽度按 `image.size.width + 6` 估的，可能与系统留白叠加 | Task 15 步骤 5.2/5.3 目视确认，必要时调 `statusItemPadding` |
 | lobehub 图标库的 slug 若变更 | 脚本固定 `1.95.1`，不会随 `latest` 漂移；变更时改版本号即可复现 |
 | Codex 的模型桶 label 格式若改变，账号级判定会失准 | 判定集中在 `UsageMetricSelection.isAccountLevel`，有测试钉住 |
+
+---
+
+## 实现记录：与上面步骤的实际偏差
+
+计划评审把这些代码块抽出来单独编译运行过，指出三处硬编译错误与一处自相矛盾的步骤；
+执行过程中又发现一处计划完全没预料到的环境障碍。以下是最终落地的写法，与上文步骤不同之处以本节为准。
+
+1. **Task 11 的刷新顺序**：`refreshAll()` 里的 `defer` 之后不可能再有代码，而把汇率刷新写进
+   `refreshAll` 就会在 `isRefreshing` 仍为真时执行。改成拆出私有 `performRefresh()`（原逻辑与
+   `defer` 原样搬入），`refreshAll()` 变成 `performRefresh()` 之后再 `refreshExchangeRate()`。
+
+2. **Task 12 的外观观察**：`NSApplication.didChangeEffectiveAppearanceNotification` 在 macOS SDK
+   里**不存在**，原写法无法编译。改成 KVO `NSApp.observe(\.effectiveAppearance)`。
+   另外 `NSApp.isFinishedLaunching` 也不存在，改用 `NSRunningApplication.current.isFinishedLaunching`。
+
+3. **Task 10 的字体常量**：`static let amountFont` 在 Swift 6 严格并发下报
+   `non-Sendable type 'NSFont'`。整个 `MenuBarItemRenderer` 标注 `@MainActor`（调用方本来就在主线程）。
+
+4. **Task 14 的 `relativeAge`**：`StatusMenuSummary.relativeAge(from:now:)` 的 `now` **没有**默认值，
+   必须显式传 `now: Date()`。
+
+5. **Task 7 的资源查找**：`.process("Resources")` 会把目录拍平，构建产物是 bundle 根下的
+   `kimi.pdf`，没有 `ProviderIcons/`。查找不要加 `subdirectory:`。
+
+6. **Task 8 的资源断言**：测试进程里的 `Bundle.module` 指向测试自己的 bundle，直接用它在测不到
+   App 的资源。加了 `ProviderIcon.bundledLogoURL(for:)` 作为内部查询口，用一个遍历全部
+   `ProviderKind` 的测试断言每枚声明的 logo 都能解析并解码。
+
+7. **计划外的重构：`SecretStoring` 协议**。计划没预见到 `AppState.init` → `configStore.migrateLegacySecrets`
+   → 真实钥匙串这条路。真机钥匙串里已存在条目，测试进程去读会弹系统授权框并**无限期挂死**
+   —— 症状是 `swift test` 没有任何输出（先按用例二分到「全部用例都挂」，再用一个最小探针
+   证实单次钥匙串读取即可复现）。任何现存测试都没构造过 `AppState`，所以这个坑一直没暴露。
+   修法是把凭据存储抽成 `SecretStoring` 协议，`KeychainStore` 与测试用的 `InMemorySecretStore`
+   各实现一份，`ConfigStore` 改持协议。
+
+8. **未加但值得加**：`MenuBarItemRenderer` 的像素冒烟测试（断言真的落了非透明像素）不在计划里，
+   但计划把渲染层完全排除在测试之外又太薄，所以补了一组。
+
+9. **无法自动验证的一项**：钉住项**是否真的出现在菜单栏上**。这台机器上系统截屏返回全黑
+   （未授予屏幕录制），Accessibility API 返回 `kAXErrorAPIDisabled`（未授予辅助功能权限），
+   两条外部观察路径都走不通。已验证的是：整轮测试、像素级渲染度量、App 带 pin 启动后存活不崩
+   （即 `start()` 与其中的 KVO / 通知代码都真实跑过）。菜单栏里的肉眼确认需要人工看一眼。
+
