@@ -43,6 +43,7 @@
 | `Sources/TokenHealth/Providers.swift` | `ProviderFactory.producesUsageDetail(for:)` |
 | `Sources/TokenHealth/AppState.swift` | `refresh(configID:)`；非 ready 快照保留旧 detail |
 | `Sources/TokenHealth/PinnedStatusItemController.swift` | 支持详情的项弹浮层，否则弹菜单 |
+| `AppSupport/Info.plist` | 版本号 |
 | `README.md` | 用法说明 |
 
 ---
@@ -386,19 +387,16 @@ enum DeepSeekPayload {
 
     // MARK: - cost 侧
 
-    /// 走到 `[{currency, days}]`。币种按名字升序，保证浮层里的顺序稳定。
+    /// 走到 `[{currency, days}]`。**保持解析器原有的策略**：缺币种时默认 `"CNY"`，
+    /// 不排序 —— 排序是详情浮层的展示决定，放在 `DeepSeekUsageDetail` 里做。
+    /// 这里若顺手改了策略，解析器的行为就跟着变了，而它的测试覆盖不到这种畸形响应。
     static func costCurrencies(fromCost root: [String: Any]) -> [CostCurrency] {
-        costCurrencyItems(from: root)
-            .compactMap { item in
-                guard let currency = stringValue(item["currency"]), !currency.isEmpty else {
-                    return nil
-                }
-                return CostCurrency(
-                    currency: currency,
-                    days: item["days"] as? [[String: Any]] ?? []
-                )
-            }
-            .sorted { $0.currency < $1.currency }
+        costCurrencyItems(from: root).map { item in
+            CostCurrency(
+                currency: stringValue(item["currency"]) ?? "CNY",
+                days: item["days"] as? [[String: Any]] ?? []
+            )
+        }
     }
 
     // MARK: - 共用
@@ -439,13 +437,17 @@ enum DeepSeekPayload {
         decimalValue(value)
     }
 
-    // MARK: - 私有（逐字搬自解析器）
+    // MARK: - 形状走查（逐字搬自解析器，必须是 internal）
 
-    private static func bizData(from root: [String: Any]) -> [String: Any]? { ... }
-    private static func usageDataObject(from root: [String: Any]) -> [String: Any]? { ... }
-    private static func costCurrencyItems(from root: [String: Any]) -> [[String: Any]] { ... }
-    private static func stringValue(_ value: Any?) -> String? { ... }
-    private static func decimalValue(_ value: Any?) -> Decimal? { ... }
+    // 这五个**不能是 private**：解析器自己也要用（bizData 在 parseSummaryBalances、
+    // usageDataObject 在 parseTodayAmounts、costCurrencyItems 在 parseTodayCosts，
+    // stringValue/decimalValue 散在四处）。共享一份的意义就在这儿。
+
+    static func bizData(from root: [String: Any]) -> [String: Any]? { ... }
+    static func usageDataObject(from root: [String: Any]) -> [String: Any]? { ... }
+    static func costCurrencyItems(from root: [String: Any]) -> [[String: Any]] { ... }
+    static func stringValue(_ value: Any?) -> String? { ... }
+    static func decimalValue(_ value: Any?) -> Decimal? { ... }
 }
 ```
 
@@ -517,6 +519,15 @@ struct DeepSeekUsageDetailTests {
         """
     }
 
+    /// cost 响应里的一天：只有金额，没有 type / tokens。
+    /// **不能拿上面的 amount helper 造 cost** —— 它产出的 usage 全是没有 `amount` 语义的 type 条目，
+    /// 求和恒为 0，会让「有花费的模型」被当成全零模型丢掉。
+    private func costDay(_ date: String, model: String, amount: String) -> String {
+        """
+        {"date":"\(date)","data":[{"model":"\(model)","usage":[{"amount":"\(amount)"}]}]}
+        """
+    }
+
     private func balances(_ pairs: [(String, String)]) -> [TokenUsage] {
         pairs.map { currency, amount in
             TokenUsage(
@@ -549,8 +560,8 @@ struct DeepSeekUsageDetailTests {
          \(day("2026-09-24", model: "deepseek-reasoner", requests: 2, output: 60, hit: 10, miss: 30))]
         """
         let cost = """
-        [\(day("2026-09-23", model: "deepseek-chat", requests: 0, output: 0, hit: 0, miss: 0)),
-         \(day("2026-09-24", model: "deepseek-chat", requests: 0, output: 0, hit: 0, miss: 0))]
+        [\(costDay("2026-09-23", model: "deepseek-chat", amount: "0.40")),
+         \(costDay("2026-09-24", model: "deepseek-chat", amount: "0.02"))]
         """
         let detail = try #require(
             DeepSeekUsageDetail.make(
@@ -560,10 +571,13 @@ struct DeepSeekUsageDetailTests {
             )
         )
 
-        let today = try #require(detail.groups.first { $0.title == "今日" })
+        let today = try #require(detail.groups.first { $0.title == "Today" })
         #expect(today.values.map(\.label) == ["Requests", "Tokens", "Cost"], "浮层文案与 App 其余部分一致，用英文")
         #expect(today.values[0].value == "6")
         #expect(today.values[1].value == "240")
+        #expect(today.values[2].value == "0.02 CNY", "今日花费来自 cost 响应")
+        let month = try #require(detail.groups.first { $0.title == "This month" })
+        #expect(month.values[2].value == "0.42 CNY", "本月花费")
     }
 
     @Test
@@ -594,7 +608,7 @@ struct DeepSeekUsageDetailTests {
         let series = try #require(detail.series)
         #expect(series.points.count == 24)
         #expect(series.points.last?.value == 15, "同一天出现两次要相加，且只产出 1 个点")
-        let today = try #require(detail.groups.first { $0.title == "今日" })
+        let today = try #require(detail.groups.first { $0.title == "Today" })
         #expect(today.values[0].value == "5")
     }
 
@@ -629,8 +643,9 @@ struct DeepSeekUsageDetailTests {
     @Test
     func keepsModelsThatOnlyAppearInTheCostResponse() throws {
         let amount = "[\(day("2026-09-10", model: "chat", requests: 1, output: 100, hit: 0, miss: 0))]"
-        let cost = "[\(day("2026-09-10", model: "chat", requests: 0, output: 0, hit: 0, miss: 0))," +
-                   " \(day("2026-09-10", model: "legacy", requests: 0, output: 0, hit: 0, miss: 0))]"
+        // legacy 只在 cost 里出现，而且**真的有花费** —— 否则它会被「全零模型不成行」的规则丢掉。
+        let cost = "[\(costDay("2026-09-10", model: "chat", amount: "0.10"))," +
+                   " \(costDay("2026-09-10", model: "legacy", amount: "1.20"))]"
         let detail = try #require(
             DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: cost), balances: [], today: period)
         )
@@ -639,6 +654,7 @@ struct DeepSeekUsageDetailTests {
         #expect(table.rows.count == 2)
         let legacy = try #require(table.rows.first { $0.name == "legacy" })
         #expect(legacy.cells[1] == "0", "只在 cost 里出现的模型仍然成行")
+        #expect(legacy.cells[2] == "1.20 CNY", "它的花费来自 cost 响应")
     }
 
     @Test
@@ -687,7 +703,7 @@ struct DeepSeekUsageDetailTests {
             DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: cost), balances: [], today: period)
         )
 
-        let today = try #require(detail.groups.first { $0.title == "今日" })
+        let today = try #require(detail.groups.first { $0.title == "Today" })
         #expect(today.values[2].value == "41.80 CNY · 0.30 USD", "币种按名字升序")
     }
 
@@ -753,10 +769,10 @@ enum DeepSeekUsageDetail {
 - `aggregateCostDays`：`DeepSeekPayload.costCurrencies(fromCost:)` → 每天每币种求和，同时按模型累计 `costByCurrency`。
 - `merged`：把两份按日期并起来，缺的一边当 0。
 - `headline`：`balances` 里每一项 `value = UsageAmountFormatter.moneyText(amount) + " " + unit`，`label = unit`。**不重新解析 summary**。
-- `groups`：今日 = merged 里等于今天的那个（没有就是全 0）；本月 = 全部求和。每个 group 三个 `DetailStat`：请求（`compactAmount`）、Tokens（`compactAmount`）、花费（按币种升序 `moneyText + " " + code` 用 ` · ` 连；一个币种都没有就是 `—`）。
-- `series`：从当月 1 号到今天逐日取，缺的补 0，`value` 是该日三种 token 之和；`axisStart`/`axisEnd` 用 `M/d`。
-- `breakdown`：本月三个 type 的合计，label「输出」「缓存命中」「缓存未命中」。
-- `table`：模型并集（amount 侧 + cost 侧），**tokens 与花费都为 0 的模型不成行**（沿用既有解析器丢掉空模型的做法，免得白占 6 行里的位置），按 tokens 降序、同名升序，前 6 行，其余进 `footnote`（`+N more models`）。单元格依次是次数、Tokens、花费。
+- `groups`：今日 = merged 里等于今天的那个（没有就是全 0）；本月 = 全部求和。每个 group 三个 `DetailStat`，文案按 §7.3 的文案表：`Requests`（`compactAmount`）、`Tokens`（`compactAmount`）、`Cost`（按币种升序 `moneyText + " " + code` 用 ` · ` 连；**一个币种条目都没有**才是 `—`，币种存在但为 0 显示 `0.00 CNY`）。group 的 `title` 是 `Today` / `This month`。
+- `series`：从当月 1 号到今天逐日取，缺的补 0，`value` 是该日三种 token 之和；`axisStart`/`axisEnd` 用 `M/d`；标题 `Tokens this month`。
+- `breakdown`：本月三个 type 的合计，label 是 `Output` / `Cache hit` / `Cache miss`（§7.3 文案表）。
+- `table`：模型并集（amount 侧 + cost 侧），**tokens 与花费都为 0 的模型不成行**（沿用既有解析器丢掉空模型的做法，免得白占 6 行里的位置），按 tokens 降序、同名升序，前 6 行，其余进 `footnote`（`+N more models`）。表标题 `By model · this month`，表头 `["Model", "Requests", "Tokens", "Cost"]`，单元格依次是次数、Tokens、花费。
 - 日期工具：一个私有的 `Calendar`（UTC）+ `DateFormatter`（`en_US_POSIX`，`yyyy-MM-dd` / `M/d`）。
 
 - [ ] **Step 4: 跑测试确认通过**
@@ -965,7 +981,9 @@ Expected: 编译失败，`type 'ProviderFactory' has no member 'producesUsageDet
     static func producesUsageDetail(for config: ServiceConfig) -> Bool {
         switch config.providerKind {
         case .deepSeek:
-            // 登录模式走平台接口，有按天/按模型的明细；API key 模式只有公开余额接口。
+            // 登录模式走平台接口，有按天/按模型的明细。
+            // 注意这个判断只看得到 config、看不到 Keychain：一个配成 API 模式但凭据里还留着
+            // 网页会话的账号实际上会取回平台数据，而这里回报 false。无害，但别把话说死。
             config.authMode == .browserLogin
         default:
             false
@@ -1084,45 +1102,64 @@ struct AppStateRefreshTests {
         #expect(state.snapshots[id]?.detail != nil)
     }
 
+    /// 合并规则本身。直接走 `storeSnapshot` —— 它是快照的唯一写入路径。
     @Test
-    func keepsTheLastGoodDetailWhenARefreshFails() {
+    func storeSnapshotKeepsTheLastGoodDetailWhenTheFetchFails() {
         let state = makeState(defaults: makeDefaults())
         let id = state.addConfig(providerKind: .kimiCode)
-        let old = readySnapshot(id, detail: sampleDetail)
-        state.snapshots[id] = old
-        let previousUpdatedAt = old.updatedAt
+        let previous = readySnapshot(id, detail: sampleDetail)
+        state.snapshots[id] = previous
 
         // 失败时 provider 返回的是 unavailable 快照，detail 为空。
-        state.snapshots[id] = ProviderUsageSnapshot.unavailable(
-            config: state.configs[0],
-            message: "HTTP 503"
+        state.storeSnapshot(
+            ProviderUsageSnapshot.unavailable(config: state.configs[0], message: "HTTP 503"),
+            for: id
         )
 
         #expect(state.snapshots[id]?.state == .unavailable)
         #expect(state.snapshots[id]?.detail == sampleDetail, "失败要保留上次的数字，否则浮层会被清空、菜单栏项还会被打回旧菜单")
         #expect(state.snapshots[id]?.statusMessage == "HTTP 503", "错误信息仍然要能显示出来")
-        #expect(state.snapshots[id]?.updatedAt == previousUpdatedAt, "保留旧时间戳，别谎报数据是刚刚取的")
+        #expect(state.snapshots[id]?.updatedAt == previous.updatedAt, "保留旧时间戳，别谎报数据是刚刚取的")
     }
 
     @Test
-    func aReadySnapshotReplacesTheDetailOutright() {
+    func storeSnapshotReplacesTheDetailOutrightWhenReady() {
         let state = makeState(defaults: makeDefaults())
         let id = state.addConfig(providerKind: .kimiCode)
         state.snapshots[id] = readySnapshot(id, detail: sampleDetail)
 
-        state.snapshots[id] = readySnapshot(id, detail: nil)
+        state.storeSnapshot(readySnapshot(id, detail: nil), for: id)
 
-        #expect(state.snapshots[id]?.detail == nil, "成功取数时该以新结果为准，不做合并")
+        #expect(state.snapshots[id]?.detail == nil, "成功取数时以新结果为准，不做合并")
     }
 
     @Test
-    func theFirstFailureHasNothingToKeep() {
+    func storeSnapshotKeepsNothingOnTheFirstFailure() {
         let state = makeState(defaults: makeDefaults())
         let id = state.addConfig(providerKind: .kimiCode)
 
-        state.snapshots[id] = ProviderUsageSnapshot.unavailable(config: state.configs[0], message: "HTTP 503")
+        state.storeSnapshot(
+            ProviderUsageSnapshot.unavailable(config: state.configs[0], message: "HTTP 503"),
+            for: id
+        )
 
         #expect(state.snapshots[id]?.detail == nil)
+    }
+
+    /// 端到端：单账号刷新走的确实是同一个合并路径。
+    /// `.kimiCode` 配 `.api` 且凭据为空时，provider 直接返回 unavailable，不发任何请求。
+    @Test
+    func aFailedSingleAccountRefreshGoesThroughTheSameMerge() async {
+        let state = makeState(defaults: makeDefaults())
+        let id = state.addConfig(providerKind: .kimiCode)
+        let previous = readySnapshot(id, detail: sampleDetail)
+        state.snapshots[id] = previous
+
+        await state.refresh(configID: id)
+
+        #expect(state.snapshots[id]?.state == .unavailable)
+        #expect(state.snapshots[id]?.detail == sampleDetail, "单账号刷新也必须保住旧 detail")
+        #expect(state.snapshots[id]?.updatedAt == previous.updatedAt)
     }
 }
 
@@ -1147,7 +1184,9 @@ Expected: 编译失败，`value of type 'AppState' has no member 'refresh'`
 `performRefresh` 的循环改成走一个共用方法：
 
 ```swift
-    private func storeSnapshot(_ snapshot: ProviderUsageSnapshot, for id: UUID) {
+    /// 快照的**唯一**写入路径：`performRefresh` 与单账号刷新都走它。
+    /// 标成 internal（不是 private）是为了让测试能直接验证合并规则本身。
+    func storeSnapshot(_ snapshot: ProviderUsageSnapshot, for id: UUID) {
         // 取数失败时 Provider 给的是 unavailable 快照，detail 为空。直接覆盖会把上次的数字抹掉，
         // 浮层被清空、菜单栏项还会被打回旧菜单 —— 所以非 ready 时把旧 detail 留下来。
         var incoming = snapshot
@@ -1226,7 +1265,7 @@ EOF
 
 - [ ] **Step 1: 实现视图**
 
-创建 `Sources/TokenHealth/DetailPopoverView.swift`。要点：只读、无交互、空区块整个不渲染、宽度固定 320。
+创建 `Sources/TokenHealth/DetailPopoverView.swift`。只读、无交互，文案一律用 spec §7.3 的英文表。
 
 ```swift
 import SwiftUI
@@ -1246,11 +1285,11 @@ struct DetailPopoverView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if let detail, !detail.isEmpty {
-                content(detail)
+                sections(detail)
             } else {
-                Text(statusMessage ?? "Loading…")
+                Text(emptyStateText)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(statusMessage == nil ? .secondary : .red)
             }
             Divider()
             actions
@@ -1258,15 +1297,174 @@ struct DetailPopoverView: View {
         .padding(14)
         .frame(width: 320)
     }
-    ...
+
+    /// 「还没有快照」与「快照不可用」是两回事：前者在等第一次取数，后者是取数失败了。
+    private var emptyStateText: String {
+        if let statusMessage {
+            return statusMessage
+        }
+        return updatedAt == nil ? "Loading…" : "No usage to show"
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(serviceName)
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if let updatedAt {
+                    Text(StatusMenuSummary.relativeAge(from: updatedAt, now: Date()))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Refresh", action: onRefresh)
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+            }
+            // 有旧数据时的错误行：数据照常展示，错误挂在顶上。
+            if let statusMessage, detail?.isEmpty == false {
+                Text(statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sections(_ detail: UsageDetail) -> some View {
+        if !detail.headline.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(detail.headline) { stat in
+                    HStack {
+                        Text(stat.label)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Text(stat.value).font(.title3.monospacedDigit())
+                    }
+                }
+            }
+        }
+
+        ForEach(detail.groups) { group in
+            VStack(alignment: .leading, spacing: 3) {
+                Text(group.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    ForEach(group.values) { stat in
+                        Text(stat.value).font(.caption.monospacedDigit())
+                        if stat.id != group.values.last?.id {
+                            Text("·").font(.caption).foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+        }
+
+        if let series = detail.series {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(series.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                if DetailSeriesChart.maximum(of: series.points) == 0 {
+                    Text("No usage this month")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    chart(series)
+                    HStack {
+                        Text(series.axisStart)
+                        Spacer()
+                        Text(series.axisEnd)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                }
+            }
+        }
+
+        if !detail.breakdown.isEmpty {
+            HStack(spacing: 10) {
+                ForEach(detail.breakdown) { stat in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(stat.label).font(.caption2).foregroundStyle(.secondary)
+                        Text(stat.value).font(.caption.monospacedDigit())
+                    }
+                }
+            }
+        }
+
+        if let table = detail.table {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(table.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ForEach(table.rows) { row in
+                    HStack(spacing: 8) {
+                        Text(row.name)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 6)
+                        ForEach(Array(row.cells.enumerated()), id: \.offset) { _, cell in
+                            Text(cell)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .frame(minWidth: 46, alignment: .trailing)
+                        }
+                    }
+                }
+                if let footnote = table.footnote {
+                    Text(footnote).font(.caption2).foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    /// 自己画的迷你柱状图：一层 GeometryReader 拿到宽度，柱高由纯计算的 `DetailSeriesChart` 给出。
+    private func chart(_ series: DetailSeries) -> some View {
+        GeometryReader { proxy in
+            let spacing: CGFloat = 1
+            let count = max(series.points.count, 1)
+            let barWidth = max(1, (proxy.size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
+            let heights = DetailSeriesChart.heights(
+                points: series.points,
+                maxHeight: proxy.size.height,
+                minimumVisibleHeight: 1.5
+            )
+            HStack(alignment: .bottom, spacing: spacing) {
+                ForEach(Array(zip(series.points, heights)), id: \.0.id) { _, height in
+                    Rectangle()
+                        .fill(Color.accentColor.opacity(0.75))
+                        .frame(width: barWidth, height: height)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+        .frame(height: 44)
+    }
+
+    private var actions: some View {
+        HStack(spacing: 12) {
+            Button("Unpin", action: onUnpin)
+            Button("Settings", action: onOpenSettings)
+            Spacer()
+            Button("Quit", action: onQuit)
+        }
+        .buttonStyle(.borderless)
+        .font(.caption)
+    }
 }
 ```
 
-`content(_:)` 依次渲染 headline / groups / series / breakdown / table，每个空数组或 nil 就跳过。趋势图用 `GeometryReader` 拿到宽度后，把 `DetailSeriesChart.heights` 的结果画成一排 `Rectangle`（柱子间 1pt 间隔，底部对齐）。
+高度上限与滚动由控制器挂在浮层外面（`NSPopover` 自带尺寸自适应，超过 520pt 时由 `NSScrollView` 承担）。
 
 - [ ] **Step 2: 写渲染冒烟测试**
 
-创建 `Tests/TokenHealthTests/DetailPopoverRenderTests.swift`，与既有的 `StatusMenuPanelRenderTests` 同一路数：
+创建 `Tests/TokenHealthTests/DetailPopoverRenderTests.swift`，与既有的 `StatusMenuPanelRenderTests` 同一路数。**`fullDetail` 要真的把五个区块都填满**，逐个写完：
 
 ```swift
 import AppKit
@@ -1280,8 +1478,8 @@ struct DetailPopoverRenderTests {
     @Test
     func rendersAFullDetail() throws {
         let image = try render(fullDetail)
-        #expect(image.height > 200)
         #expect(image.width == 640, "320pt @2x")
+        #expect(image.height > 200, "五个区块都非空时应该有这么高")
     }
 
     @Test
@@ -1290,7 +1488,64 @@ struct DetailPopoverRenderTests {
         #expect(image.height > 0)
     }
 
-    private var fullDetail: UsageDetail { ... }   // 覆盖五个区块都非空的构造
+    @Test
+    func rendersANoUsageMonth() throws {
+        let points = (0..<24).map { index in
+            DetailSeriesPoint(date: Date(timeIntervalSince1970: TimeInterval(index) * 86_400), value: 0)
+        }
+        let detail = UsageDetail(
+            headline: [DetailStat(label: "CNY", value: "1,284.60 CNY")],
+            series: DetailSeries(title: "Tokens this month", points: points, axisStart: "9/1", axisEnd: "9/24")
+        )
+        let image = try render(detail)
+        #expect(image.height > 0, "全零的月份不该崩，也不该画出一排柱子")
+    }
+
+    private var fullDetail: UsageDetail {
+        UsageDetail(
+            headline: [
+                DetailStat(label: "CNY", value: "1,284.60 CNY"),
+                DetailStat(label: "USD", value: "3.00 USD")
+            ],
+            groups: [
+                DetailGroup(title: "Today", values: [
+                    DetailStat(label: "Requests", value: "12"),
+                    DetailStat(label: "Tokens", value: "184K"),
+                    DetailStat(label: "Cost", value: "0.42 CNY")
+                ]),
+                DetailGroup(title: "This month", values: [
+                    DetailStat(label: "Requests", value: "1.2K"),
+                    DetailStat(label: "Tokens", value: "18.2M"),
+                    DetailStat(label: "Cost", value: "41.80 CNY")
+                ])
+            ],
+            series: DetailSeries(
+                title: "Tokens this month",
+                points: (0..<24).map { index in
+                    DetailSeriesPoint(
+                        date: Date(timeIntervalSince1970: TimeInterval(index) * 86_400),
+                        value: Double((index * 37) % 900 + 100)
+                    )
+                },
+                axisStart: "9/1",
+                axisEnd: "9/24"
+            ),
+            breakdown: [
+                DetailStat(label: "Output", value: "8.1M"),
+                DetailStat(label: "Cache hit", value: "9.4M"),
+                DetailStat(label: "Cache miss", value: "0.7M")
+            ],
+            table: DetailTable(
+                title: "By model · this month",
+                columns: ["Model", "Requests", "Tokens", "Cost"],
+                rows: [
+                    DetailTableRow(name: "deepseek-chat", cells: ["980", "14.2M", "31.20 CNY"]),
+                    DetailTableRow(name: "deepseek-reasoner", cells: ["224", "4.0M", "10.60 CNY"])
+                ],
+                footnote: "+2 more models"
+            )
+        )
+    }
 
     private func render(_ detail: UsageDetail?) throws -> (width: Int, height: Int) {
         let renderer = ImageRenderer(
@@ -1339,49 +1594,144 @@ EOF
 - Modify: `Sources/TokenHealth/DeepSeekUsageProvider.swift`
 - Test: `Tests/TokenHealthTests/DeepSeekDetailWiringTests.swift`
 
-- [ ] **Step 1: 写失败的测试**
+- [ ] **Step 1: 先开一个接缝**
 
-创建 `Tests/TokenHealthTests/DeepSeekDetailWiringTests.swift`：用合成的 bundle 走一遍 `DeepSeekUsageProvider` 的公开入口 —— 这需要注入会话凭据，参考既有 `DeepSeekAmountTests` 里构造 `DeepSeekWebSessionCredential` 的方式；断言产出的快照 `state == .ready`、`usages` 非空、`detail != nil`、且 `detail.headline` 与 snapshot 里的 balance 对得上。
-
-同时断言：**公开余额模式（API key）产出的快照 `detail == nil`**。
-
-- [ ] **Step 2: 跑测试确认失败**
-
-Run: `bash scripts/test.sh --filter DeepSeekDetailWiringTests`
-Expected: 断言失败，`detail` 为 nil
-
-- [ ] **Step 3: 实现**
-
-在 `DeepSeekUsageProvider.fetchPlatformUsage` 里，解析出 usages 之后、构造快照之前插入：
+`DeepSeekUsageProvider.fetchUsage` 永远会打真实网络（失败还回落到 WebKit 会话），没有任何注入点 —— 直接测它只会挂住或抛异常。所以先把「bundle → 快照」这一步抽成一个 internal 方法：
 
 ```swift
-            let usages = try DeepSeekUsageParser().parsePlatformBundle(data: bundleData, today: period.day)
+    /// 把一次取回的 bundle 变成快照。抽出来是为了能拿合成 bundle 测，
+    /// 否则测试只能去打 platform.deepseek.com。
+    func platformSnapshot(
+        config: ServiceConfig,
+        bundle: Data,
+        period: DeepSeekUsagePeriod,
+        accountName: String?
+    ) -> ProviderUsageSnapshot {
+        do {
+            let usages = try DeepSeekUsageParser().parsePlatformBundle(data: bundle, today: period.day)
             let detail = DeepSeekUsageDetail.make(
-                bundle: bundleData,
+                bundle: bundle,
                 balances: usages.filter { $0.window == .balance },
                 today: period
             )
             return ProviderUsageSnapshot(
-                ...
+                id: config.id,
+                serviceName: config.displayName,
+                providerTitle: config.providerKind.title,
+                planName: accountName,
                 usages: usages,
                 detail: detail,
-                ...
+                state: .ready,
+                statusMessage: "DeepSeek Platform",
+                updatedAt: Date()
             )
+        } catch {
+            return ProviderUsageSnapshot.unavailable(config: config, message: error.localizedDescription)
+        }
+    }
 ```
 
-公开余额那条路径（`fetchPublicBalance`）不动，`detail` 保持 nil。
+`fetchPlatformUsage` 里那段 `do { ... } catch { ... }` 整个换成 `platformSnapshot(config:bundle:period:accountName:)` 的调用，行为不变。
 
-- [ ] **Step 4: 跑测试确认通过**
+- [ ] **Step 2: 写测试**
+
+创建 `Tests/TokenHealthTests/DeepSeekDetailWiringTests.swift`。用合成 bundle 直接打这个接缝（**不要**去碰 `fetchUsage`）：
+
+```swift
+import Foundation
+import Testing
+@testable import TokenHealth
+
+struct DeepSeekDetailWiringTests {
+    private let period = DeepSeekUsagePeriod(year: 2026, month: 9, day: "2026-09-24")
+
+    private func config(auth: AuthMode) -> ServiceConfig {
+        ServiceConfig(displayName: "DeepSeek", providerKind: .deepSeek, authMode: auth)
+    }
+
+    private var bundle: Data {
+        Data(#"""
+        {"summary":{"data":{"biz_data":{"normal_wallets":[{"currency":"CNY","balance":"1284.60"}]}}},
+         "amount":{"data":{"biz_data":{"days":[{"date":"2026-09-24","data":[
+           {"model":"deepseek-chat","usage":[
+             {"type":"REQUEST","amount":"4"},
+             {"type":"RESPONSE_TOKEN","amount":"40"},
+             {"type":"PROMPT_CACHE_HIT_TOKEN","amount":"80"},
+             {"type":"PROMPT_CACHE_MISS_TOKEN","amount":"20"}]}]}]}}},
+         "cost":{"data":[{"currency":"CNY","days":[{"date":"2026-09-24","data":[
+           {"model":"deepseek-chat","usage":[{"amount":"0.02"}]}]}]}]}}
+        """#.utf8)
+    }
+
+    @Test
+    func aPlatformBundleProducesAReadySnapshotWithDetail() throws {
+        let snapshot = DeepSeekUsageProvider().platformSnapshot(
+            config: config(auth: .browserLogin),
+            bundle: bundle,
+            period: period,
+            accountName: "blues"
+        )
+
+        #expect(snapshot.state == .ready)
+        #expect(!snapshot.usages.isEmpty)
+        #expect(snapshot.planName == "blues")
+
+        let detail = try #require(snapshot.detail)
+        #expect(detail.headline == [DetailStat(label: "CNY", value: "1,284.60 CNY")])
+        #expect(detail.groups.first?.title == "Today")
+        let today = try #require(detail.groups.first { $0.title == "Today" })
+        #expect(today.values.map(\.value) == ["4", "140", "0.02 CNY"])
+    }
+
+    @Test
+    func detailBalancesMatchTheSnapshotsBalances() throws {
+        let snapshot = DeepSeekUsageProvider().platformSnapshot(
+            config: config(auth: .browserLogin),
+            bundle: bundle,
+            period: period,
+            accountName: nil
+        )
+
+        let balances = snapshot.usages.filter { $0.window == .balance }
+        let detail = try #require(snapshot.detail)
+        #expect(detail.headline.count == balances.count, "headline 就是那些 balance，不该另解析一遍")
+    }
+
+    @Test
+    func aMalformedBundleStillYieldsAnUnavailableSnapshot() {
+        let snapshot = DeepSeekUsageProvider().platformSnapshot(
+            config: config(auth: .browserLogin),
+            bundle: Data("not json".utf8),
+            period: period,
+            accountName: nil
+        )
+
+        #expect(snapshot.state == .unavailable)
+        #expect(snapshot.detail == nil)
+    }
+
+    @Test
+    func thePublicBalancePathCarriesNoDetail() {
+        // 公开余额接口没有明细，那条路径不填 detail。
+        let snapshot = ProviderUsageSnapshot.unavailable(config: config(auth: .api), message: "no key")
+        #expect(snapshot.detail == nil)
+    }
+}
+```
+
+- [ ] **Step 3: 跑测试确认通过**
 
 Run: `bash scripts/test.sh --filter DeepSeekDetailWiringTests`
-Expected: 通过
+Expected: `Test run with 4 tests in 1 suite passed`
 
-- [ ] **Step 5: 跑全量测试 + 构建**
+（若 Step 1 的接缝还没实现，这里会是编译失败 —— 先做 Step 1。）
+
+- [ ] **Step 4: 跑全量测试 + 构建**
 
 Run: `bash scripts/test.sh && bash scripts/build-app.sh`
 Expected: 全绿；构建成功。
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 5: 提交**
 
 ```bash
 git add Sources/TokenHealth/DeepSeekUsageProvider.swift Tests/TokenHealthTests/DeepSeekDetailWiringTests.swift
@@ -1420,7 +1770,7 @@ EOF
         refreshOpenPopover(for: config)
 ```
 
-- `showDetail(_ sender: NSStatusBarButton)`：从 `sender.identifier` 取回 UUID → 关闭已有的同 id 浮层 → 建 `DetailPopoverView`（回调分别指向 `appState.refresh(configID:)`、`appState.setPinned(id, false)`、打开设置、退出）→ `NSHostingController` → `NSPopover(behavior: .transient)` → `show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)`。若快照为空或 `updatedAt` 超过 5 分钟，`Task { await appState.refresh(configID: id) }`。
+- `@objc private func showDetail(_ sender: NSStatusBarButton)`（**必须标 `@objc`**，否则 `#selector` 编译不过）：从 `sender.identifier` 取回 UUID → 关闭已有的同 id 浮层 → 建 `DetailPopoverView`（回调分别指向 `appState.refresh(configID:)`、`appState.setPinned(id, false)`、打开设置、退出）→ `NSHostingController` → `NSPopover(behavior: .transient)` → `show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)`。若快照为空或 `updatedAt` 超过 5 分钟，`Task { await appState.refresh(configID: id) }`。
 - `refreshOpenPopover(for:)`：浮层开着时把 `hostingController.rootView` 换成用最新数据构造的视图，实现「就地更新、不关闭」。
 - `removeStatusItem(for:)` / `removeAllStatusItems()` / `stop()` 里一并 `popovers[id]?.close()` 并清理两个字典。
 
@@ -1462,8 +1812,9 @@ Expected: 打印 `0.10.0`。升到 `0.11.0`，`CFBundleVersion` 从 20 升到 21
 在「钉住账号」一节末尾追加：
 
 ```markdown
-点钉住的 DeepSeek 项会弹出详情浮层：余额、今日与本月合计、本月按天趋势、tokens 构成（输出 / 缓存命中 / 未命中），
-以及本月按模型的次数、tokens 与花费。数据全部来自刷新时已经取回的那次响应，不额外发请求。
+点钉住的 DeepSeek 项会弹出详情浮层：余额、`Today` 与 `This month` 合计、本月按天趋势、tokens 构成
+（`Output` / `Cache hit` / `Cache miss`），以及 `By model · this month` 的次数、tokens 与花费。
+数据全部来自刷新时已经取回的那次响应，不额外发请求。
 
 它只做展示 —— 没有筛选、没有日期范围、不能下钻。要看更细的分析请回厂商的控制台。
 详情里的数字若超过 5 分钟会在打开时自动刷新一次，右上角也可以手动刷新；取数失败时保留上一次的数字并标出错误。
@@ -1473,6 +1824,18 @@ Expected: 打印 `0.10.0`。升到 `0.11.0`，`CFBundleVersion` 从 20 升到 21
 
 Run: `bash scripts/test.sh && bash scripts/build-app.sh`
 Expected: 全绿；构建成功。
+
+**装到 /Applications 并核对版本**（仓库惯例，spec §13 第 2 条要求）：
+
+```bash
+pkill -x TokenHealth 2>/dev/null; sleep 2
+rm -rf "/Applications/Token Health.app"
+cp -R ".build/app/Token Health.app" "/Applications/Token Health.app"
+open "/Applications/Token Health.app"
+sleep 10
+plutil -extract CFBundleShortVersionString raw "/Applications/Token Health.app/Contents/Info.plist"
+```
+Expected: 打印 `0.11.0`，且 `pgrep -x TokenHealth` 有进程。
 
 - [ ] **Step 4: 逐条走 spec §13 的手工验收**
 
