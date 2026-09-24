@@ -22,7 +22,7 @@
 
 **非目标**
 
-- 不做多个 pin（同一时间只钉一个账号）。
+- ~~不做多个 pin（同一时间只钉一个账号）~~ —— 2026-09-24 追加实现，见文末「修订」一节。
 - 不做悬停展开、点击展开详细内容 —— 只留好入口，后续单独做。
 - 不改全局图标、不改菜单面板里卡片的信息层级与布局。
 - 不做竖条颜色、宽度、位置的自定义。
@@ -426,3 +426,32 @@ bash scripts/test.sh --filter MenuBarMetricsTests
 - **汇率表只存 USD 基**：当前只需要 USD↔CNY，用 base 中转足以覆盖任意两币种，
   不必为更多币种改结构。
 - **换算只作用于菜单栏项**：卡片与设置继续显示原币种原值，信息不丢失。
+
+## 10. 修订：支持多个 pin（2026-09-24，已实现）
+
+初版把「多个 pin」列为非目标，实际用下来这个限制没有必要，遂追加实现。
+
+**改动**
+
+- `AppState.pinnedConfigID: UUID?` → `pinnedConfigIDs: [UUID]`，并暴露
+  `pinnedConfigs: [ServiceConfig]`（被钉住的账号，**按账号列表的顺序** —— 由 `configs.filter` 天然给出，
+  菜单栏项的排列就用它）、`isPinned(_:)`、`setPinned(_:_:)`。
+- 存储从 `pinned-provider.config.v1`（裸 UUID 字符串）换成 `pinned-provider.config.v2`（`[UUID]` 的 JSON）。
+  旧键**只读不写**：没有 v2 时把它当单元素列表读出来，与其他历史键的处理一致，老版本仍能读回自己的快照。
+- `PinnedStatusItemController` 从「一个 status item」改为 `[UUID: NSStatusItem]` 的**对账**：
+  按 `pinnedConfigs.filter(\.isEnabled)` 求目标集合，只增删差集、已有项原地更新，
+  这样每次重绘不会打乱用户拖过的位置。每项用自己的 `autosaveName`（`TokenHealthPinned-<uuid>`）。
+- 菜单里的 `Unpin <名字>` 只摘掉那一个，靠 `representedObject` 带上 id 分辨。
+- 设置里的开关语义从「单选」变成「加入 / 移出」。
+
+**决策（用户拍板）**
+
+1. 顺序跟账号列表，不按钉的先后 —— 拖动账号列表即可改顺序。
+2. 不设数量上限，由用户自己控制菜单栏空间。
+3. 交互只需要开关，不额外加钉子列表之类的 UI。
+
+**已知边界**
+
+菜单栏里的**左右落位由 macOS 决定**，不与创建顺序强绑定；用户可以 ⌘ 拖拽，位置由系统记住。
+实测钉四个时四个状态项都建了出来，但系统没有为它们写 `NSStatusItem Preferred Position`，
+所以落位顺序无法从外部（截屏与辅助功能权限在这台机器上都未授予）程序化验证，需要肉眼确认一次。
