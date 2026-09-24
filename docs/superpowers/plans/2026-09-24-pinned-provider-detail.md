@@ -561,7 +561,7 @@ struct DeepSeekUsageDetailTests {
         )
 
         let today = try #require(detail.groups.first { $0.title == "今日" })
-        #expect(today.values.map(\.label) == ["请求", "Tokens", "花费"])
+        #expect(today.values.map(\.label) == ["Requests", "Tokens", "Cost"], "浮层文案与 App 其余部分一致，用英文")
         #expect(today.values[0].value == "6")
         #expect(today.values[1].value == "240")
     }
@@ -605,7 +605,7 @@ struct DeepSeekUsageDetailTests {
             DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: nil), balances: [], today: period)
         )
 
-        #expect(detail.breakdown.map(\.label) == ["输出", "缓存命中", "缓存未命中"])
+        #expect(detail.breakdown.map(\.label) == ["Output", "Cache hit", "Cache miss"])
         #expect(detail.breakdown.map(\.value) == ["100", "900", "20"])
     }
 
@@ -620,7 +620,7 @@ struct DeepSeekUsageDetailTests {
         )
 
         let table = try #require(detail.table)
-        #expect(table.columns == ["模型", "次数", "Tokens", "花费"])
+        #expect(table.columns == ["Model", "Requests", "Tokens", "Cost"])
         #expect(table.rows.map(\.name) == ["big", "small"])
         #expect(table.rows[0].cells.count == table.columns.count - 1)
         #expect(table.rows[0].cells == ["5", "5K", "—"], "没有 cost 数据时花费是破折号")
@@ -653,7 +653,7 @@ struct DeepSeekUsageDetailTests {
         )
 
         let table = try #require(detail.table)
-        #expect(table.rows.map(\.name) == ["未知模型"])
+        #expect(table.rows.map(\.name) == ["Unknown model"])
         #expect(table.rows[0].cells[1] == "150")
     }
 
@@ -672,7 +672,7 @@ struct DeepSeekUsageDetailTests {
 
         let table = try #require(detail.table)
         #expect(table.rows.count == 6)
-        #expect(table.footnote == "另有 2 个模型未列出")
+        #expect(table.footnote == "+2 more models")
         #expect(table.rows.first?.name == "model-8", "按 tokens 降序")
     }
 
@@ -748,14 +748,15 @@ enum DeepSeekUsageDetail {
 
 实现要点（全部按 spec §5，逐条对应）：
 
-- `aggregateAmountDays`：`DeepSeekPayload.days(fromAmount:)` → 对每个 day 取 `dateText` 解析成日期（`yyyy-MM-dd`，UTC），同一天**求和**。每天累计 requests / outputTokens / cacheHitTokens / cacheMissTokens，并给每个模型单独累计一份（`models[model]`，空名归 "未知模型"）。
+- `aggregateAmountDays`：`DeepSeekPayload.days(fromAmount:)` → 对每个 day 取 `dateText` 的**前 10 个字符**按 `yyyy-MM-dd`（UTC）解析；解析失败的那天整条跳过；日期落在 [当月 1 号, 今天] 之外也跳过。同一天**求和**。每天累计 requests / outputTokens / cacheHitTokens / cacheMissTokens，并给每个模型单独累计一份（`models[model]`，空名归 `Unknown model`）。
+  取前缀而不是整串匹配，是为了容忍 `"2026-09-24T00:00:00Z"` 这类带后缀的写法 —— 既有解析器的 `hasPrefix` 就是这么宽容的，两处口径要对齐。
 - `aggregateCostDays`：`DeepSeekPayload.costCurrencies(fromCost:)` → 每天每币种求和，同时按模型累计 `costByCurrency`。
 - `merged`：把两份按日期并起来，缺的一边当 0。
 - `headline`：`balances` 里每一项 `value = UsageAmountFormatter.moneyText(amount) + " " + unit`，`label = unit`。**不重新解析 summary**。
 - `groups`：今日 = merged 里等于今天的那个（没有就是全 0）；本月 = 全部求和。每个 group 三个 `DetailStat`：请求（`compactAmount`）、Tokens（`compactAmount`）、花费（按币种升序 `moneyText + " " + code` 用 ` · ` 连；一个币种都没有就是 `—`）。
 - `series`：从当月 1 号到今天逐日取，缺的补 0，`value` 是该日三种 token 之和；`axisStart`/`axisEnd` 用 `M/d`。
 - `breakdown`：本月三个 type 的合计，label「输出」「缓存命中」「缓存未命中」。
-- `table`：模型并集（amount 侧 + cost 侧），按 tokens 降序、同名升序，前 6 行，其余进 `footnote`。单元格依次是次数、Tokens、花费。
+- `table`：模型并集（amount 侧 + cost 侧），**tokens 与花费都为 0 的模型不成行**（沿用既有解析器丢掉空模型的做法，免得白占 6 行里的位置），按 tokens 降序、同名升序，前 6 行，其余进 `footnote`（`+N more models`）。单元格依次是次数、Tokens、花费。
 - 日期工具：一个私有的 `Calendar`（UTC）+ `DateFormatter`（`en_US_POSIX`，`yyyy-MM-dd` / `M/d`）。
 
 - [ ] **Step 4: 跑测试确认通过**
@@ -1087,7 +1088,9 @@ struct AppStateRefreshTests {
     func keepsTheLastGoodDetailWhenARefreshFails() {
         let state = makeState(defaults: makeDefaults())
         let id = state.addConfig(providerKind: .kimiCode)
-        state.snapshots[id] = readySnapshot(id, detail: sampleDetail)
+        let old = readySnapshot(id, detail: sampleDetail)
+        state.snapshots[id] = old
+        let previousUpdatedAt = old.updatedAt
 
         // 失败时 provider 返回的是 unavailable 快照，detail 为空。
         state.snapshots[id] = ProviderUsageSnapshot.unavailable(
@@ -1098,6 +1101,7 @@ struct AppStateRefreshTests {
         #expect(state.snapshots[id]?.state == .unavailable)
         #expect(state.snapshots[id]?.detail == sampleDetail, "失败要保留上次的数字，否则浮层会被清空、菜单栏项还会被打回旧菜单")
         #expect(state.snapshots[id]?.statusMessage == "HTTP 503", "错误信息仍然要能显示出来")
+        #expect(state.snapshots[id]?.updatedAt == previousUpdatedAt, "保留旧时间戳，别谎报数据是刚刚取的")
     }
 
     @Test
@@ -1147,8 +1151,13 @@ Expected: 编译失败，`value of type 'AppState' has no member 'refresh'`
         // 取数失败时 Provider 给的是 unavailable 快照，detail 为空。直接覆盖会把上次的数字抹掉，
         // 浮层被清空、菜单栏项还会被打回旧菜单 —— 所以非 ready 时把旧 detail 留下来。
         var incoming = snapshot
-        if incoming.state != .ready, incoming.detail == nil, let previous = snapshots[id]?.detail {
-            incoming.detail = previous
+        if incoming.state != .ready, incoming.detail == nil, let previous = snapshots[id] {
+            incoming.detail = previous.detail
+            // updatedAt 在这个 App 里表示「这些数字是什么时候取到的」。用失败那刻的时间会让
+            // 浮层表头显示「刚刚」，而数字其实是十分钟前的。
+            if previous.detail != nil {
+                incoming.updatedAt = previous.updatedAt
+            }
         }
         snapshots[id] = incoming
     }
@@ -1239,7 +1248,7 @@ struct DetailPopoverView: View {
             if let detail, !detail.isEmpty {
                 content(detail)
             } else {
-                Text(statusMessage ?? "正在获取…")
+                Text(statusMessage ?? "Loading…")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -96,7 +96,7 @@ struct DetailTable: Equatable, Sendable {
     var title: String          // "按模型 · 本月"
     var columns: [String]      // ["模型", "次数", "Tokens", "花费"]
     var rows: [DetailTableRow]
-    var footnote: String?      // "另有 3 个模型未列出"
+    var footnote: String?      // "+3 more models"
 }
 
 struct DetailTableRow: Equatable, Sendable, Identifiable {
@@ -120,7 +120,9 @@ struct DetailTableRow: Equatable, Sendable, Identifiable {
 ### 5.1 共用解析规则
 
 - **按日期聚合**：`days` 里同一天出现多次时**按天求和**，不是取第一条。这样既不丢数据也不会重复计数。所有「今日」「本月」「每日序列」都走同一个聚合结果。
-- **日期解析**：`yyyy-MM-dd`，UTC，与 `DeepSeekUsagePeriod.currentUTC()` 同一口径；再格式化成 `M/d` 给坐标轴。
+- **日期解析**：取 `date` 字符串的**前 10 个字符**按 `yyyy-MM-dd` 解析（UTC，与 `DeepSeekUsagePeriod.currentUTC()` 同一口径）—— 取前缀而不是整串匹配，是为了容忍 `"2026-09-24T00:00:00Z"` 这类带后缀的写法，与既有解析器的 `hasPrefix` 同样宽容。再格式化成 `M/d` 给坐标轴。
+- **日期解析失败的天整条跳过**（不进任何合计），不猜。
+- **只统计日期落在 [当月 1 号, 今天] 区间内的天**：接口理论上只返回当月，但万一返回了上月或未来的日期，让它只进「本月」不进「趋势图」会让两处数字打架。
 - **今日**：聚合结果里等于今天的那一天；**没有这一天就是全 0**（正常情况：今天还没产生用量）。
 - **本月**：聚合结果里所有天求和，即当月 1 号至今。
 - 每个模型的 `usage` 数组可能为空或缺字段，缺失一律当 0，不抛错。
@@ -139,20 +141,22 @@ struct DetailTableRow: Equatable, Sendable, Identifiable {
 - 次数用 `REQUEST` 求和，tokens 用三种 token type 求和。
 - 次数与 tokens 用既有的紧凑数字格式（K/M/B）。
 - 花费来自 cost 响应，**按币种分组**：单币种就是 `41.80 CNY`；多币种用 ` · ` 连接（`41.80 CNY · 0.30 USD`），币种顺序同样按币种名升序。
-- **没有 cost 数据时**花费显示 `—`，不让整个详情失败。
+- **「没有 cost 数据」的判定**：响应里**一个币种条目都没有**时花费显示 `—`；币种条目存在但金额为 0，正常显示 `0.00 CNY`。两种情况不混为一谈。
 
-**金额格式统一用既有的 `moneyText`**（两位小数、千位分隔）+ 币种代码。不发明 `¥` / `$` 符号表 —— 代码库里既有的约定就是币种代码，面板与菜单栏都是这样。数值本身复用既有 `sumUsageAmounts` 的求和口径，保证与面板里的数字对得上。
+**金额格式统一用既有的 `moneyText`**（两位小数、千位分隔、不带单位）再追加币种代码。不发明 `¥` / `$` 符号表 —— 代码库里既有的约定就是币种代码，面板与菜单栏都是这样。求和的**口径**与既有解析器一致（把一个 item 的 `usage` 数组全部相加）。
+
+**不要声称两处数字逐位相同**：面板的今日花费是 4 位小数、且同一天出现两次时只取第一条；浮层是 2 位小数、且按天求和。同一个响应下两者可能不同。能保证的是**同源、同月同口径**（当月 1 号至今，UTC）。
 
 ### 5.4 按天趋势（series）
 
 - 覆盖**当月 1 号到今天**（UTC），逐日一个点；**没有数据的日期补 0**，这样横轴等距、峰值位置可信。
 - 每个点的值 = 该日三种 token type 之和。
 - `axisStart` = 1 号，`axisEnd` = 今天。
-- 整月全为 0 时 `series` 仍产出（31 个 0 点），由视图显示「本月暂无数据」；不让解析层去猜视图要不要画。
+- 整月全为 0 时 `series` 仍照常产出（当月 1 号到今天的每一个点都是 0），由视图显示 `No usage this month`；不让解析层去猜视图要不要画。
 
 ### 5.5 tokens 构成（breakdown）
 
-本月三个 token type 各自的合计，label 为「输出」「缓存命中」「缓存未命中」。
+本月三个 token type 各自的合计，label 用 §7.3 文案表里的 `Output` / `Cache hit` / `Cache miss`。
 
 ### 5.6 按模型（table）
 
@@ -160,10 +164,11 @@ struct DetailTableRow: Equatable, Sendable, Identifiable {
 - **关联规则**：
   - 只在 amount 里的模型：花费格显示 `—`。
   - 只在 cost 里的模型：次数与 tokens 为 0，**仍然成行**（它确实花了钱）。
-  - 模型名为空或缺失：两个响应里的这类行**合并成同一行**「未知模型」。
+  - 模型名为空或缺失：两个响应里的这类行**合并成同一行** `Unknown model`（见 §7.3 文案表）。
 - **花费列**用与 groups 相同的币种规则：单币种就是金额 + 代码，多币种用 ` · ` 连接。
 - **排序**：tokens 降序，相同时模型名升序（沿用既有解析器的约定）。
-- **只列前 6 行**，其余聚合进 `footnote`（「另有 N 个模型未列出」）；被截断的行不参与任何总计 —— 总计在 §5.3 里按全量算。
+- **tokens 与花费都为 0 的模型不成行** —— 沿用既有解析器的做法（它也会丢掉空模型），否则它们会白占掉 6 行里的位置、还把 footnote 的计数撑大。
+- **只列前 6 行**，其余聚合进 `footnote`（`+N more models`）；被截断的行不参与任何总计 —— 总计在 §5.3 里按全量算。
 
 ## 6. 趋势图的几何
 
@@ -178,7 +183,7 @@ enum DetailSeriesChart {
 }
 ```
 
-- `maximum` 为 0 时所有柱高为 0（由视图显示「本月暂无数据」）。
+- `maximum` 为 0 时所有柱高为 0（由视图显示 `No usage this month`）。
 - 值为 0 的日期柱高为 0；非 0 但极小的值托到 `minimumVisibleHeight`，避免看不见。
 - 日期补 0 是**解析层**（§5.4）的职责，几何层不造点。
 
@@ -192,13 +197,17 @@ enum DetailSeriesChart {
 
 ```swift
 extension ProviderFactory {
-    /// 这个 config 会不会产出详情。目前只有登录模式的 DeepSeek 会 ——
-    /// API key 模式的 DeepSeek 走的是公开余额接口，没有平台用量明细。
+    /// 这个 config 会不会产出详情。目前只有配置成登录模式的 DeepSeek 会。
+    ///
+    /// 这个判断只看得到 config，看不到已存的凭据 —— 而 Provider 取数时是先看凭据里有没有
+    /// 网页会话、再看 `authMode` 的。所以一个配成 API 模式、但 Keychain 里还留着网页会话的
+    /// DeepSeek 账号，实际上会取回带明细的平台数据，而这里回报 false。无害（只是不给它弹浮层），
+    /// 但注释里别把「API 模式一定走公开余额接口」说死。
     static func producesUsageDetail(for config: ServiceConfig) -> Bool
 }
 ```
 
-这样「首次刷新还没回来」时点下去也能弹浮层（显示「正在获取…」），而不是先弹旧菜单、等快照回来再改行为。
+这样「首次刷新还没回来」时点下去也能弹浮层（显示 `Loading…`），而不是先弹旧菜单、等快照回来再改行为。
 
 ### 7.2 控制器改动
 
@@ -216,7 +225,38 @@ extension ProviderFactory {
 
 ### 7.3 浮层视图
 
-新增 `Sources/TokenHealth/DetailPopoverView.swift`。输入是账号名、`UsageDetail?`、`updatedAt`、错误信息，以及三个回调（刷新 / unpin / 打开设置）。
+新增 `Sources/TokenHealth/DetailPopoverView.swift`。输入全部是值，**没有可变状态**：
+
+```swift
+struct DetailPopoverView: View {
+    let serviceName: String
+    let detail: UsageDetail?        // nil = 还没有详情
+    let statusMessage: String?      // 非 nil 且 detail 有内容时，顶部显示错误行
+    let updatedAt: Date?            // nil = 还没有快照
+    let onRefresh: () -> Void
+    let onUnpin: () -> Void
+    let onOpenSettings: () -> Void
+    let onQuit: () -> Void          // 底部四个按钮，别漏掉 Quit
+}
+```
+
+**「还没有快照」与「快照不可用」要能区分开**：`updatedAt == nil` 表示前者（显示 `Loading…`）；`statusMessage` 非 nil 表示后者（有旧数据时显示旧数据 + 错误行，没有旧数据时只显示错误行）。
+
+**文案与 App 其余部分一致，全部用英文**（§5 里那些中文名是在描述内容，不是字面量）：
+
+| 位置 | 文案 |
+| --- | --- |
+| 分组标题 | `Today` / `This month` |
+| 分组与表格里的三个值 | `Requests` / `Tokens` / `Cost` |
+| tokens 构成 | `Output` / `Cache hit` / `Cache miss` |
+| 表格标题与表头 | `By model · this month` / `Model` `Requests` `Tokens` `Cost` |
+| 趋势图标题 | `Tokens this month` |
+| 没有模型名 | `Unknown model` |
+| 本月无数据 | `No usage this month` |
+| 没有花费数据 | `—` |
+| 还没有快照 | `Loading…` |
+| 被截断的模型 | `+N more models` |
+| 底部按钮 | `Unpin` / `Settings` / `Quit` |
 
 版式自上而下：标题行（账号名 · 更新时间 · ⟳）→ headline → groups → series → breakdown → table → 分隔线 → `Unpin` `Settings` `Quit`。
 
@@ -235,11 +275,14 @@ func refresh(configID: UUID) async
 
 只重取这一个账号、只写它的快照。与 `refreshAll()` 共用 `isRefreshing` 互斥；整体刷新进行中时直接返回。对禁用或不存在的账号直接返回。
 
-**取数失败时保留上次的详情**：现在失败会返回 `.unavailable` 快照，而 `performRefresh` 会无条件覆盖快照 —— 那会把 detail 抹掉，浮层清空、菜单栏项还会被打回旧菜单。所以：
+**取数失败时保留上次的详情**：现在失败会返回 `.unavailable` 快照，而写快照的代码会无条件覆盖 —— 那会把 detail 抹掉，浮层清空、菜单栏项还会被打回旧菜单。所以：
 
-> 写入新快照时，若新状态不是 `.ready`、而该账号原快照**有** detail，则把旧 detail 原样带到新快照上。
+> 快照的写入收口到一个共用方法 `AppState.storeSnapshot(_:for:)`（`performRefresh` 与单账号刷新都走它，别只改一处）。写入时，若新状态不是 `.ready`、而该账号原快照**有** detail，则把旧 detail 与**旧的 `updatedAt`** 一起带到新快照上。
 
-这样浮层继续显示上次的数字，同时顶部用 `statusMessage` 显示错误（红字）。面板卡片只看 `state == .ready`，所以这个合并**不会改变面板的行为**。
+- 保留旧 `updatedAt` 而不是用失败那刻的时间：`updatedAt` 在这个 App 里一直表示「这些数字是什么时候取到的」。用失败时间会让浮层表头显示「刚刚」，而数字其实是十分钟前的。
+- 副作用是 5 分钟的新鲜度检查会因此在下一次打开时重试 —— 这是想要的：上次失败了，本来就该再试。
+- 第一次失败（原快照没有 detail）时没有可保留的东西，走 §9 的「只显示错误行」。
+- 浮层继续显示上次的数字，同时顶部用 `statusMessage` 显示错误（红字）。面板卡片只看 `state == .ready`，所以这个合并**不会改变面板的行为**。
 
 浮层打开时：若 `snapshot?.updatedAt` 距今超过 **5 分钟**，自动调用单账号刷新；否则直接用现有数据。右上角始终有 ⟳ 可手动触发。
 
@@ -247,14 +290,16 @@ func refresh(configID: UUID) async
 
 | 情况 | 表现 |
 | --- | --- |
-| 快照还没回来（首次刷新中） | 浮层显示「正在获取…」，并自动触发一次单账号刷新 |
+| 快照还没回来（首次刷新中） | 浮层显示 `Loading…`（判别方式：`updatedAt == nil`），并自动触发一次单账号刷新 |
 | 快照不可用且没有旧 detail | 浮层显示 `statusMessage` 的错误行，无数据区块 |
 | 快照不可用但有旧 detail | 显示旧数字 + 顶部红色错误行（§8 的合并规则） |
-| 当月全无数据 | 趋势图位置显示「本月暂无数据」，其余区块照常 |
+| 当月全无数据 | 趋势图位置显示 `No usage this month`，其余区块照常 |
 | 缺少 cost 数据 | 花费显示 `—`，其余照常 |
-| 模型名缺失或为空 | 合并进「未知模型」一行（§5.6） |
+| 模型名缺失或为空 | 合并进 `Unknown model` 一行（§5.6） |
 | 哪天没有数据 | 补 0，不跳过 |
 | 同一天出现两次 | 按天求和（§5.1） |
+| `date` 解析失败 | 该天整条跳过，不进任何合计（§5.1） |
+| 日期落在当月之外 | 不进任何合计（§5.1） |
 | 余额多币种 | 逐币种列出，不换算 |
 | 详情区块为空 | 该区块整个不渲染 |
 | 账号被 unpin / 删除 / 禁用 | 浮层随状态项一起收掉 |
