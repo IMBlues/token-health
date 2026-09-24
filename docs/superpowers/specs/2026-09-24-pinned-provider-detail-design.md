@@ -69,18 +69,18 @@ struct UsageDetail: Equatable, Sendable {
 
 struct DetailStat: Equatable, Sendable, Identifiable {
     var id: String { label }
-    var label: String        // "输出" / "CNY"
+    var label: String        // "Output" / "CNY"
     var value: String        // "8.1M" / "1,284.60 CNY"
 }
 
 struct DetailGroup: Equatable, Sendable, Identifiable {
     var id: String { title }
-    var title: String        // "今日"
+    var title: String        // "Today"
     var values: [DetailStat] // 依次横排：次数、tokens、花费
 }
 
 struct DetailSeries: Equatable, Sendable {
-    var title: String               // "本月 tokens"
+    var title: String               // "Tokens this month"
     var points: [DetailSeriesPoint] // 按日期升序
     var axisStart: String           // "9/1"
     var axisEnd: String             // "9/24"
@@ -93,8 +93,8 @@ struct DetailSeriesPoint: Equatable, Sendable, Identifiable {
 }
 
 struct DetailTable: Equatable, Sendable {
-    var title: String          // "按模型 · 本月"
-    var columns: [String]      // ["模型", "次数", "Tokens", "花费"]
+    var title: String          // "By model · this month"
+    var columns: [String]      // ["Model", "Requests", "Tokens", "Cost"]
     var rows: [DetailTableRow]
     var footnote: String?      // "+3 more models"
 }
