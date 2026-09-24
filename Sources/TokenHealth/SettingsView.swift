@@ -21,20 +21,14 @@ struct SettingsView: View {
             VStack(spacing: 0) {
                 List(selection: $selectedID) {
                     ForEach(appState.configs) { config in
-                        HStack {
+                        // 单行。provider 类型不再占第二行 —— 详情面板里的 Provider 字段已经有了。
+                        // 行尾也刻意不放拖拽把手：macOS 的可重排列表不画那个符号，直接拖行本身就重排。
+                        HStack(spacing: 10) {
                             Image(nsImage: ProviderIcon.image(for: config.providerKind, size: 16, tint: .labelColor))
                                 .frame(width: 18)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(config.displayName)
-                                    .lineLimit(1)
-                                Text(config.providerKind.title)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 8)
-                            Image(systemName: "line.3.horizontal")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
+                            Text(config.displayName)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
                         }
                         .contentShape(Rectangle())
                         .tag(config.id)
@@ -44,80 +38,52 @@ struct SettingsView: View {
                     }
 
                     Section("General") {
-                        HStack {
+                        HStack(spacing: 10) {
                             Image(systemName: "clock.arrow.circlepath")
                                 .frame(width: 18)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Refresh")
-                                Text("Interval")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("Refresh")
+                            Spacer(minLength: 0)
                         }
                         .contentShape(Rectangle())
                         .tag(Self.generalSelectionID)
                     }
 
                     Section("Integrations") {
-                        HStack {
+                        HStack(spacing: 10) {
                             Image(systemName: "arrow.up.forward.app")
                                 .frame(width: 18)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Usage reporting")
-                                Text("HTTPS hook")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("Usage reporting")
+                            Spacer(minLength: 0)
                         }
                         .contentShape(Rectangle())
                         .tag(Self.reportingSelectionID)
                     }
                 }
-
-                Divider()
-
-                HStack {
-                    Menu {
-                        Button("New plan") {
-                            selectedID = appState.addConfig()
-                            loadSecretsIfNeeded(force: true)
-                        }
-                        Divider()
-                        ForEach(ProviderKind.allCases.filter(\.supportsWebLogin)) { kind in
-                            Button("Add \(kind.title) account") {
-                                selectedID = appState.addConfig(providerKind: kind)
-                                loadSecretsIfNeeded(force: true)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("Add plan or account")
-
-                    Button {
-                        if let selectedID {
-                            if appState.deleteConfig(id: selectedID) {
-                                self.selectedID = appState.configs.first?.id ?? Self.reportingSelectionID
-                                loadSecretsIfNeeded(force: true)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "minus")
-                    }
-                    .disabled(
-                        selectedID == nil ||
-                        selectedID == Self.reportingSelectionID ||
-                        selectedID == Self.generalSelectionID
-                    )
-                    .help("Remove plan")
-
-                    Spacer()
-                }
-                .padding(10)
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 240)
+            .toolbar {
+                // 增删放工具栏，底部那条按钮条整条去掉 —— 与现在的系统设置一致。
+                ToolbarItemGroup(placement: .navigation) {
+                    Menu {
+                        ForEach(ProviderKind.allCases) { kind in
+                            Button(kind.title) {
+                                addConfig(kind)
+                            }
+                        }
+                    } label: {
+                        Label("Add", systemImage: "plus")
+                    }
+                    .help("Add a provider")
+
+                    Button {
+                        removeSelectedConfig()
+                    } label: {
+                        Label("Remove", systemImage: "minus")
+                    }
+                    .disabled(!canRemoveSelection)
+                    .help("Remove the selected provider")
+                }
+            }
         } detail: {
             detail
         }
@@ -259,24 +225,16 @@ struct SettingsView: View {
                         .font(.caption)
                 }
 
-                HStack {
-                    Button("Save") {
-                        saveCurrentSecrets()
-                        appState.saveConfigs()
-                        Task {
-                            await appState.refreshAll()
-                        }
-                    }
-                    .keyboardShortcut(.defaultAction)
-
-                    Button("Refresh") {
-                        saveCurrentSecrets()
-                        appState.saveConfigs()
-                        Task {
-                            await appState.refreshAll()
-                        }
+                // 这里原来是 Save 与 Refresh 两个按钮 —— 它们做的事一模一样（保存密钥 + 保存配置 +
+                // 刷新全部），只是其中一个带回车快捷键。合并成一个。
+                Button("Save & Refresh") {
+                    saveCurrentSecrets()
+                    appState.saveConfigs()
+                    Task {
+                        await appState.refreshAll()
                     }
                 }
+                .keyboardShortcut(.defaultAction)
             }
             .formStyle(.grouped)
             .padding()
@@ -478,6 +436,30 @@ struct SettingsView: View {
             return nil
         }
         return $appState.configs[index]
+    }
+
+    /// 加号菜单里列**全部** provider。以前只有登录型的能加，Cursor / Codex / OpenAI 这些
+    /// 得先「New plan」再进详情页改 Provider —— 那正是「配置 UI 别扭」的来源之一。
+    private func addConfig(_ kind: ProviderKind) {
+        selectedID = appState.addConfig(providerKind: kind)
+        loadSecretsIfNeeded(force: true)
+    }
+
+    private var canRemoveSelection: Bool {
+        guard let selectedID else {
+            return false
+        }
+        return appState.configs.contains { $0.id == selectedID }
+    }
+
+    private func removeSelectedConfig() {
+        guard let selectedID, canRemoveSelection else {
+            return
+        }
+        if appState.deleteConfig(id: selectedID) {
+            self.selectedID = appState.configs.first?.id ?? Self.reportingSelectionID
+            loadSecretsIfNeeded(force: true)
+        }
     }
 
     private var selectedEnabledReportProviders: [ServiceConfig] {

@@ -41,7 +41,7 @@ struct TokenHealthApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appState)
-                .frame(width: 760, height: 500)
+                .frame(minWidth: 720, minHeight: 460)
         }
     }
 }
