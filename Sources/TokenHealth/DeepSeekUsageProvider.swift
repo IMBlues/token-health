@@ -259,7 +259,7 @@ struct DeepSeekUsageParser {
     }
 
     private func parseSummaryBalances(root: [String: Any]) -> [TokenUsage] {
-        guard let bizData = bizData(from: root) else {
+        guard let bizData = DeepSeekPayload.bizData(from: root) else {
             return []
         }
 
@@ -267,8 +267,8 @@ struct DeepSeekUsageParser {
         for key in ["normal_wallets", "bonus_wallets"] {
             let wallets = bizData[key] as? [[String: Any]] ?? []
             for wallet in wallets {
-                guard let currency = stringValue(wallet["currency"]), !currency.isEmpty,
-                      let balance = decimalValue(wallet["balance"]) else {
+                guard let currency = DeepSeekPayload.stringValue(wallet["currency"]), !currency.isEmpty,
+                      let balance = DeepSeekPayload.decimalValue(wallet["balance"]) else {
                     continue
                 }
                 totals[currency, default: Decimal(0)] += balance
@@ -291,7 +291,7 @@ struct DeepSeekUsageParser {
     }
 
     private func parseTodayAmounts(root: [String: Any], today: String) -> [TokenUsage] {
-        guard let dataObject = usageDataObject(from: root) else {
+        guard let dataObject = DeepSeekPayload.usageDataObject(from: root) else {
             return []
         }
 
@@ -301,11 +301,11 @@ struct DeepSeekUsageParser {
         var modelRows: [(model: String, requests: Int, tokens: Int)] = []
 
         for item in dayItems {
-            let model = stringValue(item["model"]) ?? "Unknown"
-            let requests = intUsageAmount(in: item, type: "REQUEST")
-            let tokens = intUsageAmount(in: item, type: "RESPONSE_TOKEN")
-                + intUsageAmount(in: item, type: "PROMPT_CACHE_MISS_TOKEN")
-                + intUsageAmount(in: item, type: "PROMPT_CACHE_HIT_TOKEN")
+            let model = DeepSeekPayload.stringValue(item["model"]) ?? "Unknown"
+            let requests = DeepSeekPayload.intAmount(in: item, type: "REQUEST")
+            let tokens = DeepSeekPayload.intAmount(in: item, type: "RESPONSE_TOKEN")
+                + DeepSeekPayload.intAmount(in: item, type: "PROMPT_CACHE_MISS_TOKEN")
+                + DeepSeekPayload.intAmount(in: item, type: "PROMPT_CACHE_HIT_TOKEN")
             totalRequests += requests
             totalTokens += tokens
             if requests > 0 || tokens > 0 {
@@ -331,18 +331,18 @@ struct DeepSeekUsageParser {
     }
 
     private func parseTodayCosts(root: [String: Any], today: String) -> [TokenUsage] {
-        let currencyItems = costCurrencyItems(from: root)
+        let currencyItems = DeepSeekPayload.costCurrencyItems(from: root)
         var usages: [TokenUsage] = []
 
         for currencyItem in currencyItems {
-            let currency = stringValue(currencyItem["currency"]) ?? "CNY"
+            let currency = DeepSeekPayload.stringValue(currencyItem["currency"]) ?? "CNY"
             let dayItems = dayData(in: currencyItem, today: today)
             var total = Decimal(0)
             var modelRows: [(model: String, cost: Decimal)] = []
 
             for item in dayItems {
-                let model = stringValue(item["model"]) ?? "Unknown"
-                let cost = sumUsageAmounts(in: item)
+                let model = DeepSeekPayload.stringValue(item["model"]) ?? "Unknown"
+                let cost = DeepSeekPayload.sumAmounts(in: item)
                 total += cost
                 if cost > Decimal(0) {
                     modelRows.append((model: model, cost: cost))
@@ -378,8 +378,8 @@ struct DeepSeekUsageParser {
     }
 
     private func balanceUsage(from info: [String: Any]) -> TokenUsage? {
-        guard let currency = stringValue(info["currency"]),
-              let totalBalance = decimalValue(info["total_balance"]) else {
+        guard let currency = DeepSeekPayload.stringValue(info["currency"]),
+              let totalBalance = DeepSeekPayload.decimalValue(info["total_balance"]) else {
             return nil
         }
         return TokenUsage(
@@ -404,88 +404,14 @@ struct DeepSeekUsageParser {
         }
     }
 
-    private func bizData(from root: [String: Any]) -> [String: Any]? {
-        guard let data = root["data"] as? [String: Any] else {
-            return root["biz_data"] as? [String: Any] ?? root
-        }
-        return data["biz_data"] as? [String: Any] ?? data
-    }
-
-    private func usageDataObject(from root: [String: Any]) -> [String: Any]? {
-        guard let bizData = bizData(from: root) else {
-            return nil
-        }
-        return bizData["data"] as? [String: Any] ?? bizData
-    }
-
-    private func costCurrencyItems(from root: [String: Any]) -> [[String: Any]] {
-        if let data = root["data"] as? [[String: Any]] {
-            return data
-        }
-        if let data = root["data"] as? [String: Any] {
-            if let bizData = data["biz_data"] as? [[String: Any]] {
-                return bizData
-            }
-            if let bizData = data["biz_data"] as? [String: Any],
-               let nested = bizData["data"] as? [[String: Any]] {
-                return nested
-            }
-        }
-        if let bizData = root["biz_data"] as? [[String: Any]] {
-            return bizData
-        }
-        return []
-    }
-
+    /// 取「今天」那一天的明细行。挑哪天是**解析器自己的策略**（详情构建器要整月），
+    /// 所以留在这里，只共用取值与拆行的部分。
     private func dayData(in dataObject: [String: Any], today: String) -> [[String: Any]] {
         let days = dataObject["days"] as? [[String: Any]] ?? []
-        guard let day = days.first(where: { (stringValue($0["date"]) ?? "").hasPrefix(today) }) else {
+        guard let day = days.first(where: { (DeepSeekPayload.stringValue($0["date"]) ?? "").hasPrefix(today) }) else {
             return []
         }
-        return day["data"] as? [[String: Any]] ?? []
-    }
-
-    private func intUsageAmount(in item: [String: Any], type: String) -> Int {
-        guard let usage = item["usage"] as? [[String: Any]],
-              let amount = usage.first(where: { stringValue($0["type"]) == type }).flatMap({ decimalValue($0["amount"]) }) else {
-            return 0
-        }
-        return max(0, NSDecimalNumber(decimal: amount).intValue)
-    }
-
-    private func sumUsageAmounts(in item: [String: Any]) -> Decimal {
-        guard let usage = item["usage"] as? [[String: Any]] else {
-            return Decimal(0)
-        }
-        return usage.reduce(Decimal(0)) { partial, entry in
-            partial + (decimalValue(entry["amount"]) ?? Decimal(0))
-        }
-    }
-
-    private func stringValue(_ value: Any?) -> String? {
-        if let string = value as? String, !string.isEmpty {
-            return string
-        }
-        return nil
-    }
-
-    private func decimalValue(_ value: Any?) -> Decimal? {
-        if let decimal = value as? Decimal {
-            return decimal
-        }
-        if let int = value as? Int {
-            return Decimal(int)
-        }
-        if let double = value as? Double {
-            return Decimal(double)
-        }
-        if let string = value as? String {
-            let normalized = string
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: ",", with: "")
-            return Decimal(string: normalized, locale: Locale(identifier: "en_US_POSIX"))
-        }
-        return nil
+        return DeepSeekPayload.items(inDay: day)
     }
 
     private func moneyText(_ amount: Decimal, currency: String, minimumFractionDigits: Int) -> String {
