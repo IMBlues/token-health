@@ -14,6 +14,8 @@ final class AppState: ObservableObject {
     @Published var nextRefreshAt: Date
     @Published var refreshInterval: TimeInterval
     @Published var lastRefreshAt: Date?
+    @Published var pinnedConfigIDs: [UUID]
+    @Published private(set) var exchangeRate: ExchangeRateTable
     @Published var reportHookConfig: ReportHookConfig
     @Published var isReporting = false
     @Published var lastReportMessage: String?
@@ -22,17 +24,27 @@ final class AppState: ObservableObject {
     private let configStore: ConfigStore
     private let providerFactory = ProviderFactory()
     private let usageReporter: UsageReporter
+    private let rateStore: ExchangeRateStore
     private var refreshTimer: Timer?
 
-    init(configStore: ConfigStore = ConfigStore(), usageReporter: UsageReporter = UsageReporter()) {
+    init(
+        configStore: ConfigStore = ConfigStore(),
+        usageReporter: UsageReporter = UsageReporter(),
+        rateStore: ExchangeRateStore? = nil
+    ) {
         self.configStore = configStore
         self.usageReporter = usageReporter
+        let resolvedRateStore = rateStore ?? ExchangeRateStore(configStore: configStore)
+        self.rateStore = resolvedRateStore
         configs = configStore.loadConfigs()
         reportHookConfig = configStore.loadReportHookConfig()
         let interval = Self.normalizedRefreshInterval(configStore.loadRefreshInterval())
         refreshInterval = interval
         nextRefreshAt = Date().addingTimeInterval(interval)
+        exchangeRate = resolvedRateStore.table
+        pinnedConfigIDs = configStore.loadPinnedConfigIDs()
         normalizeReportProviderSelection()
+        normalizePinnedConfigIDs()
         do {
             try configStore.migrateLegacySecrets(for: configs)
         } catch {
@@ -106,6 +118,9 @@ final class AppState: ObservableObject {
         do {
             try configStore.deleteConfig(config, from: &configs)
             snapshots[id] = nil
+            if pinnedConfigIDs.contains(id) {
+                setPinned(id, false)
+            }
             normalizeReportProviderSelection()
             lastError = nil
             Task {
@@ -120,6 +135,50 @@ final class AppState: ObservableObject {
         } catch {
             lastError = error.localizedDescription
             return false
+        }
+    }
+
+    /// 被钉住的账号，**按账号列表的顺序**给出 —— 菜单栏项就按这个顺序摆。
+    var pinnedConfigs: [ServiceConfig] {
+        configs.filter { pinnedConfigIDs.contains($0.id) }
+    }
+
+    func isPinned(_ id: UUID) -> Bool {
+        pinnedConfigIDs.contains(id)
+    }
+
+    func setPinned(_ id: UUID, _ isPinned: Bool) {
+        var ids = pinnedConfigIDs
+        if isPinned {
+            guard !ids.contains(id) else {
+                return
+            }
+            ids.append(id)
+        } else {
+            guard ids.contains(id) else {
+                return
+            }
+            ids.removeAll { $0 == id }
+        }
+        pinnedConfigIDs = ids
+        configStore.savePinnedConfigIDs(ids)
+    }
+
+    /// 指向已不存在的账号时清掉，避免菜单栏项一直等一个不会来的配置。
+    private func normalizePinnedConfigIDs() {
+        let known = Set(configs.map(\.id))
+        let surviving = pinnedConfigIDs.filter(known.contains)
+        guard surviving != pinnedConfigIDs else {
+            return
+        }
+        pinnedConfigIDs = surviving
+        configStore.savePinnedConfigIDs(surviving)
+    }
+
+    func refreshExchangeRate(force: Bool = false) async {
+        let updated = force ? await rateStore.refreshNow() : await rateStore.refreshIfStale()
+        if updated != exchangeRate {
+            exchangeRate = updated
         }
     }
 
@@ -275,6 +334,13 @@ final class AppState: ObservableObject {
         guard !isRefreshing else {
             return
         }
+        await performRefresh()
+        // 汇率不是用量的一部分，放在 isRefreshing 复位之后再拉：否则设置界面会在整个
+        // 汇率请求期间显示「Refreshing」，删除账号时的在途刷新等待也会被一并拖长。
+        await refreshExchangeRate()
+    }
+
+    private func performRefresh() async {
         isRefreshing = true
         defer {
             isRefreshing = false

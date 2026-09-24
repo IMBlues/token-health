@@ -13,15 +13,16 @@
 
 **目标**
 
-- 菜单栏多一个独立的状态项，内容为「官方 logo + 若干根细竖条」，不显示项目名、不显示数值。
+- 菜单栏多一个独立的状态项，内容为「官方 logo + 若干根细竖条」，不显示项目名，也不在条旁边写数字
+  —— 具体百分比与金额走悬停 tooltip。
 - 竖条的数量与顺序由 Provider 提供的额度窗口决定，一个窗口一根条，独立着色。
-- DeepSeek 没有额度比例，该位置显示换算后的金额（不带单位）。
+- DeepSeek 没有额度比例，该位置改为显示换算后的金额（不带单位）。这是唯一会直接画出数字的情况。
 - DeepSeek 账号可选显示币种，汇率联网自动获取，换算只作用于这一个菜单栏项。
 - 全局图标与全局面板的行为完全不变。
 
 **非目标**
 
-- 不做多个 pin（同一时间只钉一个账号）。
+- ~~不做多个 pin（同一时间只钉一个账号）~~ —— 2026-09-24 追加实现，见文末「修订」一节。
 - 不做悬停展开、点击展开详细内容 —— 只留好入口，后续单独做。
 - 不改全局图标、不改菜单面板里卡片的信息层级与布局。
 - 不做竖条颜色、宽度、位置的自定义。
@@ -31,7 +32,11 @@
 
 - **pin**：被钉住的账号，记录形式是该 `ServiceConfig` 的 id。
 - **指标（metric）**：菜单栏项上要画的一个额度窗口，对应一根竖条（或 DeepSeek 的一个金额）。
-- **额度窗口**：`UsageWindow` 中带 `limit` 的滚动额度，即 `fiveHours / week / month / mcpMonth / videoGift`。
+- **额度窗口**：`UsageWindow` 中凡是有比例可画的窗口 —— 滚动额度 `fiveHours / week / month /
+  mcpMonth / videoGift`，外加总额度 `tokenQuota`（GenericHTTP 一类的 `total_used` / `total_granted`）。
+  余额、今日用量、7 日明细都是计数或金额，本来就没有比例。
+  窗口类型对但 `limit` 缺失（或为 0）的项也**不算**额度窗口 —— 卡片在这种情况下不画进度条，
+  钉住项必须一致，否则一根空槽会被读成「用了 0%」而不是「不知道」。
 - **状态项**：AppKit 的 `NSStatusItem`，即菜单栏上的一块区域。
 
 ## 3. 架构总览
@@ -56,10 +61,13 @@ MenuBarItemLayout → MenuBarItemRenderer → NSImage → statusItem.button
 | `UsageMetricSelection` | 额度窗口的判定、排序（卡片与菜单栏项共用） | Models |
 | `MenuBarMetrics` | 快照 → 有序指标列表（含 DS 金额换算） | UsageMetricSelection、ExchangeRateTable |
 | `ExchangeRateTable` | 纯值类型：汇率表 + 换算数学 | 无 |
-| `ExchangeRateStore` | 拉取、缓存、失败回退、发布当前汇率 | ExchangeRateTable、ConfigStore |
+| `ExchangeRateStore` | 拉取、缓存、失败回退 | ExchangeRateTable、ConfigStore |
 | `MenuBarItemLayout` | 纯计算：图标与各竖条的位置与高度 | 无 |
 | `MenuBarItemRenderer` | 依布局把 NSImage 画出来 | MenuBarItemLayout、ProviderIcon |
-| `PinnedStatusItemController` | 拥有 NSStatusItem，订阅状态、驱动重绘、弹菜单 | 以上全部、AppState |
+| `PinnedStatusItemController` | 拥有 NSStatusItem，订阅状态、驱动重绘、弹菜单 | AppState（汇率经 `AppState.exchangeRate` 读取）、以上绘制单元 |
+
+**`ExchangeRateStore` 的归属**：由 `AppState` 独占持有（`AppState.init(rateStore:)` 可注入替身），
+换算结果以 `AppState.exchangeRate` 发布。设置界面与控制器都只读这一个发布值，不各自持有一份。
 
 拆分原则：**凡是能纯计算的一律不碰 AppKit**（`MenuBarMetrics`、`ExchangeRateTable`、`MenuBarItemLayout`），
 这样大部分行为可以在没有窗口服务器的测试进程里直接验证。
@@ -80,7 +88,10 @@ enum ProviderIcon {
 ```
 
 设置侧边栏现在有一份私有的 `SettingsView.iconName(for:)`，本次把它移进这里，
-让「哪个 Provider 长什么样」只有一个出处，设置列表与菜单栏项拿到同一张图。
+让「哪个 Provider 长什么样」只有一个出处。
+
+**这是一处可见改动**：设置侧边栏的图标会从 SF Symbol 换成上色的品牌 logo（`tint: .labelColor`，
+跟随系统深浅色）。菜单栏项与设置列表因此看到的是同一枚标识 —— 这正是「统一换成各家公司正式的」所要求的。
 
 资源文件为**矢量 PDF**，理由是 `NSImage` 解码 SVG 只在较新的 macOS 上可用（本机 macOS 26 可以，
 但部署目标是 macOS 14），PDF 则在任何版本上都按矢量渲染、任意尺寸都清晰。
@@ -126,14 +137,23 @@ enum UsageMetricSelection {
 
 `pinnedMetrics` 的规则：
 
-1. 取 `isRollingQuota` 的项；Codex 额外要求 `isAccountLevel`。
-2. Cursor 的 `.month` 三个池（Auto + Composer / API / Grokbot）天然满足 1。
+1. 取 `isQuotaWindow` 的项，且必须 `ratio != nil`（即 `limit` 存在且大于 0）；Codex 额外要求账号级，
+   排除模型额度桶。`isQuotaWindow` 必须包含 `.tokenQuota`：卡片对它也是画进度条的，
+   少算它会让同一个窗口在卡片上有比例、在钉住项上却是空槽。
+2. Cursor 的 `.month` 池（Auto + Composer / API / Grokbot）天然满足 1。
 3. 按 `rank` 升序（5h → 周 → 月 → MCP 月 → 视频赠送）。
 4. 全部落空时返回空数组 —— 由调用方决定退化成什么（DeepSeek 走金额分支，其余走空槽分支）。
 
-预期结果：Kimi 2 根、Zhipu 3 根、Ark 3 根、OpenCode Go 3 根、Cursor 3 根、Codex 2 根。
+条数由快照内容决定，不是每个 Provider 的固定值。用固定数据算下来：Kimi 2 根、Zhipu 3 根、
+Ark 3 根、OpenCode Go 3 根、MiniMax 3 根（含视频赠送）、Cursor 最多 3 根、Codex 最多 2 根。
+测试断言应按固定夹具写，不能假设某个 Provider 线上永远给这么多。
 
-`UsageCard.usageSort` / `usageRank` / `isAccountLevel` 的调用点改为走这里，`compactUsages` 的行为不变。
+**关于「账号级」判定**：`UsageCard` 里现在并没有一个叫 `isAccountLevel` 的方法 —— 它是 `compactUsages`
+中 Codex 分支的一段内联条件（label 为 nil 或不含 `" · "`）。本次把它提成命名函数让两处共用，
+而不是把一段内联条件抄两份。
+
+`UsageCard` 的 `usageSort` / `usageRank` / `cursorLabelRank` / `isTokenTotal` / `isTodayTotal`
+调用点改为走这里，`compactUsages` 的结果必须逐项不变（既有测试全绿即为回归依据）。
 
 ### 4.3 MenuBarMetrics
 
@@ -143,7 +163,8 @@ struct MenuBarMetric: Equatable {
         case ratio(Double)      // 0...1，已 clamp
         case amount(String)     // 已格式化、不带单位
     }
-    var label: String           // tooltip 用："5h" / "Week" / "Month" / "MCP" / "Video"
+    var label: String           // tooltip 用；usage 自带 label 时优先用它
+                                // （Cursor 的三个池靠这个区分），否则取窗口短名
     var shape: Shape
     var severity: Double?       // 用于选色，nil = 中性
 }
@@ -161,7 +182,9 @@ enum MenuBarMetrics {
 - 常规 Provider：`pinnedMetrics` 的每一项 → `.ratio(usage.ratio ?? 0)`，`severity` 取 ratio。
 - DeepSeek：取 `window == .balance` 的全部项（可能有多币种），**换算到 `displayCurrency` 后求和**，
   格式化为两位小数，不附加单位。`displayCurrency` 为 nil 时不做换算，若存在多个币种余额，
-  取 rank 最高的那一个的原值（与卡片折叠态今日行为一致），不求和。
+  取共享排序后的第一项原值（与卡片折叠态的选法一致：余额之间 rank 相同，实际由 label 升序决定，
+  即 `Balance CNY` 排在 `Balance USD` 前），不求和。
+- 金额型的 `severity` 恒为 nil —— 它不画条，不参与阈值选色。
 - 换算后结果无法得出（汇率缺失、币种未知）时，回退显示原币种金额，并在 `label` 上标注
   「rate unavailable」，由 tooltip 呈现。
 - `snapshot.state != .ready` 或指标为空：返回空数组，调用方画空槽。
@@ -181,8 +204,10 @@ struct ExchangeRateTable: Codable, Equatable {
 }
 ```
 
-换算规则：同币种恒等返回；否则经 base 中转 `rate(X→Y) = rates[Y] / rates[X]`；
-任一汇率缺失或非有限正数时返回 nil。金额进出用 `Decimal`，只在算比率时转 `Double`。
+换算规则：同币种恒等返回（返回 1，**不查表** —— `rates` 里本来就不含 base 自己，
+查表会让 `USD→CNY` 也失败）；否则经 base 中转 `rate(X→Y) = rates[Y] / rates[X]`；
+任一汇率缺失或非有限正数时返回 nil。金额进出用 `Decimal`；转 `Decimal` 之前先把比率截到 6 位小数，
+避免 Double 的二进制误差顺着乘法污染显示值。
 
 ### 4.5 ExchangeRateStore
 
@@ -221,10 +246,12 @@ struct MenuBarItemLayout: Equatable {
 
     var size: CGSize
     var iconRect: CGRect?          // 无 logo 时为 nil
-    var barRects: [CGRect]         // 每条对应的填充矩形，从底部起算
-    var trackRects: [CGRect]       // 每条对应的空槽，满高
+    var tracks: [CGRect]           // 每条对应的空槽，满高
+    var fills: [CGRect]            // 每条对应的填充矩形，从底部起算
+    var amountRect: CGRect?        // 金额型内容的文字区域；有它时 tracks 与 fills 必为空
 
-    static func make(metrics: [MenuBarMetric], hasIcon: Bool) -> MenuBarItemLayout
+    /// `amountWidth` 由渲染层用字体度量量好后传入，布局层因此不必碰 AppKit。
+    static func make(metrics: [MenuBarMetric], hasIcon: Bool, amountWidth: CGFloat) -> MenuBarItemLayout
 }
 ```
 
@@ -246,7 +273,7 @@ struct MenuBarItemLayout: Equatable {
 ```swift
 @MainActor
 final class PinnedStatusItemController: NSObject {
-    init(appState: AppState, rateStore: ExchangeRateStore)
+    init(appState: AppState)   // 汇率从 appState.exchangeRate 读，不另持一份
     func start()   // 建 status item、订阅 appState.objectWillChange 与外观变化
     func stop()
 }
@@ -255,18 +282,24 @@ final class PinnedStatusItemController: NSObject {
 - 用 AppKit 的 `NSStatusItem`，**不用第二个 `MenuBarExtra`**：SwiftUI 的场景系统无法按状态增删菜单栏项，
   且 `MenuBarExtra` 的 label 只支持简单视图，画不了自定义的图形。
 - `length` 用 `NSStatusItem.variableLength`，按布局宽度自适应。
-- 重绘时机：`appState.objectWillChange`（去抖 50ms）、系统外观变化、屏幕 `backingScaleFactor` 变化。
-- 图标颜色在绘制时从**当前有效外观**解析（`NSApp.effectiveAppearance.bestMatch(from:)`），
-  深色菜单栏取白、浅色取黑，并在外观变化时重绘 —— 这是「单色模板」想要的效果，
-  只是必须由我们自己承担自动反色。
+- 重绘时机：`appState.objectWillChange`（去抖 50ms）与系统外观变化。外观**没有通知可用** ——
+  `NSApplication.didChangeEffectiveAppearanceNotification` 在 SDK 里并不存在，只能 KVO
+  `NSApp.effectiveAppearance`。位图按当前屏幕的 `backingScaleFactor` 生成；跨屏拖动时 AppKit 会
+  缩放既有位图，直到下一次重绘才按新倍率重画。
 - 无 pin、pin 指向的账号不存在或被禁用时：移除 status item（保留 pin 记录，重新启用即恢复）。
-- 点击：弹 `NSMenu`，含 `Unpin <名字>`（清 pin）、`Settings…`（`openSettings` 等价路径）、`Quit`。
+- 图标颜色在绘制时从**当前有效外观**解析（`bestMatch(from:)`），深色菜单栏取白、浅色取黑。
+  这正是「单色模板」想要的视觉效果 —— 只是因为整张图必须保留竖条的颜色而不能用
+  `isTemplate`，自动反色得由我们自己承担。
+- 点击：弹 `NSMenu`，含 `Unpin <名字>`（清 pin）、`Settings…`、`Quit`。`Settings…` 走
+  `NSApp.sendAction` 依次尝试 `showSettingsWindow:` 与 `showPreferencesWindow:` ——
+  SwiftUI 的 `openSettings` 环境值只在 View 里可用，控制器不是 View。
 - tooltip：`Kimi · 5h 62% · Week 34% · MCP 8%`；未就绪时放 `statusMessage`。
 
 ### 4.8 DeepSeek 币种设置与模型改动
 
-- `ServiceConfig` 新增 `var displayCurrency: String?`（默认 nil）。解码用 `decodeIfPresent`，
-  旧数据默认 nil，编码时 nil 也要写出去以保证 round-trip 稳定。
+- `ServiceConfig` 新增 `var displayCurrency: String?`（默认 nil），初始化器加同名默认参数。
+  解码用 `decodeIfPresent`，旧数据没有这个键也能读出来。nil 时合成的编码器会**省略**该键 ——
+  这没有关系：省略的键经 `decodeIfPresent` 读回来仍是 nil，round-trip 依然稳定。
 - `TokenUsage` 新增 `var amount: Decimal? = nil`，承载金额型窗口的**数值**（`unit` 已经是币种代码）。
   `DeepSeekUsageParser` 在产出 `balance` / `todayCost` 时一并填上 `amount`，
   `displayValue` 的现有格式不变，卡片渲染不受影响。
@@ -306,11 +339,20 @@ provider 详情表单新增一个 `Menu Bar` 分区：
 
 `Package.swift` 的可执行 target 加 `resources: [.process("Resources")]`。
 
+**`scripts/build-app.sh` 必须同步改**：它现在只拷二进制、`Info.plist` 和 `.icns`，会漏掉 SwiftPM
+生成的 `TokenHealth_TokenHealth.bundle`。`Bundle.module` 找不到资源时是 `fatalError`，打包出来的
+App 会直接崩。脚本要把它拷进 `Contents/Resources/`，缺失时以非零码退出。
+
+另需注意 `.process("Resources")` 会把目录**拍平**：构建产物里是 `kimi.pdf` 直接躺在 bundle 根，
+没有 `ProviderIcons/` 子目录。所以查找用 `Bundle.module.url(forResource:withExtension:)`，
+不要加 `subdirectory:` —— 加了反而找不到。
+
 ## 5. 数据流
 
 1. `AppState.init` → `rateStore.refreshIfStale()`（冷启动若缓存过期就补一次）。
 2. `AppState.refreshAll()` 串行刷新各账号 → 写 `snapshots`。
-3. 刷新结束 → `rateStore.refreshIfStale()`。
+3. 刷新结束、`isRefreshing` 复位之后 → `refreshExchangeRate()`。这一步必须落在刷新标志掉下来之后：
+   塞进刷新过程中会让设置界面在整个汇率请求期间显示「Refreshing」，也会拖长删除账号时的在途刷新等待。
 4. `appState.objectWillChange` → 控制器去抖后重算：
    找到 `pinnedConfigID` 对应的 `ServiceConfig` → 读它的 `snapshot` →
    `MenuBarMetrics.metrics(for:kind:displayCurrency:rateTable:)` →
@@ -335,12 +377,21 @@ provider 详情表单新增一个 `Menu Bar` 分区：
 ## 7. 测试策略
 
 全部新增测试用 swift-testing，与现有测试风格一致。**本机没有 Xcode**，跑测试必须带上
-CommandLineTools 的 Testing.framework 路径：
+CommandLineTools 的 Testing.framework 路径；仓库里已经把这个包装成了 `bash scripts/test.sh`，
+加 `--filter SuiteName` 即可只跑一个 suite：
 
 ```bash
-F=/Library/Developer/CommandLineTools/Library/Developer/Frameworks
-swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays -Xlinker -rpath -Xlinker "$F"
+bash scripts/test.sh
+bash scripts/test.sh --filter MenuBarMetricsTests
 ```
+
+**两条测试环境上的硬约束**（踩过，会以「整轮没有任何输出」的形式挂死）：
+
+- 测试进程读真正的 macOS 钥匙串会弹系统授权框并**无限期阻塞**。所以凡是会构造 `AppState`
+  或调用 `ConfigStore` 凭据方法的测试，必须注入内存替身（`InMemorySecretStore`）。
+  这要求 `ConfigStore` 不再持有一个具体的 `KeychainStore`，而是持有一个 `SecretStoring` 协议。
+- 兜底汇率永远是「过期」的，`AppState.init` 会触发一次汇率刷新。测试必须注入桩 fetcher，
+  否则每个用例都会真的去请求 `api.frankfurter.app`。
 
 | 测试 | 覆盖 |
 | --- | --- |
@@ -359,8 +410,8 @@ swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross
 
 1. `bash scripts/fetch-provider-icons.sh` 产出 10 个 PDF，重复执行结果一致。
 2. `bash scripts/build-app.sh` 通过。
-3. 上述 `swift test` 命令全绿。
-4. 手动：钉住 Kimi → 菜单栏出现月亮 logo + 2 根条，颜色随用量变化；钉住 Zhipu → 3 根条。
+3. `bash scripts/test.sh` 全绿。
+4. 手动：钉住 Kimi → 菜单栏出现 Kimi 的 K 字 logo + 2 根条，颜色随用量变化；钉住 Zhipu → 3 根条。
 5. 手动：钉住 DeepSeek → 显示换算后的金额；切到 USD 后数字变化；断开网络重启 → 仍显示数字，
    设置里标注为内置默认值。
 6. 手动：删除被钉的账号 → 菜单栏项消失；禁用 → 消失，重新启用 → 回来。
@@ -375,3 +426,32 @@ swift test -Xswiftc -F -Xswiftc "$F" -Xswiftc -Xfrontend -Xswiftc -disable-cross
 - **汇率表只存 USD 基**：当前只需要 USD↔CNY，用 base 中转足以覆盖任意两币种，
   不必为更多币种改结构。
 - **换算只作用于菜单栏项**：卡片与设置继续显示原币种原值，信息不丢失。
+
+## 10. 修订：支持多个 pin（2026-09-24，已实现）
+
+初版把「多个 pin」列为非目标，实际用下来这个限制没有必要，遂追加实现。
+
+**改动**
+
+- `AppState.pinnedConfigID: UUID?` → `pinnedConfigIDs: [UUID]`，并暴露
+  `pinnedConfigs: [ServiceConfig]`（被钉住的账号，**按账号列表的顺序** —— 由 `configs.filter` 天然给出，
+  菜单栏项的排列就用它）、`isPinned(_:)`、`setPinned(_:_:)`。
+- 存储从 `pinned-provider.config.v1`（裸 UUID 字符串）换成 `pinned-provider.config.v2`（`[UUID]` 的 JSON）。
+  旧键**只读不写**：没有 v2 时把它当单元素列表读出来，与其他历史键的处理一致，老版本仍能读回自己的快照。
+- `PinnedStatusItemController` 从「一个 status item」改为 `[UUID: NSStatusItem]` 的**对账**：
+  按 `pinnedConfigs.filter(\.isEnabled)` 求目标集合，只增删差集、已有项原地更新，
+  这样每次重绘不会打乱用户拖过的位置。每项用自己的 `autosaveName`（`TokenHealthPinned-<uuid>`）。
+- 菜单里的 `Unpin <名字>` 只摘掉那一个，靠 `representedObject` 带上 id 分辨。
+- 设置里的开关语义从「单选」变成「加入 / 移出」。
+
+**决策（用户拍板）**
+
+1. 顺序跟账号列表，不按钉的先后 —— 拖动账号列表即可改顺序。
+2. 不设数量上限，由用户自己控制菜单栏空间。
+3. 交互只需要开关，不额外加钉子列表之类的 UI。
+
+**已知边界**
+
+菜单栏里的**左右落位由 macOS 决定**，不与创建顺序强绑定；用户可以 ⌘ 拖拽，位置由系统记住。
+实测钉四个时四个状态项都建了出来，但系统没有为它们写 `NSStatusItem Preferred Position`，
+所以落位顺序无法从外部（截屏与辅助功能权限在这台机器上都未授予）程序化验证，需要肉眼确认一次。

@@ -284,7 +284,8 @@ struct DeepSeekUsageParser {
                 limit: nil,
                 resetDate: nil,
                 unit: currency,
-                displayValue: moneyText(balance, currency: currency, minimumFractionDigits: 2)
+                displayValue: moneyText(balance, currency: currency, minimumFractionDigits: 2),
+                amount: balance
             )
         }
     }
@@ -355,7 +356,8 @@ struct DeepSeekUsageParser {
                 limit: nil,
                 resetDate: nil,
                 unit: currency,
-                displayValue: moneyText(total, currency: currency, minimumFractionDigits: 4)
+                displayValue: moneyText(total, currency: currency, minimumFractionDigits: 4),
+                amount: total
             ))
 
             for row in modelRows.sorted(by: { $0.cost == $1.cost ? $0.model < $1.model : $0.cost > $1.cost }) {
@@ -366,7 +368,8 @@ struct DeepSeekUsageParser {
                     limit: nil,
                     resetDate: nil,
                     unit: currency,
-                    displayValue: moneyText(row.cost, currency: currency, minimumFractionDigits: 4)
+                    displayValue: moneyText(row.cost, currency: currency, minimumFractionDigits: 4),
+                    amount: row.cost
                 ))
             }
         }
@@ -386,7 +389,8 @@ struct DeepSeekUsageParser {
             limit: nil,
             resetDate: nil,
             unit: currency,
-            displayValue: moneyText(totalBalance, currency: currency, minimumFractionDigits: 2)
+            displayValue: moneyText(totalBalance, currency: currency, minimumFractionDigits: 2),
+            amount: totalBalance
         )
     }
 

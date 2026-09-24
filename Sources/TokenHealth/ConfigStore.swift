@@ -6,13 +6,17 @@ final class ConfigStore {
     private let legacyDefaultsKey = "service.configs.v1"
     private let reportHookDefaultsKey = "usage-report-hook.config.v1"
     private let refreshIntervalDefaultsKey = "refresh-interval.config.v1"
+    private let pinnedProvidersDefaultsKey = "pinned-provider.config.v2"
+    // 只存单个 pin 的旧键。只读不写：读到就当作一个元素的列表，与其他历史键的处理一致。
+    private let legacyPinnedProviderDefaultsKey = "pinned-provider.config.v1"
+    private let exchangeRateDefaultsKey = "exchange-rate.config.v1"
     private let secretsPrefix = "service.secrets.v1"
     private let defaults: UserDefaults
-    private let keychain: KeychainStore
+    private let secretStore: any SecretStoring
 
-    init(defaults: UserDefaults = .standard, keychain: KeychainStore = KeychainStore()) {
+    init(defaults: UserDefaults = .standard, secretStore: any SecretStoring = KeychainStore()) {
         self.defaults = defaults
-        self.keychain = keychain
+        self.secretStore = secretStore
     }
 
     func loadConfigs() -> [ServiceConfig] {
@@ -59,20 +63,53 @@ final class ConfigStore {
         defaults.set(interval, forKey: refreshIntervalDefaultsKey)
     }
 
+    func loadPinnedConfigIDs() -> [UUID] {
+        if let data = defaults.data(forKey: pinnedProvidersDefaultsKey),
+           let ids = try? JSONDecoder().decode([UUID].self, from: data) {
+            return ids
+        }
+        if let raw = defaults.string(forKey: legacyPinnedProviderDefaultsKey),
+           let id = UUID(uuidString: raw) {
+            return [id]
+        }
+        return []
+    }
+
+    func savePinnedConfigIDs(_ ids: [UUID]) {
+        guard let data = try? JSONEncoder().encode(ids) else {
+            return
+        }
+        defaults.set(data, forKey: pinnedProvidersDefaultsKey)
+    }
+
+    func loadExchangeRate() -> ExchangeRateTable? {
+        guard let data = defaults.data(forKey: exchangeRateDefaultsKey) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(ExchangeRateTable.self, from: data)
+    }
+
+    func saveExchangeRate(_ table: ExchangeRateTable) {
+        guard let data = try? JSONEncoder().encode(table) else {
+            return
+        }
+        defaults.set(data, forKey: exchangeRateDefaultsKey)
+    }
+
     func loadReportHookToken() -> String {
-        keychain.loadReportHookToken()
+        secretStore.loadReportHookToken()
     }
 
     func saveReportHookToken(_ token: String) throws {
-        try keychain.saveReportHookToken(token)
+        try secretStore.saveReportHookToken(token)
     }
 
     func migrateLegacySecrets(for configs: [ServiceConfig]) throws {
-        try keychain.migrateLegacyItems(for: Set(configs.map(\.id)))
+        try secretStore.migrateLegacyItems(for: Set(configs.map(\.id)))
     }
 
     func loadSecrets(for configID: UUID) -> ProviderSecrets {
-        let stored = keychain.loadSecrets(for: configID)
+        let stored = secretStore.loadSecrets(for: configID)
         if !stored.apiKey.isEmpty || !stored.password.isEmpty {
             return stored
         }
@@ -82,7 +119,7 @@ final class ConfigStore {
             password: defaults.string(forKey: secretKey(configID, "password")) ?? ""
         )
         if !legacy.apiKey.isEmpty || !legacy.password.isEmpty {
-            if (try? keychain.saveSecrets(legacy, for: configID)) != nil {
+            if (try? secretStore.saveSecrets(legacy, for: configID)) != nil {
                 removeLegacySecrets(for: configID)
             }
         }
@@ -90,12 +127,12 @@ final class ConfigStore {
     }
 
     func saveSecrets(_ secrets: ProviderSecrets, for configID: UUID) throws {
-        try keychain.saveSecrets(secrets, for: configID)
+        try secretStore.saveSecrets(secrets, for: configID)
         removeLegacySecrets(for: configID)
     }
 
     func deleteConfig(_ config: ServiceConfig, from configs: inout [ServiceConfig]) throws {
-        try keychain.deleteSecrets(for: config.id)
+        try secretStore.deleteSecrets(for: config.id)
         configs.removeAll { $0.id == config.id }
         removeLegacySecrets(for: config.id)
         saveConfigs(configs)

@@ -22,7 +22,7 @@ struct SettingsView: View {
                 List(selection: $selectedID) {
                     ForEach(appState.configs) { config in
                         HStack {
-                            Image(systemName: iconName(for: config.providerKind))
+                            Image(nsImage: ProviderIcon.image(for: config.providerKind, size: 16, tint: .labelColor))
                                 .frame(width: 18)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(config.displayName)
@@ -166,6 +166,38 @@ struct SettingsView: View {
                     }
 
                     Toggle("Enabled", isOn: binding.isEnabled)
+                }
+
+                Section("Menu Bar") {
+                    Toggle("Pin to menu bar", isOn: pinBinding(for: binding))
+
+                    if binding.wrappedValue.providerKind == .deepSeek {
+                        Picker("Display currency", selection: binding.displayCurrency) {
+                            Text("Original").tag(String?.none)
+                            Text("CNY").tag(String?.some("CNY"))
+                            Text("USD").tag(String?.some("USD"))
+                        }
+
+                        LabeledContent("Exchange rate") {
+                            HStack(spacing: 6) {
+                                Text(exchangeRateSummary)
+                                    .foregroundStyle(.secondary)
+                                Button {
+                                    Task {
+                                        await appState.refreshExchangeRate(force: true)
+                                    }
+                                } label: {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Refresh exchange rate")
+                            }
+                        }
+                    }
+
+                    Text("Each pinned account gets its own menu bar item: the provider logo, then one thin bar per quota window. Items follow the order of the account list above. The other icon keeps managing everything.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -336,7 +368,7 @@ struct SettingsView: View {
                     ForEach(appState.configs) { config in
                         Toggle(isOn: reportProviderSelectionBinding(for: config)) {
                             HStack(spacing: 10) {
-                                Image(systemName: iconName(for: config.providerKind))
+                                Image(nsImage: ProviderIcon.image(for: config.providerKind, size: 16, tint: .labelColor))
                                     .frame(width: 18)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(config.displayName)
@@ -466,6 +498,30 @@ struct SettingsView: View {
             appState.reportHookConfig.providerConfigIDs = appState.configs.compactMap { candidate in
                 selectedIDs.contains(candidate.id) ? candidate.id : nil
             }
+        }
+    }
+
+    private func pinBinding(for binding: Binding<ServiceConfig>) -> Binding<Bool> {
+        Binding {
+            appState.isPinned(binding.wrappedValue.id)
+        } set: { isPinned in
+            appState.setPinned(binding.wrappedValue.id, isPinned)
+        }
+    }
+
+    private var exchangeRateSummary: String {
+        let table = appState.exchangeRate
+        guard let rate = table.rate(from: "USD", to: "CNY") else {
+            return "Unavailable"
+        }
+        let value = String(format: "%.4f", locale: Locale(identifier: "en_US_POSIX"), rate)
+        switch table.origin {
+        case .live:
+            return "USD → CNY \(value) · live · \(StatusMenuSummary.relativeAge(from: table.fetchedAt, now: Date()))"
+        case .cache:
+            return "USD → CNY \(value) · cached · \(StatusMenuSummary.relativeAge(from: table.fetchedAt, now: Date()))"
+        case .fallback:
+            return "USD → CNY \(value) · built-in default, never fetched"
         }
     }
 
@@ -669,34 +725,5 @@ struct SettingsView: View {
 
     private func localLoginAccess(for provider: ProviderKind) -> String {
         provider == .cursor ? "Monthly quota" : "Quota only"
-    }
-
-    private func iconName(for provider: ProviderKind) -> String {
-        switch provider {
-        case .openAI:
-            "sparkles"
-        case .anthropic:
-            "text.bubble"
-        case .cursor:
-            "cursorarrow"
-        case .codex:
-            "chevron.left.forwardslash.chevron.right"
-        case .kimiCode:
-            "moon.stars"
-        case .zhipuCode:
-            "brain.head.profile"
-        case .deepSeek:
-            "waveform.path.ecg"
-        case .miniMax:
-            "m.circle"
-        case .volcengineArk:
-            "flame"
-        case .openCodeGo:
-            "terminal"
-        case .genericHTTP:
-            "network"
-        case .demo:
-            "chart.bar"
-        }
     }
 }
