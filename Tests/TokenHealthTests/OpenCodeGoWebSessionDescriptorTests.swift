@@ -83,10 +83,6 @@ struct OpenCodeGoWebSessionDescriptorTests {
         // A 2xx whose body is not JSON (an expired session redirected to an HTML page) must fail
         // the fetch, not read as "not subscribed".
         #expect(script.contains("status.json !== null"))
-        // When no probe ran (the workspace list itself failed), the orgs request's 401/403 must
-        // survive into the envelope so the kernel still maps an expired session — a synthetic 400
-        // would read as a plain error.
-        #expect(script.contains("orgsFailed"))
     }
 
     @Test

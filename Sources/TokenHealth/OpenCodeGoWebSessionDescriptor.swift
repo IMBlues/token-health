@@ -45,7 +45,11 @@ struct OpenCodeGoWebSessionDescriptor: WebSessionDescriptor {
                 xhr.setRequestHeader(name, headers[name]);
               }
             }
-            xhr.send();
+            try {
+              xhr.send();
+            } catch (error) {
+              return { ok: false, status: 0, text: String(error), json: null };
+            }
             return {
               ok: xhr.status >= 200 && xhr.status < 300,
               status: xhr.status,
@@ -56,12 +60,12 @@ struct OpenCodeGoWebSessionDescriptor: WebSessionDescriptor {
           const session = request('/auth/session');
           const orgs = request('/api/me/orgs');
           const workspaces = Array.isArray(orgs.json)
-            ? orgs.json.map((item) => item && item.id).filter(Boolean)
+            ? orgs.json.map((item) => item && item.id).filter((id) => typeof id === 'string' && id)
             : [];
           // Scoped console endpoints need x-org-id; pick the first workspace that has a Go
           // subscription, else keep the first workspace's response so "not subscribed" survives.
-          // A failed probe is skipped, matching the native path. The 5 must stay in sync with the
-          // provider's workspaceProbeLimit.
+          // A failed probe cannot be adopted as the winner, but the first attempt is still kept as
+          // the fallback response. The 5 must stay in sync with the provider's workspaceProbeLimit.
           const hasAccess = (json) => {
             if (!json) return false;
             const go = json.goStatus || json;
@@ -69,7 +73,7 @@ struct OpenCodeGoWebSessionDescriptor: WebSessionDescriptor {
             return go.subscriptionStatus === 'active' || go.subscriptionStatus === 'grace';
           };
           let chosen = null;
-          let workspaceId = workspaces.length > 0 ? workspaces[0] : null;
+          let workspaceId = null;
           for (const id of workspaces.slice(0, 5)) {
             const attempt = request('/api/go/status', { 'x-org-id': id });
             if (chosen === null) {
@@ -82,16 +86,12 @@ struct OpenCodeGoWebSessionDescriptor: WebSessionDescriptor {
               break;
             }
           }
-          // No probe ran (the workspace list itself failed or was empty). Carry the orgs request's
-          // auth failure through untouched so the kernel still maps an expired session; anything
-          // else is a plain "no workspace" with a 400.
-          const orgsFailed = orgs.status === 401 || orgs.status === 403;
-          const status = chosen || {
-            ok: false,
-            status: orgsFailed ? orgs.status : 400,
-            text: orgsFailed && orgs.text ? orgs.text : 'OpenCode Go has no workspace',
-            json: null
-          };
+          // No probe ran (the workspace list itself failed or came back empty). A failed orgs
+          // request carries its own status through — the kernel still maps 401/403 to an expired
+          // session — and everything else is a plain "no workspace".
+          const status = chosen || (orgs.ok
+            ? { ok: false, status: 400, text: 'OpenCode Go has no workspace', json: null }
+            : { ok: false, status: orgs.status, text: orgs.text || 'OpenCode Go workspace list failed', json: null });
           const scoped = (path) => workspaceId
             ? request(path, { 'x-org-id': workspaceId })
             : { ok: false, status: 0, text: '', json: null };
@@ -99,14 +99,15 @@ struct OpenCodeGoWebSessionDescriptor: WebSessionDescriptor {
           const byDay = scoped('/api/usage/cost-by-day?range=30d&bucket=day');
           const models = scoped('/api/usage/models?range=30d&pageSize=100&costOrder=desc');
           // ok/status/text describe the go/status request alone: the kernel throws on ok == false.
-          // A 2xx with an unparseable body (HTML from an expired session) is a failure too — it
-          // must not reach the parser, which would read it as "not subscribed".
-          const statusOk = status.ok && status.json !== null;
+          // A 2xx with a body that is not a JSON object (HTML from an expired session, a bare
+          // array) is a failure too — it must not reach the parser, which would read it as
+          // "not subscribed".
+          const statusOk = status.ok && typeof status.json === 'object' && status.json !== null && !Array.isArray(status.json);
           const failed = !statusOk;
           return JSON.stringify({
             ok: !failed,
             status: status.status,
-            text: failed ? (status.text || 'OpenCode Go status response was not JSON') : '',
+            text: failed ? (status.ok ? 'OpenCode Go status response was not JSON' : status.text) : '',
             hasSession: Boolean(session.ok && session.json && session.json.user),
             goStatus: status.json,
             session: session.ok ? session.json : null,
