@@ -101,6 +101,8 @@ struct OpenCodeGoUsageProvider: UsageProvider {
                 updatedAt: Date()
             )
         } catch {
+            // 这里只可能接到 parser 的错：WebSessionError →「重登/会话过期」的映射在上层
+            // fetchConsoleUsage 的 catch 里；别让 parser 抛会话错误，否则那条映射会被绕过。
             return ProviderUsageSnapshot.unavailable(config: config, message: error.localizedDescription)
         }
     }

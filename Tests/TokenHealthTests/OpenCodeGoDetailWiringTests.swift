@@ -62,6 +62,7 @@ struct OpenCodeGoDetailWiringTests {
 
         let quota = snapshot.usages.filter { [.fiveHours, .week, .month].contains($0.window) }
         let detail = try #require(snapshot.detail)
+        #expect(detail.headline.count == 3)
         #expect(detail.headline.count == quota.count, "headline 就是那三条额度，不该另解析一遍")
         #expect(detail.headline.map(\.value) == quota.compactMap(\.displayValue))
     }
@@ -80,7 +81,22 @@ struct OpenCodeGoDetailWiringTests {
     }
 
     @Test
-    func usageSectionsAreAbsentWhenTheApiKeysAreMissing() throws {
+    func anEnvelopeWithNoUsableMetersSaysNotSubscribed() {
+        let noMeters = Data(#"{"ok":true,"goStatus":{"access":{"meters":{}}}}"#.utf8)
+        let snapshot = OpenCodeGoUsageProvider().consoleSnapshot(
+            config: config(auth: .browserLogin),
+            bundle: noMeters,
+            accountName: nil,
+            today: today
+        )
+
+        #expect(snapshot.state == .unavailable)
+        // parser 的 not-subscribed 文案只有走这一层才会变成用户看得见的状态行。
+        #expect(snapshot.statusMessage.contains("not subscribed"))
+    }
+
+    @Test
+    func usageSectionsAreAbsentWhenTheUsageKeysAreMissing() throws {
         let metersOnly = Data(#"{"ok":true,"goStatus":{"access":{"meters":{"fiveHour":{"limitMicroCents":1200000000,"usedMicroCents":32000000}}}}}"#.utf8)
         let snapshot = OpenCodeGoUsageProvider().consoleSnapshot(
             config: config(auth: .browserLogin),
