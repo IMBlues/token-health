@@ -252,6 +252,24 @@ struct OpenCodeGoUsageProviderTests {
     }
 
     @Test
+    func accessShapeSkipsOutOfRangeLimits() throws {
+        // 1e20 exceeds Int64, so JSONSerialization hands it back as a Double. The conversion must
+        // drop it like any other unusable limit instead of trapping the whole app.
+        let response = """
+        {
+          "access": { "meters": {
+            "fiveHour": { "limitMicroCents": 1e20, "usedMicroCents": 1 },
+            "week": { "limitMicroCents": 3000000000, "usedMicroCents": 95000000, "resetsAt": "2026-09-28T00:00:00.000Z" }
+          } }
+        }
+        """
+        let result = try parse(response)
+
+        #expect(result.usages.map(\.window) == [.week])
+        #expect(result.usages[0].displayValue == "$0.95 / $30.00")
+    }
+
+    @Test
     func accessShapeShortWindowsDoNotBorrowThePeriodEnd() throws {
         // Only the month meter falls back to access.endsAt. A 5-hour meter without its own
         // resetsAt must stay undated rather than show the paid period's end as its window.

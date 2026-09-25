@@ -358,7 +358,10 @@ struct OpenCodeGoUsageParser {
             return int
         }
         if let double = value as? Double {
-            return Int(double)
+            guard double.isFinite, let converted = Int(exactly: double.rounded(.towardZero)) else {
+                return nil
+            }
+            return converted
         }
         if let number = value as? NSNumber {
             return number.intValue
