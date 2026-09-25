@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 struct CodexUsageProvider: UsageProvider {
-    private static let cache = CodexRateLimitsCache()
+    private static let cache = CodexQuotaCache()
     private let client: CodexAppServerClient
 
     init(client: CodexAppServerClient = CodexAppServerClient()) {
@@ -12,20 +12,20 @@ struct CodexUsageProvider: UsageProvider {
 
     func fetchUsage(config: ServiceConfig, secrets _: ProviderSecrets) async -> ProviderUsageSnapshot {
         do {
-            let response: CodexRateLimitsResponse
+            let bundle: CodexQuotaBundle
             let fetchedAt: Date
             let cacheKey = client.cacheKey
             switch await Self.cache.lookup(key: cacheKey, maxAge: 60, minimumRequestInterval: 60) {
             case let .cached(cached):
-                response = cached.value
+                bundle = cached.value
                 fetchedAt = cached.fetchedAt
             case let .failed(error):
                 throw error
             case .fetch:
                 do {
-                    response = try await client.fetchQuotaBundle().rateLimits
+                    bundle = try await client.fetchQuotaBundle()
                     fetchedAt = Date()
-                    await Self.cache.store(response, key: cacheKey, fetchedAt: fetchedAt)
+                    await Self.cache.store(bundle, key: cacheKey, fetchedAt: fetchedAt)
                 } catch let error as CodexAppServerError {
                     await Self.cache.storeFailure(error, key: cacheKey, failedAt: Date())
                     throw error
@@ -37,25 +37,7 @@ struct CodexUsageProvider: UsageProvider {
                 throw CodexAppServerError.refreshThrottled
             }
 
-            let mapped = CodexRateLimitsMapper.map(response)
-            guard !mapped.usages.isEmpty else {
-                return snapshot(
-                    config: config,
-                    state: .unavailable,
-                    message: "Codex did not return any quota windows"
-                )
-            }
-
-            return ProviderUsageSnapshot(
-                id: config.id,
-                serviceName: config.displayName,
-                providerTitle: config.providerKind.title,
-                planName: mapped.planName,
-                usages: mapped.usages,
-                state: .ready,
-                statusMessage: mapped.statusMessage,
-                updatedAt: fetchedAt
-            )
+            return snapshot(config: config, bundle: bundle, fetchedAt: fetchedAt, today: Date())
         } catch let error as CodexAppServerError {
             let state: ProviderUsageSnapshot.State = switch error {
             case .executableNotFound, .requestRejected:
@@ -63,13 +45,39 @@ struct CodexUsageProvider: UsageProvider {
             case .invalidResponse, .launchFailed, .processExited, .refreshThrottled, .responseTooLarge, .timeout:
                 .unavailable
             }
-            return snapshot(config: config, state: state, message: error.localizedDescription)
+            return failureSnapshot(config: config, state: state, message: error.localizedDescription)
         } catch {
-            return snapshot(config: config, state: .unavailable, message: "Codex quota is unavailable")
+            return failureSnapshot(config: config, state: .unavailable, message: "Codex quota is unavailable")
         }
     }
 
-    private func snapshot(
+    /// Internal rather than private: tests hand it a synthetic bundle and a fixed `today` instead
+    /// of spawning a Codex process, and never race UTC midnight.
+    func snapshot(
+        config: ServiceConfig,
+        bundle: CodexQuotaBundle,
+        fetchedAt: Date,
+        today: Date
+    ) -> ProviderUsageSnapshot {
+        let mapped = CodexRateLimitsMapper.map(bundle.rateLimits)
+        guard !mapped.usages.isEmpty else {
+            return ProviderUsageSnapshot.unavailable(config: config, message: "Codex did not return any quota windows")
+        }
+
+        return ProviderUsageSnapshot(
+            id: config.id,
+            serviceName: config.displayName,
+            providerTitle: config.providerKind.title,
+            planName: mapped.planName,
+            usages: mapped.usages,
+            detail: CodexUsageDetail.make(usage: bundle.accountUsage, usages: mapped.usages, today: today),
+            state: .ready,
+            statusMessage: mapped.statusMessage,
+            updatedAt: fetchedAt
+        )
+    }
+
+    private func failureSnapshot(
         config: ServiceConfig,
         state: ProviderUsageSnapshot.State,
         message: String
@@ -761,29 +769,29 @@ private extension KeyedDecodingContainer {
     }
 }
 
-private struct CodexRateLimitsCacheEntry: Sendable {
+private struct CodexQuotaCacheEntry: Sendable {
     let fetchedAt: Date
-    let value: CodexRateLimitsResponse
+    let value: CodexQuotaBundle
 }
 
-private struct CodexRateLimitsFailureEntry: Sendable {
+private struct CodexQuotaFailureEntry: Sendable {
     let failedAt: Date
     let error: CodexAppServerError
 }
 
-private enum CodexRateLimitsLookup: Sendable {
-    case cached(CodexRateLimitsCacheEntry)
+private enum CodexQuotaLookup: Sendable {
+    case cached(CodexQuotaCacheEntry)
     case failed(CodexAppServerError)
     case fetch
     case throttled
 }
 
-private actor CodexRateLimitsCache {
-    private var entries: [String: CodexRateLimitsCacheEntry] = [:]
-    private var failures: [String: CodexRateLimitsFailureEntry] = [:]
+private actor CodexQuotaCache {
+    private var entries: [String: CodexQuotaCacheEntry] = [:]
+    private var failures: [String: CodexQuotaFailureEntry] = [:]
     private var lastRequestDates: [String: Date] = [:]
 
-    func lookup(key: String, maxAge: TimeInterval, minimumRequestInterval: TimeInterval) -> CodexRateLimitsLookup {
+    func lookup(key: String, maxAge: TimeInterval, minimumRequestInterval: TimeInterval) -> CodexQuotaLookup {
         let now = Date()
         if let entry = entries[key], now.timeIntervalSince(entry.fetchedAt) < maxAge {
             return .cached(entry)
@@ -798,13 +806,13 @@ private actor CodexRateLimitsCache {
         return .fetch
     }
 
-    func store(_ value: CodexRateLimitsResponse, key: String, fetchedAt: Date) {
-        entries[key] = CodexRateLimitsCacheEntry(fetchedAt: fetchedAt, value: value)
+    func store(_ value: CodexQuotaBundle, key: String, fetchedAt: Date) {
+        entries[key] = CodexQuotaCacheEntry(fetchedAt: fetchedAt, value: value)
         failures[key] = nil
     }
 
     func storeFailure(_ error: CodexAppServerError, key: String, failedAt: Date) {
-        failures[key] = CodexRateLimitsFailureEntry(failedAt: failedAt, error: error)
+        failures[key] = CodexQuotaFailureEntry(failedAt: failedAt, error: error)
     }
 
     func clearRequest(key: String) {

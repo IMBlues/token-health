@@ -435,4 +435,125 @@ struct CodexUsageProviderTests {
         #expect(result.usesLocalLogin)
         #expect(!result.usesWebSession)
     }
+
+    // MARK: - 快照接缝
+
+    private func bundle(usageJSON: String?) throws -> CodexQuotaBundle {
+        let quota = try CodexTestSupport.decodeRateLimits(#"""
+        {"rateLimits":{"limitId":"codex","primary":{"usedPercent":12,"windowDurationMins":300,"resetsAt":1790337941},
+        "secondary":{"usedPercent":58,"windowDurationMins":10080,"resetsAt":1790754811},"planType":"plus"}}
+        """#)
+        let usage = try usageJSON.map {
+            try JSONDecoder().decode(CodexAccountUsageResponse.self, from: Data($0.utf8))
+        }
+        return CodexQuotaBundle(rateLimits: quota, accountUsage: usage)
+    }
+
+    private var fetchDay: Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        return calendar.date(from: DateComponents(year: 2026, month: 9, day: 25))!
+    }
+
+    private func codexConfig() -> ServiceConfig {
+        ServiceConfig(displayName: "Codex", providerKind: .codex, authMode: .api)
+    }
+
+    @Test
+    func theSnapshotSeamCarriesTheDetail() throws {
+        let snapshot = CodexUsageProvider().snapshot(
+            config: codexConfig(),
+            bundle: try bundle(usageJSON: #"""
+            {"summary":{"lifetimeTokens":172532345,"peakDailyTokens":117865819,
+            "longestRunningTurnSec":2550,"currentStreakDays":3},
+            "dailyUsageBuckets":[{"startDate":"2026-09-25","tokens":2000000}]}
+            """#),
+            fetchedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            today: fetchDay
+        )
+
+        #expect(snapshot.state == .ready)
+        #expect(snapshot.planName == "Plus")
+        #expect(snapshot.usages.map(\.window) == [.fiveHours, .week])
+
+        let detail = try #require(snapshot.detail)
+        #expect(detail.headline.map(\.value) == ["12%", "58%"])
+        #expect(detail.groups.map { $0.values[0].value } == ["2M", "2M", "2M"])
+        #expect(detail.series?.points.count == 30)
+        #expect(detail.breakdown.map(\.label) == ["Lifetime", "Peak day", "Streak", "Longest turn"])
+    }
+
+    @Test
+    func aMissingUsageHalfStillYieldsAReadySnapshotWithAQuotaOnlyDetail() throws {
+        let snapshot = CodexUsageProvider().snapshot(
+            config: codexConfig(),
+            bundle: try bundle(usageJSON: nil),
+            fetchedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            today: fetchDay
+        )
+
+        #expect(snapshot.state == .ready)
+        let detail = try #require(snapshot.detail)
+        #expect(detail.headline.map(\.label) == ["5h", "Week"])
+        #expect(detail.groups.isEmpty)
+        #expect(detail.series == nil)
+        #expect(detail.breakdown.isEmpty)
+    }
+
+    @Test
+    func aBundleWithoutQuotaWindowsIsUnavailableAndCarriesNoDetail() throws {
+        let empty = try CodexTestSupport.decodeRateLimits(#"{"rateLimitsByLimitId":{}}"#)
+        let snapshot = CodexUsageProvider().snapshot(
+            config: codexConfig(),
+            bundle: CodexQuotaBundle(
+                rateLimits: empty,
+                accountUsage: try JSONDecoder().decode(
+                    CodexAccountUsageResponse.self,
+                    from: Data(#"{"summary":{"lifetimeTokens":1}}"#.utf8)
+                )
+            ),
+            fetchedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            today: fetchDay
+        )
+
+        #expect(snapshot.state == .unavailable)
+        #expect(snapshot.detail == nil)
+    }
+
+    @Test
+    func aSecondFetchWithinTheMinuteReusesTheCachedBundleWithoutSpawning() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TokenHealthTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let executable = directory.appendingPathComponent("codex")
+        let script = """
+        #!/bin/sh
+        IFS= read -r _
+        IFS= read -r _
+        IFS= read -r _
+        IFS= read -r _
+        printf '%s\\n' '\(CodexTestSupport.fakeQuotaReply)'
+        printf '%s\\n' '\(CodexTestSupport.fakeUsageReply)'
+        while IFS= read -r _; do :; done
+        """
+        try Data(script.utf8).write(to: executable, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+
+        let client = CodexAppServerClient(testExecutableURL: executable)
+        let provider = CodexUsageProvider(client: client)
+        let config = ServiceConfig(displayName: "Codex", providerKind: .codex, authMode: .api)
+
+        let first = await provider.fetchUsage(config: config, secrets: .empty)
+        #expect(first.state == .ready)
+        #expect(first.detail?.headline.isEmpty == false)
+
+        // 把可执行文件删掉：再取一次还能拿到同一份数字，说明走的是缓存、没有起进程。
+        try FileManager.default.removeItem(at: executable)
+        let second = await provider.fetchUsage(config: config, secrets: .empty)
+        #expect(second.state == .ready)
+        #expect(second.detail == first.detail)
+        #expect(second.updatedAt == first.updatedAt)
+    }
 }
