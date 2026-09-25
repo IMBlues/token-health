@@ -221,7 +221,7 @@ struct OpenCodeGoUsageParser {
             usages.append(usage)
         }
 
-        guard isActiveStatus(status), !usages.isEmpty else {
+        guard Self.isActiveStatus(status), !usages.isEmpty else {
             let message = subscriptionMessage(for: status)
             return ParseResult(
                 planName: nil,
@@ -304,7 +304,7 @@ struct OpenCodeGoUsageParser {
         guard let status = goStatus["subscriptionStatus"] as? String else {
             return false
         }
-        return status == "active" || status == "grace"
+        return Self.isActiveStatus(status)
     }
 
     /// Parse the `GET /zen/go/v1/usage` API response (authenticated by an OpenCode Go API key).
@@ -476,7 +476,7 @@ struct OpenCodeGoUsageParser {
         )
     }
 
-    private func isActiveStatus(_ status: String) -> Bool {
+    private static func isActiveStatus(_ status: String) -> Bool {
         switch status {
         case "active", "grace":
             true
@@ -578,13 +578,17 @@ struct OpenCodeGoUsageParser {
 
 /// Assembles the native path's responses into the same envelope the WebView script returns.
 ///
-/// `ok` / `status` / `text` describe the `/api/go/status` request only: the session kernel throws
-/// on `ok == false` (and maps 401/403 to session-expired), so a failed usage call must never flip
-/// them — it only shows up as the matching `usage*` key being absent. Absent keys and explicit
-/// nulls are equivalent: both consumers read them with optional casts.
+/// `ok` / `status` / `text` describe a successful `/api/go/status` request: the session kernel
+/// throws on `ok == false` (and maps 401/403 to session-expired), so a failed usage call must
+/// never flip them — it only shows up as the matching `usage*` key being absent. Nothing in the
+/// app reads this native envelope through the session kernel: `ok` / `status` / `text` /
+/// `hasSession` are constants kept for shape parity with the WebView script's envelope. Absent
+/// keys and explicit nulls are equivalent: both consumers read them with optional casts. The
+/// serialization-failure fallback returns the raw status body, which `parseBundle` also accepts,
+/// so meters still render and only the usage sections are absent.
 enum OpenCodeGoUsageEnvelope {
     static func make(
-        status: Data,
+        goStatus: Data,
         orgs: Data,
         workspaceId: String?,
         summary: Data?,
@@ -598,7 +602,7 @@ enum OpenCodeGoUsageEnvelope {
             "hasSession": true
         ]
 
-        object["goStatus"] = jsonObject(from: status) ?? [:]
+        object["goStatus"] = jsonObject(from: goStatus) ?? [:]
         if let orgsObject = jsonObject(from: orgs) {
             object["orgs"] = orgsObject
         }
@@ -615,7 +619,7 @@ enum OpenCodeGoUsageEnvelope {
             object["usageModels"] = value
         }
 
-        return (try? JSONSerialization.data(withJSONObject: object)) ?? status
+        return (try? JSONSerialization.data(withJSONObject: object)) ?? goStatus
     }
 
     private static func jsonObject(from data: Data) -> Any? {

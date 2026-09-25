@@ -505,7 +505,7 @@ struct OpenCodeGoUsageProviderTests {
         // ok/status/text describe /api/go/status only: the kernel throws on ok == false, so a
         // failed usage call must never flip it — it only shows up as a missing key.
         let data = OpenCodeGoUsageEnvelope.make(
-            status: Data(#"{"access":{"meters":{}}}"#.utf8),
+            goStatus: Data(#"{"access":{"meters":{}}}"#.utf8),
             orgs: Data(#"[{"id":"wrk_1","name":"Home"}]"#.utf8),
             workspaceId: "wrk_1",
             summary: nil,
@@ -516,7 +516,7 @@ struct OpenCodeGoUsageProviderTests {
 
         #expect(object["ok"] as? Bool == true)
         #expect(object["workspaceId"] as? String == "wrk_1")
-        #expect(object["goStatus"] != nil)
+        #expect((object["goStatus"] as? [String: Any])?["access"] as? [String: Any] != nil)
         #expect((object["orgs"] as? [[String: Any]])?.first?["id"] as? String == "wrk_1")
         #expect(object["usageSummary"] == nil)
         #expect(object["usageByDay"] == nil)
@@ -526,7 +526,7 @@ struct OpenCodeGoUsageProviderTests {
     @Test
     func envelopeCarriesEveryUsagePayloadWhenPresent() throws {
         let data = OpenCodeGoUsageEnvelope.make(
-            status: Data(#"{"access":{"meters":{}}}"#.utf8),
+            goStatus: Data(#"{"access":{"meters":{}}}"#.utf8),
             orgs: Data("[]".utf8),
             workspaceId: nil,
             summary: Data(#"{"totalRequests":1}"#.utf8),
@@ -547,6 +547,7 @@ struct OpenCodeGoUsageProviderTests {
         #expect(OpenCodeGoUsageParser.workspaceIDs(fromOrgs: orgs) == ["wrk_a"])
 
         #expect(OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"access":{"meters":{}}}"#.utf8)))
+        #expect(OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"ok":true,"goStatus":{"access":{}}}"#.utf8)))
         #expect(!OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"access":null}"#.utf8)))
         #expect(OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"subscriptionStatus":"active","meters":[]}"#.utf8)))
         #expect(!OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"subscriptionStatus":"canceled"}"#.utf8)))
