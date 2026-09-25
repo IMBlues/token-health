@@ -19,6 +19,11 @@ struct ProviderFactory {
         switch config.providerKind {
         case .deepSeek, .openCodeGo:
             config.authMode == .browserLogin
+        case .codex:
+            // Codex 没有登录 / API 之分：`usesLocalLogin` 让 `AppState.saveConfigs()` 把 authMode
+            // 固定成 `.api`，所以这一支**不能**看 authMode —— 照上面那条写就永远不会为真。
+            // Cursor 同为本地登录，本次不给它详情。
+            true
         default:
             false
         }

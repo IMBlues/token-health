@@ -26,8 +26,16 @@ struct ProviderDetailCapabilityTests {
     }
 
     @Test
+    func codexProducesDetailInEitherMode() {
+        // Codex 没有登录 / API 之分：`usesLocalLogin` 把它的 authMode 固定成 `.api`，
+        // 所以这个分支不能看 authMode（与 DeepSeek / Go 那条规则不同）。
+        #expect(ProviderFactory.producesUsageDetail(for: config(.codex, auth: .api)))
+        #expect(ProviderFactory.producesUsageDetail(for: config(.codex, auth: .browserLogin)))
+    }
+
+    @Test
     func everyOtherProviderIsUnsupported() {
-        for kind in ProviderKind.allCases where kind != .deepSeek && kind != .openCodeGo {
+        for kind in ProviderKind.allCases where kind != .deepSeek && kind != .openCodeGo && kind != .codex {
             for auth in AuthMode.allCases {
                 #expect(
                     !ProviderFactory.producesUsageDetail(for: config(kind, auth: auth)),
