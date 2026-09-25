@@ -160,7 +160,7 @@ enum OpenCodeGoUsageDetail {
 
 - 今天 = 日期等于今天那一行（没有就是全 0）。
 - 7 天 = `[今天-6, 今天]` 的行合计；30 天 = 全部行合计。
-- 次数与 tokens 用 `UsageAmountFormatter.compactAmount`；花费按 microcents ÷ 1e8 用 `dollarsText`（`$19.86`）。
+- 次数与 tokens 用 `UsageAmountFormatter.compactAmount`；花费直接调 `dollarsText`（其内部 ÷1e8，**不要在外面再除一次**）。
 
 `usageByDay` 缺席（调用失败）时整段不画；是空数组（成功但 30 天没用量）时照画全 0 行。
 
@@ -174,6 +174,7 @@ enum OpenCodeGoUsageDetail {
 ### 7.4 breakdown（token 构成）
 
 来自 `usageSummary`：`Input` / `Output` / `Cache read` / `Cache write`（缓存写 = `totalCacheWrite5mTokens + totalCacheWrite1hTokens`），用 `compactAmount`。
+字段名与 §4 里 models 的同名（`totalInputTokens` / `totalOutputTokens` / `totalCacheReadTokens` / `totalCacheWrite5mTokens` / `totalCacheWrite1hTokens`）。
 `usageSummary` 缺席时整段不画。
 
 ### 7.5 table（按模型）
