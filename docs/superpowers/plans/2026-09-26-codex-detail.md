@@ -774,6 +774,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 MSG
 ```
 
+> **事后补强（代码质量评审，2026-09-26）**：本任务之后另有一个提交补了三条测试与一条 guard —— 这几条规则原先只活在注释里，改动可以悄无声息穿过 CI：
+> `extremeBucketsSaturateInsteadOfTrapping`（两个 `Int64.max` 的 bucket 不许 trap；把 `saturatingAdd` 换成 `+` 原本照样全绿）、
+> `anAfternoonAnchorStillEndsTheWindowToday`（`calendar.startOfDay(for: today)` 原本测不到：所有用例都注入 UTC 零点，而生产路径传的是当下时刻，规范化一旦失效就是「三行全 0 + 一条平线」）、
+> `negativeBucketCountsAreDroppedRatherThanSubtracted`（`dayTotals` 的 guard 加 `tokens >= 0`，与 §7.4「负数是坏数据」统一口径）。
+
 ---
 
 ## Chunk 2: 取数层（一次会话、两条请求）

@@ -210,7 +210,7 @@ label 撞车（两个非标准时长的桶都折出 `1h`）时**只留第一条*
 
 来自 `dailyUsageBuckets`，UTC 自然日，窗口 `[今天-29, 今天]`：
 
-- 每条的 `startDate` 取**前 10 个字符**解析（容忍 `"2026-09-24T00:00:00Z"` 一类写法）；解析失败的行与落在窗口外的行**整条忽略**；同一天出现多条按天求和。
+- 每条的 `startDate` 取**前 10 个字符**解析（容忍 `"2026-09-24T00:00:00Z"` 一类写法）；解析失败的行与落在窗口外的行**整条忽略**；`tokens` 缺失或为负数的行同样整条忽略（负数是坏数据，与 §7.4 同一条口径）；同一天出现多条按天求和。
 - 三行 × 一列 `Tokens`（`UsageAmountFormatter.compactAmount`），行标题依次 `Today` / `7 days` / `30 days`。
   - 今天 = 日期等于今天那一行；7 天 = `[今天-6, 今天]` 合计；30 天 = 窗口内全部合计。没有 bucket 的日期就是 0，行照画。
 - 求和用**饱和加法**（`addingReportingOverflow`），与 `OpenCodeGoUsageDetail.Totals` 同一条不变量：畸形或敌意的远端数字必须降级，不许 trap。
@@ -274,7 +274,7 @@ label 撞车（两个非标准时长的桶都折出 `1h`）时**只留第一条*
 
 | 测试 | 覆盖 |
 | --- | --- |
-| `CodexUsageDetailTests`（新） | headline 取自 `pinnedMetrics` 的顺序与文案（含模型桶被排除、label 撞车只留第一条）；三行汇总（补 0、越界忽略、同日求和、空数组、nil 不画）；趋势 30 点与轴文案；breakdown 四项与各自缺失时的降级、时长格式四档（`42s` / `42m` / `1h` / `1h 5m`、负数不占位）；`summary` 缺失但 buckets 在 → 只少 breakdown；全空返回 nil；`today` 注入固定时刻 |
+| `CodexUsageDetailTests`（新） | headline 取自 `pinnedMetrics` 的顺序与文案（含模型桶被排除、label 撞车只留第一条）；三行汇总（补 0、越界忽略、同日求和、空数组、nil 不画、负数丢弃不减计）；趋势 30 点与轴文案；breakdown 四项与各自缺失时的降级、时长格式四档（`42s` / `42m` / `1h` / `1h 5m`、负数不占位）；`summary` 缺失但 buckets 在 → 只少 breakdown；全空返回 nil；饱和加法（两个 `Int64.max` 的 bucket 不许 trap）；`today` 注入固定时刻**并附一条下午锚点用例**（覆盖 `startOfDay` 规范化，锚点不规范化会让所有 bucket 被拒 = 三行全 0） |
 | `CodexUsageProviderTests`（扩） | `snapshot(config:bundle:fetchedAt:today:)` 的纯函数层：带 usage 的 bundle → `ready` 且 detail 齐全；usage 为 nil → detail 只有 headline；无额度窗口 → `unavailable` 且无 detail。会话层仍走假 app-server（`timeout: 3`）：`fetchQuotaBundle()` 两条都回 → bundle 两半都在；id=2 回 error（`-32601`）/ 回坏 JSON → `accountUsage == nil` 且不抛；id=1 回坏 → 抛错；**id=2 完全无应答**（脚本回完 id=1 后 `sleep` 住不退出）→ 抛 `CodexAppServerError.timeout`；缓存命中不重起进程 |
 | `CodexTestSupport`（改） | 假 app-server 脚本读满四条请求、补 id=2 的响应（保留既有「先发一条无关通知」的行为）；`fetchFromFakeAppServer()` 与 `fetchLiveCodexQuota()` 的返回类型都改成 `CodexQuotaBundle`、内部改调 `fetchQuotaBundle()`，两处调用点（`testAppServerClientIgnoresNotificationsAndReadsExpectedResponse`、`testLiveCodexQuotaWhenExplicitlyEnabled`）相应读 `.rateLimits`；`rpcSummary` 断言四条报文 |
 | `CodexUsageProviderTests.testQuotaRPCUsesOnlyTheReadOnlyAllowlist`（改，**唯一一处安全姿态断言，别顺手删**） | 方法名断言补上 `account/usage/read`；`keySets.count` 3 → 4（`keySets[3] == ["id", "method"]`）；`forbiddenMethod` 列表**只删 `"account/usage/read"` 一项，其余 11 项（含 `capabilities`、`experimentalApi`）逐字保留** —— 删掉的那项与 `account/rateLimits/read` 同属只读账号方法，是本次有意放行的唯一一个 |
