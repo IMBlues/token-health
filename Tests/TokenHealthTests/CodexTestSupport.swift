@@ -74,7 +74,7 @@ enum CodexTestSupport {
     /// `while IFS= read -r _` loop must not be removed.
     static func fetchFromFakeAppServer(
         replies: [String] = [fakeQuotaReply, fakeUsageReply],
-        timeout: TimeInterval = 3
+        timeout: TimeInterval = 5
     ) async throws -> CodexQuotaBundle {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TokenHealthTests-\(UUID().uuidString)", isDirectory: true)

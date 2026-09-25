@@ -454,6 +454,7 @@ private final class CodexAppServerSession: @unchecked Sendable {
 
         for line in lines where !line.isEmpty {
             guard let envelope = try? JSONDecoder().decode(CodexRPCIDEnvelope.self, from: line),
+                  envelope.isReply,
                   let id = envelope.id, responseIDs.contains(id) else {
                 continue
             }
@@ -507,12 +508,59 @@ private final class CodexAppServerSession: @unchecked Sendable {
 
 private struct CodexRPCIDEnvelope: Decodable {
     let id: Int?
+    /// A reply carries `result` or `error`; a server-initiated request carries `method` and
+    /// `params` instead. Matching on the id alone would let such a request pass for the reply we
+    /// are waiting for — and then the wait for the requested ids could never complete.
+    let isReply: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case result
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isReply = container.contains(.result) || container.contains(.error)
+        if let number = try? container.decodeIfPresent(Int.self, forKey: .id) {
+            id = number
+        } else if let text = try? container.decodeIfPresent(String.self, forKey: .id) {
+            id = Int(text)
+        } else {
+            id = nil
+        }
+    }
 }
 
 private struct CodexRPCResult<Value: Decodable>: Decodable {
     let id: Int
     let result: Value?
     let error: CodexRPCErrorPayload?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case result
+        case error
+    }
+
+    /// The id counts whether it arrives as a number or as a numeric string, the same leniency the
+    /// session's matching applies. `result` and `error` keep the synthesized decoding's strictness.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let number = try? container.decodeIfPresent(Int.self, forKey: .id) {
+            id = number
+        } else if let text = try? container.decodeIfPresent(String.self, forKey: .id), let number = Int(text) {
+            id = number
+        } else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .id,
+                in: container,
+                debugDescription: "Expected a numeric id"
+            )
+        }
+        result = try container.decodeIfPresent(Value.self, forKey: .result)
+        error = try container.decodeIfPresent(CodexRPCErrorPayload.self, forKey: .error)
+    }
 }
 
 private struct CodexRPCErrorPayload: Decodable {}

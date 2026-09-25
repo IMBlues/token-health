@@ -427,6 +427,53 @@ struct CodexUsageProviderTests {
     }
 
     @Test
+    func aServerInitiatedRequestWithACollidingIdIsNotMistakenForAReply() async throws {
+        // 服务端主动发来的请求同样带 id：只按 id 匹配会把它吃成额度应答，随后解不出 →
+        // 整次刷新失败。靠「应答必带 result / error」把它排除掉。
+        let bundle = try await CodexTestSupport.fetchFromFakeAppServer(replies: [
+            #"{"method":"item/commandExecution/requestApproval","id":1,"params":{}}"#,
+            CodexTestSupport.fakeQuotaReply,
+            CodexTestSupport.fakeUsageReply
+        ])
+
+        #expect(bundle.rateLimits.rateLimits?.primary?.usedPercent == 21)
+        #expect(bundle.accountUsage?.summary?.currentStreakDays == 3)
+    }
+
+    @Test
+    func aNumericStringResponseIdStillCounts() async throws {
+        let bundle = try await CodexTestSupport.fetchFromFakeAppServer(replies: [
+            CodexTestSupport.fakeQuotaReply.replacingOccurrences(of: #""id":1"#, with: #""id":"1""#),
+            CodexTestSupport.fakeUsageReply.replacingOccurrences(of: #""id":2"#, with: #""id":"2""#)
+        ])
+
+        #expect(bundle.rateLimits.rateLimits?.primary?.usedPercent == 21)
+        #expect(bundle.accountUsage?.summary?.currentStreakDays == 3)
+    }
+
+    @Test
+    func repliesMayArriveInAnyOrder() async throws {
+        let bundle = try await CodexTestSupport.fetchFromFakeAppServer(replies: [
+            CodexTestSupport.fakeUsageReply,
+            CodexTestSupport.fakeQuotaReply
+        ])
+
+        #expect(bundle.rateLimits.rateLimits?.primary?.usedPercent == 21)
+        #expect(bundle.accountUsage?.summary?.currentStreakDays == 3)
+    }
+
+    @Test
+    func aDuplicatedReplyDoesNotCompleteTheSessionEarly() async throws {
+        let bundle = try await CodexTestSupport.fetchFromFakeAppServer(replies: [
+            CodexTestSupport.fakeQuotaReply,
+            CodexTestSupport.fakeQuotaReply,
+            CodexTestSupport.fakeUsageReply
+        ])
+
+        #expect(bundle.accountUsage?.summary?.currentStreakDays == 3)
+    }
+
+    @Test
     func testConfigStoreMigratesToV2WithoutOverwritingV1() throws {
         let result = try CodexTestSupport.configMigrationResult()
         #expect(result.loadedLegacy)
