@@ -167,42 +167,31 @@ struct OpenCodeGoUsageProvider: UsageProvider {
         let orgsData = try await fetchData(session: session, path: "/api/me/orgs")
         let workspaces = OpenCodeGoUsageParser.workspaceIDs(fromOrgs: orgsData)
 
-        // Prefer the first workspace that carries a Go subscription; fall back to the first
-        // workspace's response so "not subscribed" still gets its own message. A probe that fails
-        // is skipped and probing continues — matching the web script, which also keeps going — so
-        // one unusable workspace (not visible to the session, transient console error) does not
-        // doom the whole native path and later workspaces are still reached.
-        var firstData: Data?
-        var firstID: String?
-        var chosen: (data: Data, id: String)?
-        var sawFailure = false
-        for workspace in workspaces.prefix(Self.workspaceProbeLimit) {
-            guard let data = try? await fetchData(session: session, path: "/api/go/status", workspaceID: workspace) else {
-                sawFailure = true
-                continue
-            }
-            if firstData == nil {
-                firstData = data
-                firstID = workspace
-            }
-            if OpenCodeGoUsageParser.hasGoAccess(statusData: data) {
-                chosen = (data, workspace)
-                break
-            }
-        }
+        let outcome = await OpenCodeGoWorkspaceProbe.run(
+            workspaces: workspaces,
+            limit: Self.workspaceProbeLimit,
+            // `try?` rather than fetchUsageData: a probe failure is a failed request, not a 2xx
+            // body that later fails the JSON guard — the guard below reads that distinction.
+            fetch: { workspaceID in
+                try? await fetchData(session: session, path: "/api/go/status", workspaceID: workspaceID)
+            },
+            hasAccess: OpenCodeGoUsageParser.hasGoAccess
+        )
 
         // All probes succeeded but none carries Go: keep the first response so the "not subscribed"
-        // message survives. A probe failure with no access found means the session (or the console)
-        // is broken — throw so the WebView path can surface the real error.
-        if chosen == nil, sawFailure {
+        // message survives. A probe failure with no access-carrying response means the session (or
+        // the console) is broken — throw so the WebView path can surface the real error. An
+        // access-carrying response is exactly the probe's chosen one, so `hasAccess` re-reads the
+        // old `chosen == nil`.
+        if outcome.sawFailure, !(outcome.statusData.map(OpenCodeGoUsageParser.hasGoAccess) ?? false) {
             throw WebSessionError.requestFailed(
                 providerTitle: Self.providerTitle,
                 message: "OpenCode Go status probe failed"
             )
         }
 
-        guard let statusData = chosen?.data ?? firstData,
-              let workspaceID = chosen?.id ?? firstID else {
+        guard let statusData = outcome.statusData,
+              let workspaceID = outcome.workspaceID else {
             throw WebSessionError.requestFailed(
                 providerTitle: Self.providerTitle,
                 message: "OpenCode Go has no workspace"
@@ -321,5 +310,52 @@ struct OpenCodeGoUsageProvider: UsageProvider {
         }
         WebSessionLog.debugLog("native request succeeded, path=\(path), bytes=\(data.count)", providerTitle: Self.providerTitle)
         return data
+    }
+}
+
+/// The native path's workspace-probe policy, mirroring the web script's: walk the workspaces in
+/// order, prefer the first response that reports a Go subscription, and otherwise keep the first
+/// response that came back at all. A failed probe (`fetch` returning nil) is skipped and probing
+/// continues — matching the script, which also keeps going — so one unusable workspace does not
+/// cut the search short. `fetch` is injected so the policy can be tested without a network.
+///
+/// `statusData` carries the chosen access-carrying response when one was found, else the first
+/// response that arrived; the two are distinguishable with the same `hasAccess` predicate.
+enum OpenCodeGoWorkspaceProbe {
+    struct Outcome: Equatable {
+        var statusData: Data?
+        var workspaceID: String?
+        var sawFailure: Bool
+    }
+
+    static func run(
+        workspaces: [String],
+        limit: Int,
+        fetch: (String) async -> Data?,
+        hasAccess: (Data) -> Bool
+    ) async -> Outcome {
+        var firstData: Data?
+        var firstID: String?
+        var chosen: (data: Data, id: String)?
+        var sawFailure = false
+        for workspace in workspaces.prefix(limit) {
+            guard let data = await fetch(workspace) else {
+                sawFailure = true
+                continue
+            }
+            if firstData == nil {
+                firstData = data
+                firstID = workspace
+            }
+            if hasAccess(data) {
+                chosen = (data, workspace)
+                break
+            }
+        }
+        return Outcome(
+            statusData: chosen?.data ?? firstData,
+            workspaceID: chosen?.id ?? firstID,
+            sawFailure: sawFailure
+        )
     }
 }
