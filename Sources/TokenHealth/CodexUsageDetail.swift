@@ -102,9 +102,9 @@ enum CodexUsageDetail {
     ) -> [Date: Int] {
         var byDay: [Date: Int] = [:]
         for bucket in buckets {
-            // A bucket missing its date or its tokens is dropped, not counted as zero: zero means
-            // "no usage that day", a missing field means "unknown".
-            guard let tokens = bucket.tokens,
+            // A bucket missing its date or its tokens — or carrying a negative count, which is bad
+            // data rather than a small day — is dropped, not counted as zero.
+            guard let tokens = bucket.tokens, tokens >= 0,
                   let date = date(fromDay: bucket.startDate, calendar: calendar),
                   allowed.contains(date) else {
                 continue

@@ -228,4 +228,64 @@ struct CodexUsageDetailTests {
         // 只有第一条可用：日期前缀能解析，tokens 才算数。
         #expect(detail.groups.map { $0.values[0].value } == ["1K", "1K", "1K"])
     }
+
+    @Test
+    func extremeBucketsSaturateInsteadOfTrapping() throws {
+        // 敌意数据必须饱和，不许 trap：两个 Int64.max 相加会溢出。
+        let response = try usageResponse("""
+        { "dailyUsageBuckets": [
+            { "startDate": "2026-09-25", "tokens": 9223372036854775807 },
+            { "startDate": "2026-09-25", "tokens": 9223372036854775807 } ] }
+        """)
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: response,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        let saturated = UsageAmountFormatter.compactAmount(.max)
+        #expect(detail.groups.map { $0.values[0].value } == [saturated, saturated, saturated])
+        // 注意别写成 `Double(.max)`：那是 greatestFiniteMagnitude，不是 `Int.max` 转过来的值。
+        #expect(detail.series?.points.last?.value == Double(Int.max))
+    }
+
+    @Test
+    func anAfternoonAnchorStillEndsTheWindowToday() throws {
+        // 生产路径传的是「当下时刻」而不是 UTC 零点：锚点必须先规范化到当天，否则
+        // `allowed` 会拒掉所有 bucket，表现为「三行全 0 + 一条平线」。
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let afternoon = calendar.date(from: DateComponents(
+            year: 2026, month: 9, day: 25, hour: 13, minute: 30
+        ))!
+
+        let response = try usageResponse("{ \(sparseBuckets) }")
+        let detail = try #require(CodexUsageDetail.make(
+            usage: response,
+            usages: quotaUsages(),
+            today: afternoon
+        ))
+
+        #expect(detail.groups.map { $0.values[0].value } == ["2M", "2.8M", "3.7M"])
+        #expect(detail.series?.axisStart == "8/27")
+        #expect(detail.series?.axisEnd == "9/25")
+    }
+
+    @Test
+    func negativeBucketCountsAreDroppedRatherThanSubtracted() throws {
+        let response = try usageResponse("""
+        { "dailyUsageBuckets": [
+            { "startDate": "2026-09-25", "tokens": 1200000 },
+            { "startDate": "2026-09-25", "tokens": -500000 } ] }
+        """)
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: response,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        #expect(detail.groups.map { $0.values[0].value } == ["1.2M", "1.2M", "1.2M"])
+    }
 }
