@@ -16,7 +16,7 @@
 
 - 点钉住的 Codex 项 → 浮层展示：额度（与菜单栏同源）、今天 / 7 天 / 30 天 tokens、30 天每日 tokens 趋势、Lifetime / Peak day / Streak / Longest turn。
 - 与 DeepSeek / OpenCode Go 同一路数：视图层零改动版式，数据来自已取回的响应，不新增第三方依赖。
-- 额度是必需项、用量是可选区块：用量那条 RPC 失败不得影响额度与菜单栏数字。
+- 额度是必需项、用量是可选区块：用量那条 RPC **报错或解不出**不得影响额度与菜单栏数字。注意「完全无应答」不属于这条 —— 那是会话超时，整次刷新失败（§4、§11）。
 
 **非目标**
 
@@ -72,7 +72,7 @@
 两个必须写进实现的性质：
 
 1. **buckets 稀疏**：只有有量的那几天，不是连续 30 天。上面的四条之和恰好等于 `lifetimeTokens`，可见它是「按日的全量历史」（本机最早一条在 100 天前），不是只给 30 天。**图表与区间汇总必须自己补齐缺失的日期。**
-2. **处处可缺**：协议里 `dailyUsageBuckets` 为 `array | null`，bucket 的两个字段都是 required 但 `summary` 的五个字段均可为 null。缺失一律降级为「不画那一段」，不是报错。
+2. **处处可缺**：协议里 `summary` 与 bucket 的字段都标了 required、只有 `dailyUsageBuckets` 可 null；但我们一律按可缺解码（§4.1）。缺失的降级是「不画那一段」，不是报错。
 
 协议来源：`codex app-server generate-json-schema --experimental --out <dir>` 生成的 `GetAccountTokenUsageResponse` / `AccountTokenUsageSummary` / `AccountTokenUsageDailyBucket`。
 
@@ -96,18 +96,57 @@
 ```swift
 struct CodexQuotaBundle: Sendable {
     var rateLimits: CodexRateLimitsResponse
-    /// nil = 用量那条 RPC 报错 / 缺席 / 解不出来。详情少画用量区块，不影响快照。
+    /// nil = 用量那条 RPC 报错或解不出来。详情少画用量区块，不影响快照。
     var accountUsage: CodexAccountUsageResponse?
 }
 
 func fetchQuotaBundle() async throws -> CodexQuotaBundle
 ```
 
-规则：
+规则（**「无应答」和「有应答但报错」是两回事，别混**）：
 
 - **id=1（额度）是必需项**：响应缺席、是 JSON-RPC error、或解不出 `CodexRateLimitsResponse` → 抛错，整次刷新按今天的方式失败。
-- **id=2（用量）是可选区块**：响应缺席、是 error（不支持该方法的 Codex 会回 `-32601`）、或解不出 → `accountUsage = nil`，**不抛错**。
+- **id=2（用量）有应答但不是成功结果** —— 是 error（不支持该方法的 Codex 会回 `-32601`），或 result 解不出 `CodexAccountUsageResponse` → `accountUsage = nil`，**不抛错**，额度照常。
+- **id=2 完全无应答** → 会话等不到那个 id，走超时（30 秒）→ 整次刷新失败，与今天会话超时的表现一致。这不是降级路径，是失败路径（§11 说明为何接受）。
 - 两条响应在同一个进程里发出、同一个超时窗口内收齐，不串行。
+
+`CodexAppServerClient.fetchRateLimits()` **删除**：生产路径只有批量这一条，留一个单独取额度的入口就是死代码。
+两个依赖它的测试助手（`CodexTestSupport.fetchFromFakeAppServer()`、`fetchLiveCodexQuota()`）改用 `fetchQuotaBundle()` 并读 `.rateLimits`（§10）。
+
+**快照构造抽成纯函数**（对齐 `OpenCodeGoUsageProvider.consoleSnapshot` 的既有做法）：
+
+```swift
+/// 内部而非 private：测试拿合成 bundle 与固定 today 直接测这一层，不必起进程、不碰 UTC 午夜。
+func snapshot(config: ServiceConfig, bundle: CodexQuotaBundle, fetchedAt: Date, today: Date) -> ProviderUsageSnapshot
+```
+
+`fetchUsage` 只负责缓存与进程这层管道，最后调它（`today` 传 `Date()`）。额度窗口为空时它返回 `.unavailable`，不产 detail。
+
+### 4.1 解码形状
+
+```swift
+struct CodexAccountUsageResponse: Decodable, Sendable {
+    let summary: CodexAccountUsageSummary?
+    let dailyUsageBuckets: [CodexAccountUsageDay]?
+}
+
+struct CodexAccountUsageSummary: Decodable, Sendable {
+    let lifetimeTokens: Int64?
+    let peakDailyTokens: Int64?
+    let longestRunningTurnSec: Int64?
+    let currentStreakDays: Int64?
+}
+
+struct CodexAccountUsageDay: Decodable, Sendable {
+    let startDate: String?
+    let tokens: Int64?
+}
+```
+
+- **每个字段都宽容**：`decodeIfPresent`，数字走文件里已有的 `decodeFlexibleInt64IfPresent`（容忍数字写成字符串）。协议里 `summary` 是 required、`dailyUsageBuckets` 可 null，但这里一律当可缺 —— 缺了只是少画一段，不必让整份响应作废。
+- 信封本身解不出（比如 `summary` 是个字符串、`dailyUsageBuckets` 是个对象）→ `accountUsage = nil`。
+- bucket 的 `startDate` 为 nil / 解析不出，或 `tokens` 为 nil → 该条**整条忽略**（不当 0：0 是「那天没用」，缺字段是「不知道」）。
+- `longestStreakDays` 不解码：没有任何区块用它（§7.4）。
 
 > 备选方案「起两次 app-server」被否掉：实测每次往返 1.2–5.5 秒且几乎全是进程启动，等于每次刷新白烧两秒；而它换来的只是「可选请求永不回应」这一种协议违规场景的容错（见 §11）。
 
@@ -162,6 +201,7 @@ enum CodexUsageDetail {
 - `value` = `UsageAmountFormatter.exactAmountText(_)` → `12%`
 
 **不要自己写窗口列表或百分比格式**：这两处复用是为了让浮层与菜单栏 tooltip 永远同源。`usages` 为空时 headline 为空。
+label 撞车（两个非标准时长的桶都折出 `1h`）时**只留第一条**：`DetailStat.id == label`，同一集合内必须唯一（`UsageDetail.swift` 顶部的不变量），否则 `ForEach` 会出错。
 
 ### 7.2 groups（今天 / 7 天 / 30 天）
 
@@ -212,15 +252,15 @@ enum CodexUsageDetail {
 
 | 情况 | 表现 |
 | --- | --- |
-| 没装 Codex / 没登录 | 与今天一致：unavailable + 浮层错误行（`executableNotFound` / `requestRejected` 的既有文案） |
+| 没装 Codex / 没登录 | 与今天一致：`.needsConfiguration`（`executableNotFound` / `requestRejected` 的既有文案）+ 浮层错误行 |
 | 会话超时 / 进程退出 / 响应超长 | 整次刷新失败（与今天一致：额度也拿不到） |
 | id=1 缺席 / 是 error / 解不出 | 整次刷新失败（与今天一致） |
-| id=2 是 error（如老版本 Codex 回 -32601） | `accountUsage = nil`：详情只剩 headline，额度与菜单栏数字照常 ready |
-| id=2 解不出 / `summary` 缺失 | 同上 |
+| id=2 是 error（如老版本 Codex 回 -32601）/ 解不出 | `accountUsage = nil`：详情只剩 headline，额度与菜单栏数字照常 ready |
+| id=2 完全无应答 | 会话超时 → 整次刷新失败（与今天超时同路，见 §11） |
+| `summary` 缺失或某字段为 null | 对应 breakdown 项不占位；`dailyUsageBuckets` 不受影响 |
 | `dailyUsageBuckets` 缺失 | groups 与 series 不画，headline 与 breakdown 照常 |
 | `dailyUsageBuckets` 为空数组 | 三行全 0、趋势图走 `emptyText` |
-| `startDate` 解析失败 / 落在 30 天外 | 该条忽略 |
-| `summary` 某字段为 null | 对应 breakdown 项不占位 |
+| bucket 的 `startDate` 解析失败 / 落在 30 天外 / `tokens` 缺失 | 该条忽略 |
 | 额度窗口为空（`usages.isEmpty`） | 与今天一致 unavailable，不产详情 |
 | 刷新失败但有旧 detail | 沿用 `AppState.storeSnapshot` 的「非 ready 且无新 detail 时保留上次 detail」 |
 
@@ -230,11 +270,12 @@ enum CodexUsageDetail {
 
 | 测试 | 覆盖 |
 | --- | --- |
-| `CodexUsageDetailTests`（新） | headline 取自 `pinnedMetrics` 的顺序与文案（含模型桶被排除）；三行汇总（补 0、越界忽略、同日求和、空数组、nil 不画）；趋势 30 点与轴文案；breakdown 四项与各自缺失时的降级、时长格式四档（`42s` / `42m` / `1h` / `1h 5m`、负数不占位）；全空返回 nil；`today` 注入固定时刻 |
-| `CodexUsageProviderTests`（扩） | 批量报文的方法名与 id；假 app-server 回两条 → 快照 `ready` 且带 detail；id=2 回 error / 回坏 JSON → 仍 `ready`、detail 只有 headline；id=1 回坏 → 仍 unavailable；缓存命中不重起进程 |
-| `CodexTestSupport`（改） | 假 app-server 脚本补 id=2 的响应（保留既有「先发一条无关通知」的行为），`rpcSummary` 断言四方法 |
+| `CodexUsageDetailTests`（新） | headline 取自 `pinnedMetrics` 的顺序与文案（含模型桶被排除、label 撞车只留第一条）；三行汇总（补 0、越界忽略、同日求和、空数组、nil 不画）；趋势 30 点与轴文案；breakdown 四项与各自缺失时的降级、时长格式四档（`42s` / `42m` / `1h` / `1h 5m`、负数不占位）；`summary` 缺失但 buckets 在 → 只少 breakdown；全空返回 nil；`today` 注入固定时刻 |
+| `CodexUsageProviderTests`（扩） | `snapshot(config:bundle:fetchedAt:today:)` 的纯函数层：带 usage 的 bundle → `ready` 且 detail 齐全；usage 为 nil → detail 只有 headline；无额度窗口 → `unavailable` 且无 detail。会话层仍走假 app-server：`fetchQuotaBundle()` 两条都回 → bundle 两半都在；id=2 回 error（`-32601`）/ 回坏 JSON → `accountUsage == nil` 且不抛；id=1 回坏 → 抛错；缓存命中不重起进程 |
+| `CodexTestSupport`（改） | 假 app-server 脚本补 id=2 的响应（保留既有「先发一条无关通知」的行为）；`fetchFromFakeAppServer()` / `fetchLiveCodexQuota()` 改调 `fetchQuotaBundle()` 读 `.rateLimits`；`rpcSummary` 断言四条报文 |
+| `CodexUsageProviderTests.testQuotaRPCUsesOnlyTheReadOnlyAllowlist`（改，**唯一一处安全姿态断言，别顺手删**） | 方法名断言补上 `account/usage/read`；`keySets.count` 3 → 4（`keySets[3] == ["id", "method"]`）；**从 `forbiddenMethod` 列表里删掉 `"account/usage/read"`** —— 它与 `account/rateLimits/read` 同属只读账号方法，是本次有意放行的唯一一项；`account/read`、`account/login`、`account/logout`、`account/rateLimitResetCredit/consume`、`account/sendAddCreditsNudgeEmail`、`thread/`、`fs/`、`config/`、`plugin/` 一律继续禁用 |
 | `ProviderDetailCapabilityTests`（扩） | `.codex` 在两种 authMode 下都为真；`everyOtherProviderIsUnsupported` 的例外集合加上 `.codex` |
-| 既有测试 | 全绿（`CodexUsageProviderTests` 里现有的方法名断言按 §4 更新） |
+| 既有测试 | 全绿（`fetchRateLimits()` 删除后其两个调用点按上表迁移） |
 
 ## 11. 已知取舍
 
@@ -251,6 +292,6 @@ enum CodexUsageDetail {
 2. `bash scripts/build-app.sh` 通过，装到 `/Applications/Token Health.app`，用 `plutil -extract CFBundleShortVersionString raw` 核对仍是 **1.0.3**（本次不推版本号）。
 3. 手动：点钉住的 Codex 项 → 浮层出现 `5h` / `Week` 百分比、Today / 7 days / 30 days tokens、30 天柱状图、Lifetime / Peak day / Streak / Longest turn。
 4. 手动：headline 的百分比与菜单栏项 tooltip 逐字一致。
-5. 手动：30 天合计与 `codex` TUI 的 `/status` 口径对得上（同为 UTC 自然日）。
+5. 手动：30 天合计、Lifetime / Peak day / Streak 与 Codex 自己的用量界面核对 —— TUI 里 `/usage`（Token activity）读的就是同一条 `account/usage/read`。**不要拿 `/status` 对**：那个讲的是当前会话的 token，不是账号级历史。日期口径同为 UTC 自然日。
 6. 回归：钉住的 DeepSeek / OpenCode Go 浮层不变；钉住的 Cursor 仍是 Unpin / Settings / Quit 小菜单。
 7. 手动：断网（或让 Codex 退出登录）刷新 → 保留上次数字 + 红色错误行，不退回小菜单。
