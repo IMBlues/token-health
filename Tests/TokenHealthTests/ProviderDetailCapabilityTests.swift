@@ -17,8 +17,17 @@ struct ProviderDetailCapabilityTests {
     }
 
     @Test
+    func browserLoginOpenCodeGoProducesDetail() {
+        #expect(ProviderFactory.producesUsageDetail(for: config(.openCodeGo, auth: .browserLogin)))
+        #expect(
+            !ProviderFactory.producesUsageDetail(for: config(.openCodeGo, auth: .api)),
+            "API key 模式只有百分比与重置时间，撑不起卡片"
+        )
+    }
+
+    @Test
     func everyOtherProviderIsUnsupported() {
-        for kind in ProviderKind.allCases where kind != .deepSeek {
+        for kind in ProviderKind.allCases where kind != .deepSeek && kind != .openCodeGo {
             for auth in AuthMode.allCases {
                 #expect(
                     !ProviderFactory.producesUsageDetail(for: config(kind, auth: auth)),

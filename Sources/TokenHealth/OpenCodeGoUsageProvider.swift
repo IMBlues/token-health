@@ -50,23 +50,7 @@ struct OpenCodeGoUsageProvider: UsageProvider {
                 )
             }
 
-            let result = try OpenCodeGoUsageParser().parseBundle(data: bundleData)
-            guard !result.usages.isEmpty else {
-                return ProviderUsageSnapshot.unavailable(
-                    config: config,
-                    message: result.subscriptionMessage ?? "No OpenCode Go usage found"
-                )
-            }
-            return ProviderUsageSnapshot(
-                id: config.id,
-                serviceName: config.displayName,
-                providerTitle: config.providerKind.title,
-                planName: result.planName ?? session.accountName,
-                usages: result.usages,
-                state: .ready,
-                statusMessage: "OpenCode Go API",
-                updatedAt: Date()
-            )
+            return consoleSnapshot(config: config, bundle: bundleData, accountName: session.accountName, today: Date())
         } catch {
             let message: String
             if let sessionError = error as? WebSessionError {
@@ -84,6 +68,40 @@ struct OpenCodeGoUsageProvider: UsageProvider {
                 message = error.localizedDescription
             }
             return ProviderUsageSnapshot.unavailable(config: config, message: message)
+        }
+    }
+
+    /// 把一次取回的信封变成快照。
+    ///
+    /// 抽出来是因为 `fetchUsage` 永远会打真实网络（失败还回落到 WebKit 会话），没有注入点 ——
+    /// 拿合成信封测这一层，才不用去碰 console.opencode.ai。
+    func consoleSnapshot(
+        config: ServiceConfig,
+        bundle: Data,
+        accountName: String?,
+        today: Date
+    ) -> ProviderUsageSnapshot {
+        do {
+            let result = try OpenCodeGoUsageParser().parseBundle(data: bundle)
+            guard !result.usages.isEmpty else {
+                return ProviderUsageSnapshot.unavailable(
+                    config: config,
+                    message: result.subscriptionMessage ?? "No OpenCode Go usage found"
+                )
+            }
+            return ProviderUsageSnapshot(
+                id: config.id,
+                serviceName: config.displayName,
+                providerTitle: config.providerKind.title,
+                planName: result.planName ?? accountName,
+                usages: result.usages,
+                detail: OpenCodeGoUsageDetail.make(bundle: bundle, usages: result.usages, today: today),
+                state: .ready,
+                statusMessage: "OpenCode Go API",
+                updatedAt: Date()
+            )
+        } catch {
+            return ProviderUsageSnapshot.unavailable(config: config, message: error.localizedDescription)
         }
     }
 
