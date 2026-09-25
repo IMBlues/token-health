@@ -148,23 +148,41 @@ struct OpenCodeGoUsageProvider: UsageProvider {
         let workspaces = OpenCodeGoUsageParser.workspaceIDs(fromOrgs: orgsData)
 
         // Prefer the first workspace that carries a Go subscription; fall back to the first
-        // workspace's response so "not subscribed" still gets its own message.
-        var statusData: Data?
-        var workspaceID: String?
+        // workspace's response so "not subscribed" still gets its own message. A probe that fails
+        // is skipped and probing continues — matching the web script, which also keeps going — so
+        // one unusable workspace (not visible to the session, transient console error) does not
+        // doom the whole native path and later workspaces are still reached.
+        var firstData: Data?
+        var firstID: String?
+        var chosen: (data: Data, id: String)?
+        var sawFailure = false
         for workspace in workspaces.prefix(Self.workspaceProbeLimit) {
-            let data = try await fetchData(session: session, path: "/api/go/status", workspaceID: workspace)
-            if statusData == nil {
-                statusData = data
-                workspaceID = workspace
+            guard let data = try? await fetchData(session: session, path: "/api/go/status", workspaceID: workspace) else {
+                sawFailure = true
+                continue
+            }
+            if firstData == nil {
+                firstData = data
+                firstID = workspace
             }
             if OpenCodeGoUsageParser.hasGoAccess(statusData: data) {
-                statusData = data
-                workspaceID = workspace
+                chosen = (data, workspace)
                 break
             }
         }
 
-        guard let statusData else {
+        // All probes succeeded but none carries Go: keep the first response so the "not subscribed"
+        // message survives. A probe failure with no access found means the session (or the console)
+        // is broken — throw so the WebView path can surface the real error.
+        if chosen == nil, sawFailure {
+            throw WebSessionError.requestFailed(
+                providerTitle: Self.providerTitle,
+                message: "OpenCode Go status probe failed"
+            )
+        }
+
+        guard let statusData = chosen?.data ?? firstData,
+              let workspaceID = chosen?.id ?? firstID else {
             throw WebSessionError.requestFailed(
                 providerTitle: Self.providerTitle,
                 message: "OpenCode Go has no workspace"
@@ -181,9 +199,24 @@ struct OpenCodeGoUsageProvider: UsageProvider {
             )
         }
 
-        async let summary = fetchUsageData(session: session, path: "/api/usage/summary", query: [("range", "30d")], workspaceID: workspaceID)
-        async let byDay = fetchUsageData(session: session, path: "/api/usage/cost-by-day", query: [("range", "30d"), ("bucket", "day")], workspaceID: workspaceID)
-        async let models = fetchUsageData(session: session, path: "/api/usage/models", query: [("range", "30d"), ("pageSize", "100"), ("costOrder", "desc")], workspaceID: workspaceID)
+        async let summary = fetchUsageData(
+            session: session,
+            path: "/api/usage/summary",
+            query: [("range", "30d")],
+            workspaceID: workspaceID
+        )
+        async let byDay = fetchUsageData(
+            session: session,
+            path: "/api/usage/cost-by-day",
+            query: [("range", "30d"), ("bucket", "day")],
+            workspaceID: workspaceID
+        )
+        async let models = fetchUsageData(
+            session: session,
+            path: "/api/usage/models",
+            query: [("range", "30d"), ("pageSize", "100"), ("costOrder", "desc")],
+            workspaceID: workspaceID
+        )
 
         return OpenCodeGoUsageEnvelope.make(
             goStatus: statusData,
@@ -203,25 +236,21 @@ struct OpenCodeGoUsageProvider: UsageProvider {
         query: [(String, String)],
         workspaceID: String?
     ) async -> Data? {
-        do {
-            let data = try await fetchData(session: session, path: path, query: query, workspaceID: workspaceID)
-            // A 2xx body that does not parse is a silent section-drop otherwise; log it so
-            // "why is the by-day chart missing" has a signal in the debug log.
-            guard (try? JSONSerialization.jsonObject(with: data)) != nil else {
-                WebSessionLog.debugLog(
-                    "usage response was not JSON, path=\(path)",
-                    providerTitle: Self.providerTitle
-                )
-                return nil
-            }
-            return data
-        } catch {
+        // A failed request is already logged by fetchData (with the status and body), so this
+        // swallows it silently rather than printing the same failure twice.
+        guard let data = try? await fetchData(session: session, path: path, query: query, workspaceID: workspaceID) else {
+            return nil
+        }
+        // A 2xx body that does not parse is a silent section-drop otherwise; log it so
+        // "why is the by-day chart missing" has a signal in the debug log.
+        guard (try? JSONSerialization.jsonObject(with: data)) != nil else {
             WebSessionLog.debugLog(
-                "usage request failed path=\(path): \(error.localizedDescription)",
+                "usage response was not JSON, path=\(path)",
                 providerTitle: Self.providerTitle
             )
             return nil
         }
+        return data
     }
 
     private func fetchData(
