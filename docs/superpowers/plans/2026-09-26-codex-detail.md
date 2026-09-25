@@ -77,7 +77,9 @@
 
         let response = try JSONDecoder().decode(CodexAccountUsageResponse.self, from: Data(json.utf8))
 
-        #expect(response.summary?.lifetimeTokens == 172532545 - 200)
+        // 别写成 `== 172532545 - 200`：`#expect` 遇到行内算式会把右侧推成 AnyHashable，
+        // `Optional<Int64>` 与 `Int64` 各自包装后比较恒假，而两边渲染出来是同一个数字。
+        #expect(response.summary?.lifetimeTokens == 172532345)
         // summary 里的数字同样宽容：fixture 里这个字段是字符串。
         #expect(response.summary?.peakDailyTokens == 117865819)
         #expect(response.summary?.longestRunningTurnSec == 2550)
@@ -103,6 +105,29 @@
         #expect(response.dailyUsageBuckets?.first?.startDate == nil)
         #expect(response.dailyUsageBuckets?.first?.tokens == nil)
         #expect(response.dailyUsageBuckets?.last?.tokens == 5)
+    }
+
+    @Test
+    func aMalformedSummaryDecodesToAllNilInsteadOfFailingTheEnvelope() throws {
+        // `summary` 不是对象时不该连带把 buckets 一起丢掉：它解成一个「什么都不知道」的
+        // summary（四个字段全 nil），buckets 照常。
+        let response = try JSONDecoder().decode(CodexAccountUsageResponse.self, from: Data(#"""
+        {"summary":"not an object","dailyUsageBuckets":[{"startDate":"2026-09-25","tokens":5}]}
+        """#.utf8))
+
+        #expect(response.summary != nil)
+        #expect(response.summary?.lifetimeTokens == nil)
+        #expect(response.summary?.currentStreakDays == nil)
+        #expect(response.dailyUsageBuckets?.count == 1)
+
+        // 反过来，真正让整份响应解不出的是 buckets 本身类型不对 —— 调用方那时把
+        // accountUsage 当 nil（详情少画用量区块）。
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(
+                CodexAccountUsageResponse.self,
+                from: Data(#"{"dailyUsageBuckets":"not an array"}"#.utf8)
+            )
+        }
     }
 ```
 
@@ -1110,9 +1135,11 @@ MSG
 
     @Test
     func unreadableUsageResultOnlyDropsTheUsageHalf() async throws {
+        // buckets 不是数组 → 整份用量响应解不出（`summary` 类型不对不会走到这里，它只是解成
+        // 四个字段全 nil，见 Task 1 的 `aMalformedSummaryDecodesToAllNilInsteadOfFailingTheEnvelope`）。
         let bundle = try await CodexTestSupport.fetchFromFakeAppServer(replies: [
             CodexTestSupport.fakeQuotaReply,
-            #"{"id":2,"result":{"summary":"not an object"}}"#
+            #"{"id":2,"result":{"dailyUsageBuckets":"not an array"}}"#
         ])
 
         #expect(bundle.rateLimits.rateLimits?.primary?.usedPercent == 21)

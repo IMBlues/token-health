@@ -147,7 +147,7 @@ struct CodexAccountUsageDay: Decodable, Sendable {
 ```
 
 - **每个字段都宽容**：`decodeIfPresent`，数字走文件里已有的 `decodeFlexibleInt64IfPresent`（容忍数字写成字符串）。协议里 `summary` 是 required、`dailyUsageBuckets` 可 null，但这里一律当可缺 —— 缺了只是少画一段，不必让整份响应作废。
-- 信封本身解不出（比如 `summary` 是个字符串、`dailyUsageBuckets` 是个对象）→ `accountUsage = nil`。
+- 信封本身解不出（比如 `dailyUsageBuckets` 不是数组）→ `accountUsage = nil`。**`summary` 类型不对不属于这一类**：它解成四个字段全 nil，只少画 breakdown，buckets 照常。
 - bucket 的 `startDate` 为 nil / 解析不出，或 `tokens` 为 nil → 该条**整条忽略**（不当 0：0 是「那天没用」，缺字段是「不知道」）。
 - `longestStreakDays` 不解码：没有任何区块用它（§7.4）。
 
