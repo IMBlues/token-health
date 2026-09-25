@@ -298,21 +298,31 @@ struct CodexUsageDetailTests {
 
     @Test
     func breakdownFormatsDurationsAndDropsBadNumbers() throws {
-        let response = try usageResponse("""
-        { "summary": {
-            "longestRunningTurnSec": 42, "currentStreakDays": 0, "peakDailyTokens": -5
-        } }
-        """)
+        // 时长四档：不足一分钟给秒，不足一小时给分钟（向下取整），整点小时不带分钟，
+        // 其余带分钟。
+        for (seconds, expected) in [(42, "42s"), (3599, "59m"), (3600, "1h"), (3900, "1h 5m")] {
+            let response = try usageResponse("{ \"summary\": { \"longestRunningTurnSec\": \(seconds) } }")
+            let detail = try #require(CodexUsageDetail.make(
+                usage: response,
+                usages: quotaUsages(),
+                today: today
+            ))
+            #expect(detail.breakdown.map(\.label) == ["Longest turn"])
+            #expect(detail.breakdown.map(\.value) == [expected])
+        }
 
-        let detail = try #require(CodexUsageDetail.make(
-            usage: response,
+        // 负数是坏数据，不占位；0 天的连续记录是真的 0，照画。
+        let bad = try usageResponse("""
+        { "summary": { "peakDailyTokens": -5, "currentStreakDays": 0 } }
+        """)
+        let badDetail = try #require(CodexUsageDetail.make(
+            usage: bad,
             usages: quotaUsages(),
             today: today
         ))
 
-        // 负数是坏数据，不占位；0 天的连续记录是真的 0，照画。
-        #expect(detail.breakdown.map(\.label) == ["Streak", "Longest turn"])
-        #expect(detail.breakdown.map(\.value) == ["0d", "42s"])
+        #expect(badDetail.breakdown.map(\.label) == ["Streak"])
+        #expect(badDetail.breakdown.map(\.value) == ["0d"])
     }
 
     @Test
@@ -875,20 +885,15 @@ MSG
 **Files:**
 - Modify: `Sources/TokenHealth/CodexUsageProvider.swift:281-448`（`CodexAppServerSession`）
 
-- [ ] **Step 1: 改测试助手（让既有测试先跑起来）**
+- [ ] **Step 1: 确认这一步不用改测试助手（无需动手）**
 
-`CodexTestSupport.fetchFromFakeAppServer()` 这次先只改调用姿势，不换返回类型：
+`CodexTestSupport.fetchFromFakeAppServer()` 现在返回 `CodexRateLimitsResponse`，本任务**先不动它** —— 会话的公开签名虽然变了，但 `fetchRateLimits` 仍只请求 id=1，假脚本照旧只回 id=1，既有测试不需要改。
 
-```swift
-        return try await CodexAppServerClient(testExecutableURL: executable, timeout: 3)
-            .fetchRateLimits()
-```
-
-保持不变 —— 它是第 6 步才迁移的对象。**本任务没有新测试**：会话层的两个分支（两条都回 / 只回一条）在第 6 步一起覆盖，因为那一步才有能观察 `[Int: Data]` 的公开入口。
+**本任务没有新测试**：会话层的两个分支（两条都回 / 只回一条）在 Task 6 一起覆盖，因为那一步才有能观察 `[Int: Data]` 的公开入口。所以本任务只有 Step 2 一次改动。
 
 - [ ] **Step 2: 写实现**
 
-在 `CodexAppServerSession` 里做这五处替换：
+在 `CodexAppServerSession` 里做这五处替换。**只动下面这五处，其余逐字保留**：`process` / `inputPipe` / `outputPipe` / `ioQueue` / `outputBuffer` / `outputBytes` / `timeoutWorkItem` / `isFinished` 这些声明，以及 `start()`、`readOutput()` 的全部内容和 `complete(_:)` 里除签名以外的每一行 —— 别整块覆盖，那会顺手删掉行缓冲与体积上限。
 
 ```swift
     private let requestData: Data
@@ -1011,7 +1016,7 @@ MSG
 **背景**：额度必需、用量可选。id=2 **报错或解不出** → `accountUsage = nil`，不抛错；id=1 缺席 / 报错 / 解不出 → 抛错；id=2 **完全无应答** → 会话超时（与今天超时同路）。
 
 **Files:**
-- Modify: `Sources/TokenHealth/CodexUsageProvider.swift:89-159`（`CodexAppServerClient`）、`:450-456`（RPC 响应包装类型）
+- Modify: `Sources/TokenHealth/CodexUsageProvider.swift:13-38`（`fetchUsage` 的取值段）、`:89-159`（`CodexAppServerClient`）、`:450-456`（RPC 响应包装类型）
 - Modify: `Tests/TokenHealthTests/CodexTestSupport.swift:66-93`
 - Test: `Tests/TokenHealthTests/CodexUsageProviderTests.swift`
 
@@ -1024,8 +1029,10 @@ MSG
 
     static let fakeUsageReply = #"{"id":2,"result":{"summary":{"lifetimeTokens":172532345,"peakDailyTokens":117865819,"longestRunningTurnSec":2550,"currentStreakDays":3},"dailyUsageBuckets":[{"startDate":"2026-09-23","tokens":117865819}]}}"#
 
-    /// 起一个假 `codex`：读完四条请求报文后按 `replies` 逐行回，然后挂在 stdin 上不退出
-    /// （客户端完成后会关 stdin / 杀进程）。
+    /// 起一个假 `codex`：读完四条请求报文后按 `replies` 逐行回，然后阻塞在最后那个读循环上 ——
+    /// 既不退出也读不到 EOF，因为客户端在 `complete()` 之前一直握着 stdin 写端。这正是
+    /// 「id=2 永不回应」那条用例能拿到 `.timeout`（而不是 `.processExited`）的前提，
+    /// 所以那个 `while IFS= read -r _` 读循环不能删。
     static func fetchFromFakeAppServer(
         replies: [String] = [fakeQuotaReply, fakeUsageReply],
         timeout: TimeInterval = 3
@@ -1243,10 +1250,18 @@ private struct CodexRPCResult<Value: Decodable>: Decodable {
 }
 ```
 
+**同一步必须把唯一的生产调用点一起改**，否则这个提交编译不过 —— `CodexUsageProvider.fetchUsage` 里那一行（现在调的是 `fetchRateLimits()`）：
+
+```swift
+                    response = try await client.fetchQuotaBundle().rateLimits
+```
+
+本步里 `fetchUsage` 的局部变量 `response` 与缓存**仍然是 `CodexRateLimitsResponse`**（只是从 bundle 里取一半），整体换成 bundle 是 Task 7 的事。
+
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `bash scripts/test.sh --filter CodexUsageProviderTests`
-Expected: PASS（8 条 Codex 相关测试：解码×2、映射×2、会话×1、降级×4）。
+Expected: 全绿；本任务新增的 4 条（两条降级 + 一条 id=1 解不出 + 一条无应答超时）全过，既有测试不受影响。
 
 - [ ] **Step 5: 提交**
 
