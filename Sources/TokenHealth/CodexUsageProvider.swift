@@ -129,13 +129,16 @@ struct CodexAppServerClient: Sendable {
             throw CodexAppServerError.invalidResponse
         }
 
-        let responseData = try await CodexAppServerSession.run(
+        let responses = try await CodexAppServerSession.run(
             executableURL: executableURL,
             arguments: Self.arguments,
             requestData: requestData,
-            responseID: CodexQuotaRPC.quotaResponseID,
+            responseIDs: [CodexQuotaRPC.quotaResponseID],
             timeout: timeout
         )
+        guard let responseData = responses[CodexQuotaRPC.quotaResponseID] else {
+            throw CodexAppServerError.invalidResponse
+        }
 
         let response: CodexRPCQuotaResponse
         do {
@@ -297,11 +300,12 @@ private final class CodexAppServerSession: @unchecked Sendable {
     private let outputPipe = Pipe()
     private let ioQueue = DispatchQueue(label: "local.token-health.codex-app-server")
     private let requestData: Data
-    private let responseID: Int
+    private let responseIDs: Set<Int>
     private let timeout: TimeInterval
     private let lock = NSLock()
 
-    private var continuation: CheckedContinuation<Data, Error>?
+    private var continuation: CheckedContinuation<[Int: Data], Error>?
+    private var responses: [Int: Data] = [:]
     private var outputBuffer = Data()
     private var outputBytes = 0
     private var timeoutWorkItem: DispatchWorkItem?
@@ -311,12 +315,12 @@ private final class CodexAppServerSession: @unchecked Sendable {
         executableURL: URL,
         arguments: [String],
         requestData: Data,
-        responseID: Int,
+        responseIDs: Set<Int>,
         timeout: TimeInterval,
-        continuation: CheckedContinuation<Data, Error>
+        continuation: CheckedContinuation<[Int: Data], Error>
     ) {
         self.requestData = requestData
-        self.responseID = responseID
+        self.responseIDs = responseIDs
         self.timeout = timeout
         self.continuation = continuation
         process.executableURL = executableURL
@@ -331,15 +335,15 @@ private final class CodexAppServerSession: @unchecked Sendable {
         executableURL: URL,
         arguments: [String],
         requestData: Data,
-        responseID: Int,
+        responseIDs: Set<Int>,
         timeout: TimeInterval
-    ) async throws -> Data {
+    ) async throws -> [Int: Data] {
         try await withCheckedThrowingContinuation { continuation in
             let session = CodexAppServerSession(
                 executableURL: executableURL,
                 arguments: arguments,
                 requestData: requestData,
-                responseID: responseID,
+                responseIDs: responseIDs,
                 timeout: timeout,
                 continuation: continuation
             )
@@ -413,16 +417,27 @@ private final class CodexAppServerSession: @unchecked Sendable {
 
         for line in lines where !line.isEmpty {
             guard let envelope = try? JSONDecoder().decode(CodexRPCIDEnvelope.self, from: line),
-                  envelope.id == responseID else {
+                  let id = envelope.id, responseIDs.contains(id) else {
                 continue
             }
-            complete(.success(line))
-            return
+            let collected: [Int: Data]? = lock.withLock {
+                guard !isFinished else {
+                    return nil
+                }
+                responses[id] = line
+                // Only once every requested id has answered. A request that never answers is a
+                // session timeout, not a partial result — see the spec's error table.
+                return responses.count == responseIDs.count ? responses : nil
+            }
+            if let collected {
+                complete(.success(collected))
+                return
+            }
         }
     }
 
-    private func complete(_ result: Result<Data, Error>) {
-        let pending: (CheckedContinuation<Data, Error>, DispatchWorkItem?)? = lock.withLock {
+    private func complete(_ result: Result<[Int: Data], Error>) {
+        let pending: (CheckedContinuation<[Int: Data], Error>, DispatchWorkItem?)? = lock.withLock {
             guard !isFinished, let continuation else {
                 return nil
             }
