@@ -24,9 +24,20 @@ enum OpenCodeGoUsageDetail {
         var costMicroCents = 0
 
         mutating func add(_ other: Totals) {
-            requests += other.requests
-            tokens += other.tokens
-            costMicroCents += other.costMicroCents
+            add(requests: other.requests, tokens: other.tokens, costMicroCents: other.costMicroCents)
+        }
+
+        mutating func add(requests: Int = 0, tokens: Int = 0, costMicroCents: Int = 0) {
+            self.requests = Self.saturatingAdd(self.requests, requests)
+            self.tokens = Self.saturatingAdd(self.tokens, tokens)
+            self.costMicroCents = Self.saturatingAdd(self.costMicroCents, costMicroCents)
+        }
+
+        /// Saturating add: a malformed or hostile response must degrade, never trap — the builder
+        /// promises not to crash on remote data.
+        private static func saturatingAdd(_ lhs: Int, _ rhs: Int) -> Int {
+            let (sum, overflow) = lhs.addingReportingOverflow(rhs)
+            return overflow ? (rhs > 0 ? Int.max : Int.min) : sum
         }
     }
 
@@ -120,13 +131,16 @@ enum OpenCodeGoUsageDetail {
     // MARK: - breakdown
 
     private static func breakdown(_ summary: [String: Any]) -> [DetailStat] {
-        let cacheWrite = intValue(summary["totalCacheWrite5mTokens"]) ?? 0
-        let cacheWriteLong = intValue(summary["totalCacheWrite1hTokens"]) ?? 0
+        // The two cache-write windows are one line; folded through `Totals` so a hostile pair of
+        // near-`Int.max` fields saturates instead of trapping.
+        var cacheWrite = Totals()
+        cacheWrite.add(tokens: intValue(summary["totalCacheWrite5mTokens"]) ?? 0)
+        cacheWrite.add(tokens: intValue(summary["totalCacheWrite1hTokens"]) ?? 0)
         return [
             DetailStat(label: "Input", value: UsageAmountFormatter.compactAmount(intValue(summary["totalInputTokens"]) ?? 0)),
             DetailStat(label: "Output", value: UsageAmountFormatter.compactAmount(intValue(summary["totalOutputTokens"]) ?? 0)),
             DetailStat(label: "Cache read", value: UsageAmountFormatter.compactAmount(intValue(summary["totalCacheReadTokens"]) ?? 0)),
-            DetailStat(label: "Cache write", value: UsageAmountFormatter.compactAmount(cacheWrite + cacheWriteLong))
+            DetailStat(label: "Cache write", value: UsageAmountFormatter.compactAmount(cacheWrite.tokens))
         ]
     }
 
@@ -135,11 +149,14 @@ enum OpenCodeGoUsageDetail {
     private static func table(_ items: [[String: Any]]) -> DetailTable? {
         var byModel: [String: Totals] = [:]
         for item in items {
-            var totals = byModel[modelName(from: item)] ?? Totals()
-            totals.requests += intValue(item["totalRequests"]) ?? 0
-            totals.tokens += tokens(in: item)
-            totals.costMicroCents += intValue(item["totalCostMicroCents"]) ?? 0
-            byModel[modelName(from: item)] = totals
+            let name = modelName(from: item)
+            var totals = byModel[name] ?? Totals()
+            totals.add(
+                requests: intValue(item["totalRequests"]) ?? 0,
+                tokens: tokens(in: item),
+                costMicroCents: intValue(item["totalCostMicroCents"]) ?? 0
+            )
+            byModel[name] = totals
         }
 
         // Rows with neither tokens nor cost are dropped: they would eat one of the six slots and
@@ -175,23 +192,28 @@ enum OpenCodeGoUsageDetail {
     }
 
     /// The console has no total field: tokens are the sum of the five components, matching the
-    /// console's own `totalTokens` getter.
+    /// console's own `totalTokens` getter. Folded through `Totals` so hostile values saturate
+    /// instead of trapping.
     private static func tokens(in item: [String: Any]) -> Int {
-        [
+        var totals = Totals()
+        for key in [
             "totalInputTokens",
             "totalOutputTokens",
             "totalCacheReadTokens",
             "totalCacheWrite5mTokens",
             "totalCacheWrite1hTokens"
-        ].reduce(0) { $0 + (intValue(item[$1]) ?? 0) }
+        ] {
+            totals.add(tokens: intValue(item[key]) ?? 0)
+        }
+        return totals.tokens
     }
 
     private static func modelName(from item: [String: Any]) -> String {
-        guard let name = item["model"] as? String,
-              !name.trimmingCharacters(in: .whitespaces).isEmpty else {
+        guard let name = item["model"] as? String else {
             return unknownModelName
         }
-        return name
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? unknownModelName : trimmed
     }
 
     // MARK: - aggregation and dates
@@ -207,9 +229,11 @@ enum OpenCodeGoUsageDetail {
                 continue
             }
             var totals = byDay[date] ?? Totals()
-            totals.requests += intValue(row["totalRequests"]) ?? 0
-            totals.tokens += intValue(row["totalTokens"]) ?? 0
-            totals.costMicroCents += intValue(row["totalCostMicroCents"]) ?? 0
+            totals.add(
+                requests: intValue(row["totalRequests"]) ?? 0,
+                tokens: intValue(row["totalTokens"]) ?? 0,
+                costMicroCents: intValue(row["totalCostMicroCents"]) ?? 0
+            )
             byDay[date] = totals
         }
         return byDay
@@ -269,7 +293,10 @@ enum OpenCodeGoUsageDetail {
             return int
         }
         if let double = value as? Double {
-            return Int(double)
+            guard double.isFinite, let converted = Int(exactly: double.rounded(.towardZero)) else {
+                return nil
+            }
+            return converted
         }
         if let number = value as? NSNumber {
             return number.intValue

@@ -176,4 +176,124 @@ struct OpenCodeGoUsageDetailTests {
     func garbageBundleMeansNoDetail() {
         #expect(OpenCodeGoUsageDetail.make(bundle: Data("not json".utf8), usages: usages, today: today) == nil)
     }
+
+    @Test
+    func stringTypedAmountsFormatLikeNumericOnes() throws {
+        let summary = #"{"totalInputTokens":"44000000","totalOutputTokens":"9000000","totalCacheReadTokens":"33000000","totalCacheWrite5mTokens":"1500000","totalCacheWrite1hTokens":"500000"}"#
+        let byDay = """
+        [{"date":"2026-09-25","totalRequests":"13","totalTokens":"1300000","totalCostMicroCents":"42000000"}]
+        """
+        let models = """
+        {"items":[{"model":"claude-sonnet-5","provider":"anthropic","totalRequests":"402","totalInputTokens":"20000000","totalOutputTokens":"3000000","totalCacheReadTokens":"18000000","totalCacheWrite5mTokens":"100000","totalCacheWrite1hTokens":"100000","totalCostMicroCents":"819000000"}]}
+        """
+        let detail = try #require(
+            OpenCodeGoUsageDetail.make(bundle: bundle(summary: summary, byDay: byDay, models: models), usages: usages, today: today)
+        )
+
+        // Same formatted outputs as the numeric fixtures.
+        #expect(detail.groups[0].values.map(\.value) == ["13", "1.3M", "$0.42"])
+        #expect(detail.breakdown.map(\.value) == ["44M", "9M", "33M", "2M"])
+        #expect(detail.table?.rows.first?.cells == ["402", "41.2M", "$8.19"])
+    }
+
+    @Test
+    func explicitNullsLeaveOnlyTheHeadline() throws {
+        let json = #"{"goStatus":{"access":{"meters":{}}},"usageSummary":null,"usageByDay":null,"usageModels":null}"#
+        let detail = try #require(OpenCodeGoUsageDetail.make(bundle: Data(json.utf8), usages: usages, today: today))
+
+        #expect(detail.headline.count == 3)
+        #expect(detail.groups.isEmpty)
+        #expect(detail.series == nil)
+        #expect(detail.breakdown.isEmpty)
+        #expect(detail.table == nil)
+    }
+
+    @Test
+    func rowsWithUnparseableDatesAreSkipped() throws {
+        let byDay = """
+        [
+          {"date":"2026-09-25","totalRequests":13,"totalTokens":1300000,"totalCostMicroCents":42000000},
+          {"date":"junk","totalRequests":99,"totalTokens":9900000,"totalCostMicroCents":99000000},
+          {"date":20260925,"totalRequests":99,"totalTokens":9900000,"totalCostMicroCents":99000000},
+          {"totalRequests":99,"totalTokens":9900000,"totalCostMicroCents":99000000},
+          {"date":"2026-09-24","totalRequests":10,"totalTokens":1000000,"totalCostMicroCents":30000000}
+        ]
+        """
+        let detail = try #require(OpenCodeGoUsageDetail.make(bundle: bundle(byDay: byDay), usages: usages, today: today))
+
+        // The three bad rows are ignored; only 9/25 and 9/24 count.
+        #expect(detail.groups[0].values.map(\.value) == ["13", "1.3M", "$0.42"])
+        #expect(detail.groups[2].values.map(\.value) == ["23", "2.3M", "$0.72"])
+    }
+
+    @Test
+    func equalCostModelsSortByNameAscending() throws {
+        let items = ["zeta", "alpha"].map { name in
+            """
+            {"model":"\(name)","provider":"opencode","totalRequests":1,"totalInputTokens":1000,"totalOutputTokens":0,"totalCacheReadTokens":0,"totalCacheWrite5mTokens":0,"totalCacheWrite1hTokens":0,"totalCostMicroCents":50000000}
+            """
+        }
+        let models = "{\"items\":[\(items.joined(separator: ","))]}"
+        let detail = try #require(OpenCodeGoUsageDetail.make(bundle: bundle(models: models), usages: usages, today: today))
+
+        #expect(detail.table?.rows.map(\.name) == ["alpha", "zeta"])
+    }
+
+    @Test
+    func anAfternoonAnchorStillEndsTheWindowToday() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let afternoon = calendar.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 13))!
+        let detail = try #require(OpenCodeGoUsageDetail.make(bundle: bundle(), usages: usages, today: afternoon))
+        let series = try #require(detail.series)
+
+        #expect(series.points.count == 30)
+        #expect(series.axisStart == "8/27")
+        #expect(series.axisEnd == "9/25")
+        #expect(detail.groups[0].values.map(\.value) == ["13", "1.3M", "$0.42"])
+    }
+
+    @Test
+    func extremeAmountsSaturateInsteadOfTrapping() throws {
+        // A JSON integer constant beyond Int64 reaches JSONSerialization as an NSDecimalNumber that
+        // bridges to Double — the old `Int(double)` conversion trapped on exactly this shape.
+        let beyondInt64 = "99999999999999999999"
+        let summary = """
+        {"totalInputTokens":9223372036854775807,"totalOutputTokens":9223372036854775807,"totalCacheReadTokens":0,"totalCacheWrite5mTokens":9223372036854775807,"totalCacheWrite1hTokens":9223372036854775807}
+        """
+        let byDay = """
+        [
+          {"date":"2026-09-25","totalRequests":9223372036854775807,"totalTokens":0,"totalCostMicroCents":\(beyondInt64)},
+          {"date":"2026-09-25","totalRequests":9223372036854775807,"totalTokens":0,"totalCostMicroCents":0}
+        ]
+        """
+        let models = """
+        {"items":[{"model":"huge","provider":"opencode","totalRequests":0,"totalInputTokens":9223372036854775807,"totalOutputTokens":9223372036854775807,"totalCacheReadTokens":0,"totalCacheWrite5mTokens":0,"totalCacheWrite1hTokens":0,"totalCostMicroCents":\(beyondInt64)}]}
+        """
+        let detail = try #require(
+            OpenCodeGoUsageDetail.make(bundle: bundle(summary: summary, byDay: byDay, models: models), usages: usages, today: today)
+        )
+
+        let saturated = UsageAmountFormatter.compactAmount(.max)
+        // Unrepresentable costs drop to zero; sums that would overflow saturate at Int.max.
+        #expect(detail.groups[0].values.map(\.value) == [saturated, "0", "$0.00"])
+        #expect(detail.series?.points.last?.value == 0)
+        #expect(detail.breakdown.map(\.value) == [saturated, saturated, "0", saturated])
+        #expect(detail.table?.rows.first?.cells == ["0", saturated, "$0.00"])
+    }
+
+    @Test
+    func modelNamesAreTrimmedAndMerged() throws {
+        let models = """
+        {"items":[
+          {"model":"  kimi  ","provider":"opencode","totalRequests":2,"totalInputTokens":1000,"totalOutputTokens":0,"totalCacheReadTokens":0,"totalCacheWrite5mTokens":0,"totalCacheWrite1hTokens":0,"totalCostMicroCents":1000000},
+          {"model":"kimi","provider":"moonshot","totalRequests":3,"totalInputTokens":1000,"totalOutputTokens":0,"totalCacheReadTokens":0,"totalCacheWrite5mTokens":0,"totalCacheWrite1hTokens":0,"totalCostMicroCents":2000000}
+        ]}
+        """
+        let detail = try #require(OpenCodeGoUsageDetail.make(bundle: bundle(models: models), usages: usages, today: today))
+
+        // Both rows trim to one "kimi" row: 2 + 3 requests, 2K tokens, $0.03.
+        #expect(detail.table?.rows.map(\.name) == ["kimi"])
+        #expect(detail.table?.rows.first?.cells == ["5", "2K", "$0.03"])
+    }
 }
