@@ -231,9 +231,11 @@ struct CodexUsageDetailTests {
 
     @Test
     func extremeBucketsSaturateInsteadOfTrapping() throws {
-        // 敌意数据必须饱和，不许 trap：两个 Int64.max 相加会溢出。
+        // 敌意数据必须饱和，不许 trap。9/25 那两条钉住 `dayTotals` 的同日累加，
+        // 9/24 那条让 `groups` 的 7 天 / 30 天累加器也要面对 `Int.max + Int.max`。
         let response = try usageResponse("""
         { "dailyUsageBuckets": [
+            { "startDate": "2026-09-24", "tokens": 9223372036854775807 },
             { "startDate": "2026-09-25", "tokens": 9223372036854775807 },
             { "startDate": "2026-09-25", "tokens": 9223372036854775807 } ] }
         """)
