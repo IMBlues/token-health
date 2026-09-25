@@ -23,7 +23,7 @@ struct CodexUsageProvider: UsageProvider {
                 throw error
             case .fetch:
                 do {
-                    response = try await client.fetchRateLimits()
+                    response = try await client.fetchQuotaBundle().rateLimits
                     fetchedAt = Date()
                     await Self.cache.store(response, key: cacheKey, fetchedAt: fetchedAt)
                 } catch let error as CodexAppServerError {
@@ -86,6 +86,13 @@ struct CodexUsageProvider: UsageProvider {
     }
 }
 
+/// One app-server round trip's payloads. The quota read is required; the account usage read is a
+/// nice-to-have whose absence only costs the detail's usage sections.
+struct CodexQuotaBundle: Sendable {
+    var rateLimits: CodexRateLimitsResponse
+    var accountUsage: CodexAccountUsageResponse?
+}
+
 struct CodexAppServerClient: Sendable {
     static let arguments = [
         "app-server",
@@ -117,7 +124,7 @@ struct CodexAppServerClient: Sendable {
         return "\(executablePath)|\(codexHome)"
     }
 
-    func fetchRateLimits() async throws -> CodexRateLimitsResponse {
+    func fetchQuotaBundle() async throws -> CodexQuotaBundle {
         guard let executableURL = testExecutableURL ?? CodexExecutableResolver.resolve() else {
             throw CodexAppServerError.executableNotFound
         }
@@ -133,16 +140,25 @@ struct CodexAppServerClient: Sendable {
             executableURL: executableURL,
             arguments: Self.arguments,
             requestData: requestData,
-            responseIDs: [CodexQuotaRPC.quotaResponseID],
+            responseIDs: CodexQuotaRPC.responseIDs,
             timeout: timeout
         )
-        guard let responseData = responses[CodexQuotaRPC.quotaResponseID] else {
+
+        guard let quotaData = responses[CodexQuotaRPC.quotaResponseID] else {
             throw CodexAppServerError.invalidResponse
         }
+        return CodexQuotaBundle(
+            rateLimits: try Self.rateLimits(from: quotaData),
+            accountUsage: Self.accountUsage(from: responses[CodexQuotaRPC.usageResponseID])
+        )
+    }
 
-        let response: CodexRPCQuotaResponse
+    /// A missing, rejected or unreadable quota result fails the whole refresh: every number the
+    /// menu bar shows comes from it.
+    private static func rateLimits(from data: Data) throws -> CodexRateLimitsResponse {
+        let response: CodexRPCResult<CodexRateLimitsResponse>
         do {
-            response = try JSONDecoder().decode(CodexRPCQuotaResponse.self, from: responseData)
+            response = try JSONDecoder().decode(CodexRPCResult.self, from: data)
         } catch {
             throw CodexAppServerError.invalidResponse
         }
@@ -152,6 +168,19 @@ struct CodexAppServerClient: Sendable {
         }
         guard response.id == CodexQuotaRPC.quotaResponseID, let result = response.result else {
             throw CodexAppServerError.invalidResponse
+        }
+        return result
+    }
+
+    /// An answered-but-bad usage read (an older Codex rejects the method with `-32601`) only
+    /// drops the usage sections; a missing answer never reaches here — that is a session timeout.
+    private static func accountUsage(from data: Data?) -> CodexAccountUsageResponse? {
+        guard let data,
+              let response = try? JSONDecoder().decode(CodexRPCResult<CodexAccountUsageResponse>.self, from: data),
+              response.error == nil,
+              response.id == CodexQuotaRPC.usageResponseID,
+              let result = response.result else {
+            return nil
         }
         return result
     }
@@ -472,9 +501,9 @@ private struct CodexRPCIDEnvelope: Decodable {
     let id: Int?
 }
 
-private struct CodexRPCQuotaResponse: Decodable {
+private struct CodexRPCResult<Value: Decodable>: Decodable {
     let id: Int
-    let result: CodexRateLimitsResponse?
+    let result: Value?
     let error: CodexRPCErrorPayload?
 }
 

@@ -347,11 +347,12 @@ struct CodexUsageProviderTests {
 
     @Test
     func testAppServerClientIgnoresNotificationsAndReadsExpectedResponse() async throws {
-        let response = try await CodexTestSupport.fetchFromFakeAppServer()
-        #expect(response.rateLimits?.limitId == "codex")
-        #expect(response.rateLimits?.primary?.usedPercent == 21)
-        #expect(response.rateLimits?.secondary?.usedPercent == 8)
-        #expect(response.rateLimits?.planType == "plus")
+        let bundle = try await CodexTestSupport.fetchFromFakeAppServer()
+        #expect(bundle.rateLimits.rateLimits?.limitId == "codex")
+        #expect(bundle.rateLimits.rateLimits?.primary?.usedPercent == 21)
+        #expect(bundle.rateLimits.rateLimits?.secondary?.usedPercent == 8)
+        #expect(bundle.rateLimits.rateLimits?.planType == "plus")
+        #expect(bundle.accountUsage?.summary?.currentStreakDays == 3)
     }
 
     @Test
@@ -359,8 +360,70 @@ struct CodexUsageProviderTests {
         guard CodexTestSupport.liveCodexCheckEnabled else {
             return
         }
-        let response = try await CodexTestSupport.fetchLiveCodexQuota()
-        #expect(response.rateLimits?.primary != nil || response.rateLimits?.secondary != nil)
+        let bundle = try await CodexTestSupport.fetchLiveCodexQuota()
+        #expect(bundle.rateLimits.rateLimits?.primary != nil || bundle.rateLimits.rateLimits?.secondary != nil)
+    }
+
+    @Test
+    func rejectedUsageReadOnlyDropsTheUsageHalf() async throws {
+        // 老版本 Codex 不认识这个方法，会回 -32601。
+        let bundle = try await CodexTestSupport.fetchFromFakeAppServer(replies: [
+            CodexTestSupport.fakeQuotaReply,
+            #"{"id":2,"error":{"code":-32601,"message":"Method not found"}}"#
+        ])
+
+        #expect(bundle.rateLimits.rateLimits?.primary?.usedPercent == 21)
+        #expect(bundle.accountUsage == nil)
+    }
+
+    @Test
+    func unreadableUsageResultOnlyDropsTheUsageHalf() async throws {
+        // buckets 不是数组 → 整份用量响应解不出（`summary` 类型不对不会走到这里，它只是解成
+        // 四个字段全 nil，见 Task 1 的 `aMalformedSummaryDecodesToAllNilInsteadOfFailingTheEnvelope`）。
+        let bundle = try await CodexTestSupport.fetchFromFakeAppServer(replies: [
+            CodexTestSupport.fakeQuotaReply,
+            #"{"id":2,"result":{"dailyUsageBuckets":"not an array"}}"#
+        ])
+
+        #expect(bundle.rateLimits.rateLimits?.primary?.usedPercent == 21)
+        #expect(bundle.accountUsage == nil)
+    }
+
+    @Test
+    func unreadableQuotaResultFailsTheFetch() async throws {
+        do {
+            _ = try await CodexTestSupport.fetchFromFakeAppServer(replies: [
+                #"{"id":1,"result":{"rateLimits":"not an object"}}"#,
+                CodexTestSupport.fakeUsageReply
+            ])
+            Issue.record("expected an invalidResponse error")
+        } catch let error as CodexAppServerError {
+            guard case .invalidResponse = error else {
+                Issue.record("expected .invalidResponse, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
+    }
+
+    @Test
+    func anUnansweredUsageReadTimesTheSessionOut() async throws {
+        // 只回 id=1：会话等不齐就只能在超时上结束，整次取数失败 —— 与「有应答但报错」不是一回事。
+        do {
+            _ = try await CodexTestSupport.fetchFromFakeAppServer(
+                replies: [CodexTestSupport.fakeQuotaReply],
+                timeout: 2
+            )
+            Issue.record("expected a timeout error")
+        } catch let error as CodexAppServerError {
+            guard case .timeout = error else {
+                Issue.record("expected .timeout, got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
     }
 
     @Test
