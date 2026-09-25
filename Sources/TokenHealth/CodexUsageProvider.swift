@@ -455,6 +455,63 @@ private struct CodexRPCQuotaResponse: Decodable {
 
 private struct CodexRPCErrorPayload: Decodable {}
 
+/// The `account/usage/read` result. The protocol marks most of these fields required, but a
+/// missing one only costs the matching detail section, so everything decodes leniently.
+struct CodexAccountUsageResponse: Decodable, Sendable {
+    let summary: CodexAccountUsageSummary?
+    let dailyUsageBuckets: [CodexAccountUsageDay]?
+}
+
+struct CodexAccountUsageSummary: Decodable, Sendable {
+    let lifetimeTokens: Int64?
+    let peakDailyTokens: Int64?
+    let longestRunningTurnSec: Int64?
+    let currentStreakDays: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case lifetimeTokens
+        case peakDailyTokens
+        case longestRunningTurnSec
+        case currentStreakDays
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            lifetimeTokens = nil
+            peakDailyTokens = nil
+            longestRunningTurnSec = nil
+            currentStreakDays = nil
+            return
+        }
+        lifetimeTokens = container.decodeFlexibleInt64IfPresent(forKey: .lifetimeTokens)
+        peakDailyTokens = container.decodeFlexibleInt64IfPresent(forKey: .peakDailyTokens)
+        longestRunningTurnSec = container.decodeFlexibleInt64IfPresent(forKey: .longestRunningTurnSec)
+        currentStreakDays = container.decodeFlexibleInt64IfPresent(forKey: .currentStreakDays)
+    }
+}
+
+/// One day's total. Both fields are optional so that a single unusable entry (a bare string in
+/// the array, a missing key) cannot fail the whole array — the detail builder skips it instead.
+struct CodexAccountUsageDay: Decodable, Sendable {
+    let startDate: String?
+    let tokens: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case startDate
+        case tokens
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            startDate = nil
+            tokens = nil
+            return
+        }
+        startDate = try? container.decodeIfPresent(String.self, forKey: .startDate)
+        tokens = container.decodeFlexibleInt64IfPresent(forKey: .tokens)
+    }
+}
+
 struct CodexRateLimitsResponse: Decodable, Sendable {
     let rateLimits: CodexRateLimitSnapshot?
     let rateLimitsByLimitId: [String: CodexRateLimitSnapshot]?

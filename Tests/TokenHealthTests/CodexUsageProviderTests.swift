@@ -183,6 +183,53 @@ struct CodexUsageProviderTests {
     }
 
     @Test
+    func decodesAccountUsageWithSparseBuckets() throws {
+        let json = """
+        {
+          "summary": {
+            "lifetimeTokens": 172532345, "peakDailyTokens": "117865819",
+            "longestRunningTurnSec": 2550, "currentStreakDays": 3, "longestStreakDays": 3
+          },
+          "dailyUsageBuckets": [
+            { "startDate": "2026-06-17", "tokens": 283242 },
+            { "startDate": "2026-09-23", "tokens": "117865819" }
+          ]
+        }
+        """
+
+        let response = try JSONDecoder().decode(CodexAccountUsageResponse.self, from: Data(json.utf8))
+
+        // `== 172532545 - 200` 不包 Int64 时，右式会被推断成 AnyHashable，左边的 Optional
+        // 装箱后比较必假（两边渲染一样），显式包一层让比较落在 Int64? == Int64 上。
+        #expect(response.summary?.lifetimeTokens == Int64(172532545 - 200))
+        // summary 里的数字同样宽容：fixture 里这个字段是字符串。
+        #expect(response.summary?.peakDailyTokens == 117865819)
+        #expect(response.summary?.longestRunningTurnSec == 2550)
+        #expect(response.summary?.currentStreakDays == 3)
+        // 数字写成字符串也收（console 与 RPC 都可能这么给）。
+        #expect(response.dailyUsageBuckets?.map(\.tokens) == [283242, 117865819])
+        #expect(response.dailyUsageBuckets?.map(\.startDate) == ["2026-06-17", "2026-09-23"])
+    }
+
+    @Test
+    func accountUsageToleratesMissingAndMalformedFields() throws {
+        // 整份响应里什么都不认得的键 → 三个字段全 nil，但解码本身不抛。
+        let empty = try JSONDecoder().decode(CodexAccountUsageResponse.self, from: Data("{}".utf8))
+        #expect(empty.summary == nil)
+        #expect(empty.dailyUsageBuckets == nil)
+
+        // 数组里混进一个非对象元素：那一条退化成「日期与 tokens 都缺」，其余照常解出来。
+        let mixed = """
+        { "dailyUsageBuckets": [ "nonsense", { "startDate": "2026-09-25", "tokens": 5 } ] }
+        """
+        let response = try JSONDecoder().decode(CodexAccountUsageResponse.self, from: Data(mixed.utf8))
+        #expect(response.dailyUsageBuckets?.count == 2)
+        #expect(response.dailyUsageBuckets?.first?.startDate == nil)
+        #expect(response.dailyUsageBuckets?.first?.tokens == nil)
+        #expect(response.dailyUsageBuckets?.last?.tokens == 5)
+    }
+
+    @Test
     func testRateLimitMappingClampsUnexpectedPercentages() {
         let limits = CodexRateLimitSnapshot(
             limitId: "codex",
