@@ -104,7 +104,7 @@ struct OpenCodeGoUsageParser {
         return ParseResult(planName: "Go", subscriptionMessage: nil, usages: usages)
     }
 
-    /// `/api/me/orgs` → `[{id, name}]`; the app only needs the ids.
+    /// `/api/orgs` → `[{id, name}]`; the app only needs the ids.
     static func workspaceIDs(fromOrgs data: Data) -> [String] {
         guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return []

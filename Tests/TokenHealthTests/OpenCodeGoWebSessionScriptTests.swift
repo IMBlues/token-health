@@ -115,7 +115,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func emitsTheEnvelopeAndPicksTheWorkspaceWithAccess() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"},{"id":"w2"}]"#),
+            "/api/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"},{"id":"w2"}]"#),
             "/api/go/status\nw1": MockResponse(status: 200, body: #"{"subscriptionStatus":"inactive"}"#),
             "/api/go/status\nw2": MockResponse(status: 200, body: #"{"access":{"meters":{"week":{"limitMicroCents":1}}}}"#),
             "/api/usage/summary?range=30d\nw2": MockResponse(status: 200, body: #"{"totalMicroCents":5}"#),
@@ -141,7 +141,7 @@ struct OpenCodeGoWebSessionScriptTests {
         // The session and workspace-list requests are unscoped.
         let sessionRequest = try #require(run.requests.first { $0.path == "/auth/session" })
         #expect(sessionRequest.orgId == nil)
-        let orgsRequest = try #require(run.requests.first { $0.path == "/api/me/orgs" })
+        let orgsRequest = try #require(run.requests.first { $0.path == "/api/orgs" })
         #expect(orgsRequest.orgId == nil)
 
         // The usage calls go to the chosen workspace.
@@ -154,7 +154,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func aFailedUsageCallOnlyDropsItsOwnKey() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"}]"#),
+            "/api/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"}]"#),
             "/api/go/status\nw1": MockResponse(status: 200, body: #"{"access":{"meters":{}}}"#),
             "/api/usage/summary?range=30d\nw1": MockResponse(status: 500, body: "boom"),
             "/api/usage/cost-by-day?range=30d&bucket=day\nw1": MockResponse(status: 500, body: "boom"),
@@ -175,7 +175,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func a2xxStatusBodyThatIsNotJSONFailsTheFetch() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"}]"#),
+            "/api/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"}]"#),
             "/api/go/status\nw1": MockResponse(status: 200, body: "<html>login</html>"),
         ])
 
@@ -191,7 +191,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func a2xxArrayStatusBodyIsNotTreatedAsASubscription() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"}]"#),
+            "/api/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"}]"#),
             "/api/go/status\nw1": MockResponse(status: 200, body: "[]"),
         ])
 
@@ -205,7 +205,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func anOfflineOrgsRequestReportsItsOwnFailure() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 0, body: ""),
+            "/api/orgs\n": MockResponse(status: 0, body: ""),
         ])
 
         // A transport failure is not "no workspace": the orgs request's own status and copy must
@@ -220,7 +220,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func anOrgsAuthFailureKeepsThe401ForSessionExpiry() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 401, body: ""),
-            "/api/me/orgs\n": MockResponse(status: 401, body: "<html>login</html>"),
+            "/api/orgs\n": MockResponse(status: 401, body: "<html>login</html>"),
         ])
 
         // No probe ran, so this is the only place the expired-session signal can come from: the
@@ -235,7 +235,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func anEmptyWorkspaceListIsAPlain400() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 200, body: "[]"),
+            "/api/orgs\n": MockResponse(status: 200, body: "[]"),
         ])
 
         #expect(run.envelope["ok"] as? Bool == false)
@@ -251,7 +251,7 @@ struct OpenCodeGoWebSessionScriptTests {
         // x-org-id) before reaching the real workspace.
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 200, body: #"[{"id":42},{"id":"w1"},{"name":"x"}]"#),
+            "/api/orgs\n": MockResponse(status: 200, body: #"[{"id":42},{"id":"w1"},{"name":"x"}]"#),
             "/api/go/status\nw1": MockResponse(status: 200, body: #"{"access":{"meters":{}}}"#),
             "/api/usage/summary?range=30d\nw1": MockResponse(status: 200, body: "{}"),
             "/api/usage/cost-by-day?range=30d&bucket=day\nw1": MockResponse(status: 200, body: "{}"),
@@ -271,7 +271,7 @@ struct OpenCodeGoWebSessionScriptTests {
         // given responses too — a drift in the slice would record them and fail the assertions.
         var responses: [String: MockResponse] = [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(
+            "/api/orgs\n": MockResponse(
                 status: 200,
                 body: #"[{"id":"w1"},{"id":"w2"},{"id":"w3"},{"id":"w4"},{"id":"w5"},{"id":"w6"},{"id":"w7"}]"#
             ),
@@ -295,7 +295,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func probingStopsAtTheFirstWorkspaceWithAccess() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"},{"id":"w2"},{"id":"w3"}]"#),
+            "/api/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"},{"id":"w2"},{"id":"w3"}]"#),
             "/api/go/status\nw1": MockResponse(status: 200, body: #"{"subscriptionStatus":"inactive"}"#),
             "/api/go/status\nw2": MockResponse(status: 200, body: #"{"access":{"meters":{}}}"#),
         ])
@@ -309,7 +309,7 @@ struct OpenCodeGoWebSessionScriptTests {
     func aThrowingSendDegradesToAFailedProbe() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
-            "/api/me/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"},{"id":"w2"}]"#),
+            "/api/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"},{"id":"w2"}]"#),
             "/api/go/status\nw1": MockResponse(status: 0, body: "", throwsOnSend: "network dropped"),
             "/api/go/status\nw2": MockResponse(status: 200, body: #"{"access":{"meters":{}}}"#),
             "/api/usage/summary?range=30d\nw2": MockResponse(status: 200, body: "{}"),

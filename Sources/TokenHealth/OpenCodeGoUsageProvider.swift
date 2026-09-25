@@ -164,7 +164,7 @@ struct OpenCodeGoUsageProvider: UsageProvider {
     }
 
     private func fetchUsageBundle(session: OpenCodeGoWebSessionCredential) async throws -> Data {
-        let orgsData = try await fetchData(session: session, path: "/api/me/orgs")
+        let orgsData = try await fetchData(session: session, path: "/api/orgs")
         let workspaces = OpenCodeGoUsageParser.workspaceIDs(fromOrgs: orgsData)
 
         let outcome = await OpenCodeGoWorkspaceProbe.run(

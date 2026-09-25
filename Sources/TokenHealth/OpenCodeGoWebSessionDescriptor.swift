@@ -58,7 +58,7 @@ struct OpenCodeGoWebSessionDescriptor: WebSessionDescriptor {
             };
           };
           const session = request('/auth/session');
-          const orgs = request('/api/me/orgs');
+          const orgs = request('/api/orgs');
           const workspaces = Array.isArray(orgs.json)
             ? orgs.json.map((item) => item && item.id).filter((id) => typeof id === 'string' && id)
             : [];

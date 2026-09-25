@@ -68,15 +68,17 @@
 
 （来源：console 的 Go 页面代码直接读 `data.access.meters.fiveHour/week/month`、`data.access.endsAt`、`data.cancelAtPeriodEnd`、`data.renewalPending`。）
 
-同时该接口**要求 `x-org-id` 头**（缺了 400），而 workspace id 需要先查 `GET /api/me/orgs`（无作用域，返回 `[{id, name}]`）。
+同时该接口**要求 `x-org-id` 头**（缺了 400），而 workspace id 需要先查 `GET /api/orgs`（无作用域，返回 `[{id, name}]`）。
 现有代码两者都没有，因此登录后也会解析出空。
+
+> 2026-09-25 修正：workspace 列表的实际端点路径是 `/api/orgs`（前端 query key 叫 `me.orgs` 是客户端命名）。最初按 query key 推成 `/api/me/orgs`，在线上是 404——实机验收时暴露并修正。
 
 修法（本节全部落在 `OpenCodeGoUsageParser.parseBundle` 与 provider 的取数流程里）：
 
 1. 新形状解析：`access.meters.fiveHour/week/month` → `TokenUsage(window: .fiveHours/.week/.month, used: usedMicroCents, limit: limitMicroCents, resetDate: resetsAt ?? access.endsAt, displayValue: "$used / $limit")`。月窗口没有 `resetsAt`，用 `access.endsAt`。`access` 缺失或为 null → 视为未订阅（沿用既有文案）。
 2. **新形状没有 `currentPeriod`，`planName` 固定为 `"Go"`**（与 API key 路径的兜底一致）；不再走「`Go · $10.00/mo`」——那个价格在新响应里拿不到，凭 §2 的常量硬编码属于臆造。旧形状仍按原逻辑产出 `Go · $X/mo`。
 3. 旧形状保留为兜底（解析顺序：新形状 → 旧形状），行为不变。
-4. 取数时先 `GET /api/me/orgs` 拿 workspace 列表；逐个（上限 5 个）带 `x-org-id` 请求 `/api/go/status`，取**第一个 `access` 非空**的 workspace 作为本次卡片的 workspace；若都没有订阅，用第一个 workspace 的响应走"未订阅"分支。后续用量请求用同一个 workspace id。
+4. 取数时先 `GET /api/orgs` 拿 workspace 列表；逐个（上限 5 个）带 `x-org-id` 请求 `/api/go/status`，取**第一个 `access` 非空**的 workspace 作为本次卡片的 workspace；若都没有订阅，用第一个 workspace 的响应走"未订阅"分支。后续用量请求用同一个 workspace id。
 
 ## 4. 数据来源与请求序列
 
@@ -84,7 +86,7 @@
 
 | # | 请求 | 作用域 | 用途 |
 | --- | --- | --- | --- |
-| 1 | `GET /api/me/orgs` | 无 | workspace 列表：`[{id, name}]` |
+| 1 | `GET /api/orgs` | 无 | workspace 列表：`[{id, name}]` |
 | 2 | `GET /api/go/status`（逐个 workspace，直到有 `access`） | `x-org-id` | 三额度 + 订阅信息（现有） |
 | 3 | `GET /api/usage/summary?range=30d` | `x-org-id` | token 构成（§7.4）。**30 天汇总行不来自它**，来自 cost-by-day 的按日求和（§7.2） |
 | 4 | `GET /api/usage/cost-by-day?range=30d&bucket=day` | `x-org-id` | 每日 `{date, totalCostMicroCents, totalTokens, totalRequests}`，`date` 为 `"YYYY-MM-DD"` |
@@ -115,7 +117,7 @@
 - 信封拼装抽成纯函数（如 `OpenCodeGoUsageEnvelope.make(goStatus:orgs:workspaceId:summary:byDay:models:)`），便于测试。
 - **`ok` / `status` / `text` 三个字段仍然只描述 `/api/go/status` 这一次请求**。内核 `WebSessionController.fetchUsage` 在 `envelope.ok == false` 时直接抛错（并把 401/403 判成会话过期），所以如果把 `ok` 写成「5 个请求都成功」，任何一个用量接口失败都会让整次刷新变成 unavailable —— 与 §4「区块级降级」直接冲突。用量接口的成败只体现在 `usageSummary` / `usageByDay` / `usageModels` 缺席（null）上。
 - `parseBundle` 对新旧两种 `goStatus` 都能解析（§3.2），信封缺 `goStatus` 时维持现有行为。
-- 脚本路径：`request()` 辅助函数扩展为可带额外请求头（`x-org-id`）；先取 `/api/me/orgs`，再按 §3.2 选 workspace、取状态与三份用量。`hasSession`/`session` 字段维持现状。
+- 脚本路径：`request()` 辅助函数扩展为可带额外请求头（`x-org-id`）；先取 `/api/orgs`，再按 §3.2 选 workspace、取状态与三份用量。`hasSession`/`session` 字段维持现状。
 
 ## 6. 触发
 
@@ -210,7 +212,7 @@ enum OpenCodeGoUsageDetail {
 
 | 情况 | 表现 |
 | --- | --- |
-| `/api/me/orgs` 失败或返回空 | 取数整体失败 → 快照 unavailable（文案沿用现有错误路径） |
+| `/api/orgs` 失败或返回空 | 取数整体失败 → 快照 unavailable（文案沿用现有错误路径） |
 | 所有 workspace 都无 Go 订阅 | 沿用"未订阅"文案；不产卡片数据 |
 | 某个用量接口失败 | 对应区块缺席，其余照常；卡片仍弹 |
 | `usageByDay` 为空数组（30 天没用量） | 汇总全 0、趋势图走 `emptyText` |

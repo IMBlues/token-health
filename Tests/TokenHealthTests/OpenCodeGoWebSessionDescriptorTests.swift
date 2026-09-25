@@ -70,9 +70,12 @@ struct OpenCodeGoWebSessionDescriptorTests {
     func usageScriptCoversTheConsoleEndpoints() {
         let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9))
 
-        for path in ["/api/me/orgs", "/api/go/status", "/api/usage/summary", "/api/usage/cost-by-day", "/api/usage/models"] {
+        for path in ["/api/orgs", "/api/go/status", "/api/usage/summary", "/api/usage/cost-by-day", "/api/usage/models"] {
             #expect(script.contains(path), "脚本少打了 \(path)")
         }
+        // The workspace list lives at /api/orgs; /api/me/orgs is a 404 on the live console (it was
+        // derived from a frontend query key, not the endpoint path) — never go back to it.
+        #expect(!script.contains("/api/me/orgs"))
         #expect(script.contains("x-org-id"))
         #expect(script.contains("usageSummary"))
         #expect(script.contains("usageByDay"))
