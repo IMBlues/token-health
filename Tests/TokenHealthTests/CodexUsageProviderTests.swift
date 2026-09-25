@@ -110,7 +110,12 @@ struct CodexUsageProviderTests {
     func testQuotaRPCUsesOnlyTheReadOnlyAllowlist() throws {
         let summary = try CodexTestSupport.rpcSummary(version: "test")
 
-        #expect(summary.methods == ["initialize", "initialized", "account/rateLimits/read"])
+        #expect(summary.methods == [
+            "initialize",
+            "initialized",
+            "account/rateLimits/read",
+            "account/usage/read"
+        ])
         #expect(CodexAppServerClient.arguments == [
             "app-server",
             "--stdio",
@@ -118,17 +123,19 @@ struct CodexUsageProviderTests {
             "--disable", "apps",
             "-c", "analytics.enabled=false"
         ])
-        #expect(summary.keySets.count == 3)
+        #expect(summary.keySets.count == 4)
         #expect(summary.keySets[0] == ["id", "method", "params"])
         #expect(summary.keySets[1] == ["method"])
         #expect(summary.keySets[2] == ["id", "method"])
+        #expect(summary.keySets[3] == ["id", "method"])
         #expect(summary.initializeParamKeys == ["clientInfo"])
         #expect(summary.clientInfoKeys == ["name", "version"])
         #expect(summary.clientName == "token_health")
         #expect(summary.clientVersion == "test")
-        for forbiddenMethod in [
+        // `account/usage/read` 与 `account/rateLimits/read` 同属只读账号方法，是本次有意放行的
+        // 唯一一项；其余禁用项逐字保留 —— 少一条也照样全绿，所以下面再钉一次条数。
+        let forbiddenMethods = [
             "account/read",
-            "account/usage/read",
             "account/login",
             "account/logout",
             "account/rateLimitResetCredit/consume",
@@ -139,7 +146,9 @@ struct CodexUsageProviderTests {
             "fs/",
             "config/",
             "plugin/"
-        ] {
+        ]
+        #expect(forbiddenMethods.count == 11)
+        for forbiddenMethod in forbiddenMethods {
             #expect(!summary.wireText.contains(forbiddenMethod))
         }
     }

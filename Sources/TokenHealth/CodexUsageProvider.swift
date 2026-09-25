@@ -133,7 +133,7 @@ struct CodexAppServerClient: Sendable {
             executableURL: executableURL,
             arguments: Self.arguments,
             requestData: requestData,
-            responseID: CodexQuotaRPC.responseID,
+            responseID: CodexQuotaRPC.quotaResponseID,
             timeout: timeout
         )
 
@@ -147,7 +147,7 @@ struct CodexAppServerClient: Sendable {
         if response.error != nil {
             throw CodexAppServerError.requestRejected
         }
-        guard response.id == CodexQuotaRPC.responseID, let result = response.result else {
+        guard response.id == CodexQuotaRPC.quotaResponseID, let result = response.result else {
             throw CodexAppServerError.invalidResponse
         }
         return result
@@ -159,8 +159,16 @@ struct CodexAppServerClient: Sendable {
 }
 
 enum CodexQuotaRPC {
-    static let responseID = 1
-    static let outboundMethods = ["initialize", "initialized", "account/rateLimits/read"]
+    static let quotaResponseID = 1
+    static let usageResponseID = 2
+    /// Both replies are expected in the same session; `CodexAppServerSession` waits for all of them.
+    static let responseIDs: Set<Int> = [quotaResponseID, usageResponseID]
+    static let outboundMethods = [
+        "initialize",
+        "initialized",
+        "account/rateLimits/read",
+        "account/usage/read"
+    ]
 
     static func requestData(version: String) throws -> Data {
         let messages: [[String: Any]] = [
@@ -175,7 +183,9 @@ enum CodexQuotaRPC {
                 ]
             ],
             ["method": outboundMethods[1]],
-            ["method": outboundMethods[2], "id": responseID]
+            ["method": outboundMethods[2], "id": quotaResponseID],
+            // No params: the method takes none (the request schema requires only `id` and `method`).
+            ["method": outboundMethods[3], "id": usageResponseID]
         ]
 
         var data = Data()
