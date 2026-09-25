@@ -108,6 +108,11 @@ DeepSeek 没有额度比例，钉住时直接显示余额数字（不带单位�
 tokens 构成（`Output` / `Cache hit` / `Cache miss`），以及 `By model · this month` 的按模型拆分。
 数据全部来自刷新时已经取回的那次响应，不额外发请求。
 
+钉住的 Codex 项也是同一套浮层：5 小时与周额度（与菜单栏同一份口径）、`Today` / `7 days` / `30 days` 的
+token 汇总、最近 30 天的每日 token 趋势，以及 `Lifetime` / `Peak day` / `Streak` / `Longest turn`。
+数据来自本地 Codex 登录的那次 `app-server` 会话 —— 同一次往返里多问一条账号用量，不需要重新登录，
+也不读 `~/.codex/auth.json`。
+
 它只做展示 —— 没有筛选、没有日期范围、不能下钻。要看更细的分析请回厂商的控制台。
 详情里的数字超过 5 分钟会在打开时自动刷新一次，右上角也可以手动刷新；取数失败时保留上一次的数字并标出错误。
 
