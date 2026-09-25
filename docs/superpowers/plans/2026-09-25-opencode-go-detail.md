@@ -16,7 +16,7 @@
 
 - **分支**：当前在 `main` 且干净。先 `git switch -c feature/opencode-go-detail`。
 - **跑测试**：一律 `bash scripts/test.sh`；过滤用 `bash scripts/test.sh --filter <SuiteName>`（本机无 Xcode，裸跑 `swift test` 编译不过）。
-- **注释一律英文**。计划里代码块的注释已经写成英文，落盘时不要再翻译。
+- **注释语言**：改既有文件时沿用该文件自己的风格（`UsageDetail.swift` / `DetailPopoverView.swift` / `DeepSeekUsageDetail.swift` 是中文注释；`OpenCodeGo*.swift` 是英文）；**新建文件用英文**。计划里的代码块已经按此写死，落盘时照抄即可。
 - **提交**：每个任务一个提交，message 用陈述句（不带 `feat:` 前缀），结尾固定：
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 - 只用显式路径 `git add`，不要 `git add -A`。
@@ -111,6 +111,14 @@ Expected: FAIL —— `dollarsText(120_000_000)` 现在返回 `"$120.00"`。
     }
 ```
 
+顺手给 `parseAPIResponse` 的 `limits` / `usage` 容错分支（`if let list = (root["limits"] as? [[String: Any]]) ?? (root["usage"] as? [[String: Any]])` 那两处）各补一行注释，落实 spec §12 的要求：
+
+```swift
+        // Amounts here come straight from the response, so they share the console's microcent
+        // scale (1 USD = 1e8); unlike the API-key path's published limits, this branch has never
+        // been checked against a real Zen response.
+```
+
 - [ ] **Step 4: 把其余 fixture 与断言全部 ×100**
 
 规则（spec §3.1）：所有代表美元金额的 fixture 数值 ×100；常量驱动的数字断言 ×100；**所有显示字符串逐字不变**。逐条替换：
@@ -131,7 +139,11 @@ Expected: FAIL —— `dollarsText(120_000_000)` 现在返回 `"$120.00"`。
 
 `fallsBackToSettledMicroCentsWhenRemainingMissing`：fixture `limitMicroCents` `1200000` → `120000000`、`settledMicroCents` `330000` → `33000000`；断言 `used == 33_000_000`、`limit == 120_000_000`。
 
-`skipsUnknownMeterKinds`：两条 meter 的金额 ×100（`1000`→`100000000`、`500`→`50000000`、`1200000`→`120000000`、`900000`→`90000000`）。
+`skipsUnknownMeterKinds`：两条 meter 的金额 ×100（`1000`→`100000`、`500`→`50000`、`1200000`→`120000000`、`900000`→`90000000`）。
+
+`sampleGoStatus` 里 parser 不读、也没有断言的 `nextChargeMicroCents` / `recurringChargeMicroCents` 一并 ×100（`1000000`→`100000000`），免得 fixture 里出现「$10/月的套餐、下次扣款 $0.01」这种自相矛盾的数。
+
+**注意**：下面每条只替换列出的行/断言，用例里其余没提到的断言（如 `subscriptionMessage == nil`、`resetDates` 计数、`unit == nil`、window 顺序）原样保留。
 
 `unwrapsWebViewEnvelopeFromGoStatus`：三条 meter 的 `limitMicroCents` / `remainingMicroCents` ×100；断言 `used == [30_000_000, 100_000_000, 200_000_000]`。
 
@@ -423,6 +435,9 @@ Expected: FAIL —— `OpenCodeGoUsageEnvelope` / `workspaceIDs` / `hasGoAccess`
 
     /// Whether this workspace carries a Go subscription, in either the current (`access`) or the
     /// legacy (`subscriptionStatus`) shape.
+    ///
+    /// An `access` object without usable meters still counts as "has access": the parser reports
+    /// that as not-subscribed, which is the honest degrade. Do not read `true` as "has quota".
     static func hasGoAccess(statusData: Data) -> Bool {
         guard let root = try? JSONSerialization.jsonObject(with: statusData) as? [String: Any] else {
             return false
@@ -445,7 +460,8 @@ Expected: FAIL —— `OpenCodeGoUsageEnvelope` / `workspaceIDs` / `hasGoAccess`
 ///
 /// `ok` / `status` / `text` describe the `/api/go/status` request only: the session kernel throws
 /// on `ok == false` (and maps 401/403 to session-expired), so a failed usage call must never flip
-/// them — it only shows up as the matching `usage*` key being absent.
+/// them — it only shows up as the matching `usage*` key being absent. Absent keys and explicit
+/// nulls are equivalent: both consumers read them with optional casts.
 enum OpenCodeGoUsageEnvelope {
     static func make(
         status: Data,
@@ -633,12 +649,21 @@ EOF
 
 ```swift
     private let consoleHost = "console.opencode.ai"
+    /// Keep in sync with the web script's `workspaces.slice(0, 5)`.
     private static let workspaceProbeLimit = 5
     private static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
 ```
 
 原 `fetchUsageBundle` 里内联的 UA 字符串随之删除（它现在在 `fetchData` 里）。
+
+同时把 `fetchConsoleUsage` 里那条注释改准（脚本现在会打带固定 30 天参数的用量接口）：
+
+```swift
+                // The console script scrapes a fixed 30-day window and takes no period from the
+                // context, so the values passed in are inert.
+                bundleData = try await controller.fetchUsage(
+```
 
 - [ ] **Step 3: 编译 + 跑全量测试**
 
@@ -690,7 +715,7 @@ Expected: FAIL —— 脚本里还没有 `/api/me/orgs`。
 
 - [ ] **Step 3: 替换脚本**
 
-`usageFetchScript(context:)` 的 `"""` 内容整体替换为：
+`usageFetchScript(context:)` 的 `"""` 内容整体替换为（其上的文档注释 `/// The status endpoint takes no period parameters…` 同时改成 `/// The console usage endpoints take a fixed 30-day window; the context is intentionally unused.`）：
 
 ```js
         (() => {
@@ -722,6 +747,7 @@ Expected: FAIL —— 脚本里还没有 `/api/me/orgs`。
             : [];
           // Scoped console endpoints need x-org-id; pick the first workspace that has a Go
           // subscription, else keep the first workspace's response so "not subscribed" survives.
+          // The 5 must stay in sync with the provider's workspaceProbeLimit.
           const hasAccess = (json) => Boolean(json && (json.access || (json.goStatus && json.goStatus.access)));
           let chosen = null;
           let workspaceId = workspaces.length > 0 ? workspaces[0] : null;
@@ -998,7 +1024,7 @@ struct OpenCodeGoUsageDetailTests {
         // kimi-k2.5 appears twice (two providers) and must be one row; zero-model is dropped.
         #expect(table.rows.map(\.name) == ["claude-sonnet-5", "kimi-k2.5", "Unknown model", "free-model"])
         #expect(table.rows[0].cells == ["402", "41.2M", "$8.19"])
-        #expect(table.rows[1].cells == ["340", "30.2M", "$6.03"])
+        #expect(table.rows[1].cells == ["340", "30.7M", "$6.03"])
         #expect(table.footnote == nil)
     }
 
@@ -1142,7 +1168,7 @@ enum OpenCodeGoUsageDetail {
             return []
         }
 
-        var todayTotals = byDay[today] ?? Totals()
+        let todayTotals = byDay[today] ?? Totals()
         var last7 = Totals()
         var last30 = Totals()
         for (index, date) in dayRange.enumerated() {
@@ -1152,7 +1178,6 @@ enum OpenCodeGoUsageDetail {
                 last7.add(totals)
             }
         }
-        todayTotals = byDay[today] ?? Totals()
 
         return [
             DetailGroup(title: "Today", values: values(todayTotals)),
@@ -1422,7 +1447,9 @@ struct OpenCodeGoDetailWiringTests {
         )
 
         #expect(snapshot.state == .ready)
-        #expect(snapshot.planName == "blues")
+        // The access.meters shape carries no price, so the parser pins the plan name to "Go";
+        // accountName is only the fallback for shapes that have no plan name at all.
+        #expect(snapshot.planName == "Go")
         #expect(snapshot.usages.map(\.window) == [.fiveHours, .week, .month])
 
         let detail = try #require(snapshot.detail)
@@ -1605,7 +1632,7 @@ Expected: 全绿（基线 276 tests / 35 suites，本计划新增若干用例后
 
 - [ ] **Step 2: 升版本号并构建**
 
-按仓库惯例把 `AppSupport/Info.plist` 的 `CFBundleShortVersionString` 加一（当前 1.0.x 系列），然后：
+按仓库惯例把 `AppSupport/Info.plist` 的 **`CFBundleShortVersionString` 与 `CFBundleVersion` 两个键都加一**（当前 `1.0.2` / `24` → `1.0.3` / `25`；历次发包提交都是两行一起改），然后：
 
 Run: `bash scripts/build-app.sh`
 Expected: 构建产物在 `.build/app`。
@@ -1685,12 +1712,14 @@ Run: `bash scripts/test.sh --filter ZZGoCardSnapshot`
 
 ```bash
 osascript -e 'quit app "Token Health"' || true
+pkill -x TokenHealth || true
 rm -rf "/Applications/Token Health.app"
 cp -R .build/app/"Token Health.app" /Applications/
+plutil -extract CFBundleShortVersionString raw "/Applications/Token Health.app/Contents/Info.plist"
 open -a "Token Health"
 ```
 
-截图确认应用正常起来（菜单栏图标、设置窗口）：
+Expected: `plutil` 打印新版本号（1.0.3）。截图确认应用正常起来（菜单栏图标、设置窗口）：
 
 ```bash
 screencapture -x /tmp/qa-01-installed.png
@@ -1699,7 +1728,7 @@ screencapture -x /tmp/qa-01-installed.png
 - [ ] **Step 5: 登录（如果账号还没有网页会话）**
 
 Settings → 选中 OpenCode Go 账号 → Auth 切 **Login** → 「Login with OpenCode Go」→ 在弹窗里完成 GitHub/Google 登录 → 等控制台加载 → **Import Session**。
-（这一步需要账号凭据，由人完成；完成后 `apiKey` 会显示为已连接的网页会话。）
+（这一步需要账号凭据，由人完成。成功的标志是设置里那条状态行变成 `OpenCode Go web session connected: <账号>`。）
 
 - [ ] **Step 6: 浮层截图 QA**
 
@@ -1711,6 +1740,11 @@ screencapture -x /tmp/qa-02-popover.png
 
 逐项核对：三额度（`$已用 / $上限`）、Today / 7 days / 30 days 三行、`Cost · last 30 days` 柱状图、`Input/Output/Cache read/Cache write`、`By model · last 30 days` 表。若截图拿不到（TCC 屏幕录制权限），退回到让用户点开后自行截图人工核对。
 
+补两条 spec §13 的边界人工检查：
+
+- **API 模式仍走小菜单**：把同一个账号的 Auth 切回 API（或钉住另一个 API 模式的 Go 账号）→ 点菜单栏项 → 应弹原来的 Unpin / Settings / Quit 小菜单，不是浮层。
+- **失败保留旧数据**：断开网络 → 在浮层里点 Refresh → 数字保留、顶部出现红色错误行，菜单栏项**不**退回小菜单。
+
 - [ ] **Step 7: 数字对账**
 
 把浮层三额度的 `已用 ÷ 上限` 与 console Go 页的百分比对照（应一致）；把 30 天合计与 `opencode.ai/console/<wrk>/usage` 页面对照（滚动 30 天，UTC）。
@@ -1720,7 +1754,7 @@ screencapture -x /tmp/qa-02-popover.png
 ```bash
 git add AppSupport/Info.plist
 git commit -m "$(cat <<'EOF'
-Release the OpenCode Go detail popover
+Cut the next release as 1.0.3
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 EOF
