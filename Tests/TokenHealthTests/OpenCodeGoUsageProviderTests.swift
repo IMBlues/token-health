@@ -15,8 +15,8 @@ struct OpenCodeGoUsageProviderTests {
         "startsAt": "2026-08-01T00:00:00.000Z",
         "endsAt": "2026-09-01T00:00:00.000Z"
       },
-      "nextChargeMicroCents": 100000000,
-      "recurringChargeMicroCents": 100000000,
+      "nextChargeMicroCents": 1000000000,
+      "recurringChargeMicroCents": 1000000000,
       "cancelAtPeriodEnd": false,
       "durableBalanceFallbackEnabled": false,
       "meters": [

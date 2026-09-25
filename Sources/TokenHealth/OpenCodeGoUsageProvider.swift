@@ -274,9 +274,10 @@ struct OpenCodeGoUsageParser {
         let root = (object["data"] as? [String: Any]) ?? (object["result"] as? [String: Any]) ?? object
 
         var meters: [Meter] = []
-        // Amounts here come straight from the response, so they share the console's microcent
-        // scale (1 USD = 1e8); unlike the API-key path's published limits, this branch has never
-        // been checked against a real Zen response.
+        // Amounts here come straight from the response; assume the console's microcent scale
+        // (1 USD = 1e8). Unlike the percent branch's published limits above
+        // (apiLimitMicroCents), this shape has never been seen from a real Zen account, so the
+        // scale is unverified.
         if let list = (root["limits"] as? [[String: Any]]) ?? (root["usage"] as? [[String: Any]]) {
             meters = list.compactMap { item in
                 guard let kind = stringValue(item["kind"]) ?? stringValue(item["window"]) else {
@@ -294,9 +295,10 @@ struct OpenCodeGoUsageParser {
             }
         } else if let dict = (root["limits"] as? [String: Any]) ?? (root["usage"] as? [String: Any]) {
             // {limits: {five_hour: {...}, week: {...}}} style.
-            // Amounts here come straight from the response, so they share the console's microcent
-            // scale (1 USD = 1e8); unlike the API-key path's published limits, this branch has never
-            // been checked against a real Zen response.
+            // Amounts here come straight from the response; assume the console's microcent scale
+            // (1 USD = 1e8). Unlike the percent branch's published limits above
+            // (apiLimitMicroCents), this shape has never been seen from a real Zen account, so the
+            // scale is unverified.
             meters = dict.compactMap { kind, value in
                 guard let item = value as? [String: Any] else {
                     return nil
@@ -339,11 +341,11 @@ struct OpenCodeGoUsageParser {
     static func apiLimitMicroCents(for key: String) -> Int? {
         switch key {
         case "rolling", "five_hour", "fiveHours", "5h":
-            12 * 100_000_000
+            12 * microCentsPerDollar
         case "weekly", "week", "calendar_week":
-            30 * 100_000_000
+            30 * microCentsPerDollar
         case "monthly", "month", "calendar_month":
-            60 * 100_000_000
+            60 * microCentsPerDollar
         default:
             nil
         }
@@ -432,8 +434,10 @@ struct OpenCodeGoUsageParser {
     }
 
     /// Console money fields are microcents: 1 USD = 1e8.
+    static let microCentsPerDollar = 100_000_000
+
     static func dollars(_ microCents: Int) -> Double {
-        Double(microCents) / 100_000_000
+        Double(microCents) / Double(microCentsPerDollar)
     }
 
     static func dollarsText(_ microCents: Int) -> String {
