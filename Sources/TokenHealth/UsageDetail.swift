@@ -36,6 +36,8 @@ struct DetailSeries: Equatable, Sendable {
     var points: [DetailSeriesPoint]
     var axisStart: String
     var axisEnd: String
+    /// 全零时视图要显示的那句话：文案随数据来源不同（「本月」或「最近 30 天」），由填充方给。
+    var emptyText: String
 }
 
 struct DetailSeriesPoint: Equatable, Sendable, Identifiable {

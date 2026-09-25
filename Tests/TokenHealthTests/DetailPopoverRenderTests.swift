@@ -28,7 +28,7 @@ struct DetailPopoverRenderTests {
         }
         let detail = UsageDetail(
             headline: [DetailStat(label: "CNY", value: "1,284.60")],
-            series: DetailSeries(title: "Tokens this month", points: points, axisStart: "9/1", axisEnd: "9/24")
+            series: DetailSeries(title: "Tokens this month", points: points, axisStart: "9/1", axisEnd: "9/24", emptyText: "No usage this month")
         )
         let image = try render(detail)
         #expect(image.height > 0, "全零的月份不该崩")
@@ -75,7 +75,8 @@ struct DetailPopoverRenderTests {
                     )
                 },
                 axisStart: "9/1",
-                axisEnd: "9/24"
+                axisEnd: "9/24",
+                emptyText: "No usage this month"
             ),
             breakdown: [
                 DetailStat(label: "Output", value: "8.1M"),

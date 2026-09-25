@@ -125,7 +125,8 @@ enum DeepSeekUsageDetail {
             title: "Tokens this month",
             points: points,
             axisStart: daysInRange.first.map { formatter.string(from: $0) } ?? "",
-            axisEnd: daysInRange.last.map { formatter.string(from: $0) } ?? ""
+            axisEnd: daysInRange.last.map { formatter.string(from: $0) } ?? "",
+            emptyText: "No usage this month"
         )
     }
 

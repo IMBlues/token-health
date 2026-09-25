@@ -114,7 +114,7 @@ struct DetailPopoverView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 if DetailSeriesChart.maximum(of: series.points) == 0 {
-                    Text("No usage this month")
+                    Text(series.emptyText)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 } else {
