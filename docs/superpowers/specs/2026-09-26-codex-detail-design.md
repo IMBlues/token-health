@@ -72,7 +72,10 @@
 两个必须写进实现的性质：
 
 1. **buckets 稀疏**：只有有量的那几天，不是连续 30 天。上面的四条之和恰好等于 `lifetimeTokens`，可见它是「按日的全量历史」（本机最早一条在 100 天前），不是只给 30 天。**图表与区间汇总必须自己补齐缺失的日期。**
-2. **处处可缺**：协议里 `summary` 与 bucket 的字段都标了 required、只有 `dailyUsageBuckets` 可 null；但我们一律按可缺解码（§4.1）。缺失的降级是「不画那一段」，不是报错。
+2. **处处可缺**：协议里只有 bucket 的 `startDate` / `tokens` 标了 required，`summary` 本身 required 但它的各字段可 null；但我们一律按可缺解码（§4.1）。缺失的降级是「不画那一段」，不是报错。
+3. 响应里还有一个可 null 的 `threadUsage` 字段：本次不解码，无影响。
+
+> 上面这份示例是 2026-09-26 某刻的真实抓包，**只用来固定形状**，不是验收时的预期值（bucket 会随用量增长）。
 
 协议来源：`codex app-server generate-json-schema --experimental --out <dir>` 生成的 `GetAccountTokenUsageResponse` / `AccountTokenUsageSummary` / `AccountTokenUsageDailyBucket`。
 
@@ -231,7 +234,8 @@ label 撞车（两个非标准时长的桶都折出 `1h`）时**只留第一条*
 | `Streak` | `summary.currentStreakDays` | `"\(n)d"` → `3d`（0 也照画） |
 | `Longest turn` | `summary.longestRunningTurnSec` | 时长文案，见下 |
 
-时长文案：`s < 60` → `42s`；`s < 3600` → `42m`（向下取整分钟）；否则 `1h` / `1h 5m`（整点去掉分钟）。**负数不占位**。
+时长文案：`s < 60` → `42s`；`s < 3600` → `42m`（向下取整分钟）；否则 `1h` / `1h 5m`（整点去掉分钟）。
+**四项一律「值为 nil 或负数就不占位」**：`-3d` 一类的数字不是「用了一点」，是坏数据（与 §7.2 的饱和加法同一条口径）。
 
 `longestStreakDays` 本次不解码：没有任何区块用它，需要时再加一个字段即可。
 
@@ -271,9 +275,9 @@ label 撞车（两个非标准时长的桶都折出 `1h`）时**只留第一条*
 | 测试 | 覆盖 |
 | --- | --- |
 | `CodexUsageDetailTests`（新） | headline 取自 `pinnedMetrics` 的顺序与文案（含模型桶被排除、label 撞车只留第一条）；三行汇总（补 0、越界忽略、同日求和、空数组、nil 不画）；趋势 30 点与轴文案；breakdown 四项与各自缺失时的降级、时长格式四档（`42s` / `42m` / `1h` / `1h 5m`、负数不占位）；`summary` 缺失但 buckets 在 → 只少 breakdown；全空返回 nil；`today` 注入固定时刻 |
-| `CodexUsageProviderTests`（扩） | `snapshot(config:bundle:fetchedAt:today:)` 的纯函数层：带 usage 的 bundle → `ready` 且 detail 齐全；usage 为 nil → detail 只有 headline；无额度窗口 → `unavailable` 且无 detail。会话层仍走假 app-server：`fetchQuotaBundle()` 两条都回 → bundle 两半都在；id=2 回 error（`-32601`）/ 回坏 JSON → `accountUsage == nil` 且不抛；id=1 回坏 → 抛错；缓存命中不重起进程 |
-| `CodexTestSupport`（改） | 假 app-server 脚本补 id=2 的响应（保留既有「先发一条无关通知」的行为）；`fetchFromFakeAppServer()` / `fetchLiveCodexQuota()` 改调 `fetchQuotaBundle()` 读 `.rateLimits`；`rpcSummary` 断言四条报文 |
-| `CodexUsageProviderTests.testQuotaRPCUsesOnlyTheReadOnlyAllowlist`（改，**唯一一处安全姿态断言，别顺手删**） | 方法名断言补上 `account/usage/read`；`keySets.count` 3 → 4（`keySets[3] == ["id", "method"]`）；**从 `forbiddenMethod` 列表里删掉 `"account/usage/read"`** —— 它与 `account/rateLimits/read` 同属只读账号方法，是本次有意放行的唯一一项；`account/read`、`account/login`、`account/logout`、`account/rateLimitResetCredit/consume`、`account/sendAddCreditsNudgeEmail`、`thread/`、`fs/`、`config/`、`plugin/` 一律继续禁用 |
+| `CodexUsageProviderTests`（扩） | `snapshot(config:bundle:fetchedAt:today:)` 的纯函数层：带 usage 的 bundle → `ready` 且 detail 齐全；usage 为 nil → detail 只有 headline；无额度窗口 → `unavailable` 且无 detail。会话层仍走假 app-server（`timeout: 3`）：`fetchQuotaBundle()` 两条都回 → bundle 两半都在；id=2 回 error（`-32601`）/ 回坏 JSON → `accountUsage == nil` 且不抛；id=1 回坏 → 抛错；**id=2 完全无应答**（脚本回完 id=1 后 `sleep` 住不退出）→ 抛 `CodexAppServerError.timeout`；缓存命中不重起进程 |
+| `CodexTestSupport`（改） | 假 app-server 脚本读满四条请求、补 id=2 的响应（保留既有「先发一条无关通知」的行为）；`fetchFromFakeAppServer()` 与 `fetchLiveCodexQuota()` 的返回类型都改成 `CodexQuotaBundle`、内部改调 `fetchQuotaBundle()`，两处调用点（`testAppServerClientIgnoresNotificationsAndReadsExpectedResponse`、`testLiveCodexQuotaWhenExplicitlyEnabled`）相应读 `.rateLimits`；`rpcSummary` 断言四条报文 |
+| `CodexUsageProviderTests.testQuotaRPCUsesOnlyTheReadOnlyAllowlist`（改，**唯一一处安全姿态断言，别顺手删**） | 方法名断言补上 `account/usage/read`；`keySets.count` 3 → 4（`keySets[3] == ["id", "method"]`）；`forbiddenMethod` 列表**只删 `"account/usage/read"` 一项，其余 11 项（含 `capabilities`、`experimentalApi`）逐字保留** —— 删掉的那项与 `account/rateLimits/read` 同属只读账号方法，是本次有意放行的唯一一个 |
 | `ProviderDetailCapabilityTests`（扩） | `.codex` 在两种 authMode 下都为真；`everyOtherProviderIsUnsupported` 的例外集合加上 `.codex` |
 | 既有测试 | 全绿（`fetchRateLimits()` 删除后其两个调用点按上表迁移） |
 
