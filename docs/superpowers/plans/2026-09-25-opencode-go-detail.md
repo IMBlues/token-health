@@ -16,7 +16,7 @@
 
 - **分支**：当前在 `main` 且干净。先 `git switch -c feature/opencode-go-detail`。
 - **跑测试**：一律 `bash scripts/test.sh`；过滤用 `bash scripts/test.sh --filter <SuiteName>`（本机无 Xcode，裸跑 `swift test` 编译不过）。
-- **注释语言**：改既有文件时沿用该文件自己的风格（`UsageDetail.swift` / `DetailPopoverView.swift` / `DeepSeekUsageDetail.swift` 是中文注释；`OpenCodeGo*.swift` 是英文）；**新建文件用英文**。计划里的代码块已经按此写死，落盘时照抄即可。
+- **注释语言**：改既有文件时沿用该文件自己的风格（`UsageDetail.swift` / `DetailPopoverView.swift` / `DeepSeekUsageDetail.swift` 是中文注释；`OpenCodeGo*.swift` 是英文）；**新建的源码文件用英文**，新建的测试文件沿用 `Tests/` 目录的中文风格。计划里的代码块已经按此写死，落盘时照抄即可。
 - **提交**：每个任务一个提交，message 用陈述句（不带 `feat:` 前缀），结尾固定：
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 - 只用显式路径 `git add`，不要 `git add -A`。
@@ -1713,6 +1713,7 @@ Run: `bash scripts/test.sh --filter ZZGoCardSnapshot`
 ```bash
 osascript -e 'quit app "Token Health"' || true
 pkill -x TokenHealth || true
+sleep 1
 rm -rf "/Applications/Token Health.app"
 cp -R .build/app/"Token Health.app" /Applications/
 plutil -extract CFBundleShortVersionString raw "/Applications/Token Health.app/Contents/Info.plist"
