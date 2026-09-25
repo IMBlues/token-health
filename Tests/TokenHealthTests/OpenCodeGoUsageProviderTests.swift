@@ -187,6 +187,84 @@ struct OpenCodeGoUsageProviderTests {
     }
 
     @Test
+    func parsesAccessMetersShape() throws {
+        // The live console shape (2026-09): access.meters.fiveHour/week/month.
+        let response = """
+        {
+          "access": {
+            "startsAt": "2026-09-01T00:00:00.000Z",
+            "endsAt": "2026-10-01T00:00:00.000Z",
+            "meters": {
+              "fiveHour": { "limitMicroCents": 1200000000, "usedMicroCents": 32000000, "resetsAt": "2026-09-25T12:00:00.000Z" },
+              "week": { "limitMicroCents": 3000000000, "usedMicroCents": 95000000, "resetsAt": "2026-09-28T00:00:00.000Z" },
+              "month": { "limitMicroCents": 6000000000, "usedMicroCents": 222000000 }
+            }
+          },
+          "cancelAtPeriodEnd": false,
+          "renewalPending": false
+        }
+        """
+        let result = try parse(response)
+
+        #expect(result.subscriptionMessage == nil)
+        #expect(result.planName == "Go")
+        #expect(result.usages.map(\.window) == [.fiveHours, .week, .month])
+        #expect(result.usages.map(\.used) == [32_000_000, 95_000_000, 222_000_000])
+        #expect(result.usages.map(\.limit) == [1_200_000_000, 3_000_000_000, 6_000_000_000])
+        #expect(result.usages.map(\.displayValue) == ["$0.32 / $12.00", "$0.95 / $30.00", "$2.22 / $60.00"])
+        // The month window has no resetsAt of its own; it falls back to access.endsAt.
+        #expect(result.usages[2].resetDate == ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z"))
+        #expect(result.usages[0].resetDate == ISO8601DateFormatter().date(from: "2026-09-25T12:00:00Z"))
+    }
+
+    @Test
+    func accessShapeWithoutUsableMetersReportsNotSubscribed() throws {
+        let response = """
+        { "access": { "endsAt": "2026-10-01T00:00:00.000Z", "meters": {} } }
+        """
+        let result = try parse(response)
+
+        #expect(result.usages.isEmpty)
+        #expect(result.subscriptionMessage?.contains("not subscribed") == true)
+    }
+
+    @Test
+    func missingAccessFailsOverToTheLegacyShape() throws {
+        // No access object: the key is absent or null. The legacy shape still parses.
+        let response = """
+        {
+          "subscriptionStatus": "active",
+          "meters": [
+            { "kind": "five_hour", "resetsAt": "2026-08-07T12:00:00.000Z", "limitMicroCents": 120000000, "remainingMicroCents": 90000000 }
+          ]
+        }
+        """
+        let result = try parse(response)
+
+        #expect(result.usages.count == 1)
+        #expect(result.usages[0].window == .fiveHours)
+        #expect(result.usages[0].used == 30_000_000)
+    }
+
+    @Test
+    func accessMetersShapeInsideTheWebViewEnvelope() throws {
+        // The WebView script wraps the response in {ok, status, ..., goStatus: {...}}.
+        let envelope = """
+        {
+          "ok": true, "status": 200, "text": "", "hasSession": true,
+          "goStatus": {
+            "access": { "meters": {
+              "fiveHour": { "limitMicroCents": 1200000000, "usedMicroCents": 32000000, "resetsAt": "2026-09-25T12:00:00.000Z" }
+            } }
+          }
+        }
+        """
+        let result = try parse(envelope)
+
+        #expect(result.usages.map(\.displayValue) == ["$0.32 / $12.00"])
+    }
+
+    @Test
     func requiresSessionBeforeFetching() async {
         let config = ServiceConfig(
             displayName: "My Go",

@@ -203,6 +203,12 @@ struct OpenCodeGoUsageParser {
         // the native request returns the GoStatus object itself. Normalize both to GoStatus.
         let goStatusRoot = (root["goStatus"] as? [String: Any]) ?? root
 
+        // The live console shape (2026-09) carries its meters under `access`; it has no price or
+        // subscriptionStatus, so it returns early and never reaches the legacy walk below.
+        if let access = goStatusRoot["access"] as? [String: Any] {
+            return accessShapeResult(access: access)
+        }
+
         let status = stringValue(goStatusRoot["subscriptionStatus"]) ?? "inactive"
         let currentPeriod = goStatusRoot["currentPeriod"] as? [String: Any]
         let meters = (goStatusRoot["meters"] as? [[String: Any]] ?? []).compactMap(parseMeter)
@@ -229,6 +235,44 @@ struct OpenCodeGoUsageParser {
             subscriptionMessage: nil,
             usages: usages
         )
+    }
+
+    /// Parse the current console shape:
+    /// `{access: {meters: {fiveHour|week|month: {limitMicroCents, usedMicroCents, resetsAt}}, endsAt}}`.
+    /// `access` absent or null means no subscription and falls through to the legacy shape.
+    private func accessShapeResult(access: [String: Any]) -> ParseResult {
+        let meters = access["meters"] as? [String: Any] ?? [:]
+        let periodEnd = dateValue(access["endsAt"])
+
+        var usages: [TokenUsage] = []
+        for (key, window) in [("fiveHour", UsageWindow.fiveHours), ("week", .week), ("month", .month)] {
+            guard let item = meters[key] as? [String: Any],
+                  let limit = intValue(item["limitMicroCents"]), limit > 0 else {
+                continue
+            }
+            let used = max(0, intValue(item["usedMicroCents"]) ?? 0)
+            usages.append(TokenUsage(
+                window: window,
+                used: used,
+                limit: limit,
+                // The month meter has no resetsAt of its own; the paid period end stands in for it.
+                resetDate: dateValue(item["resetsAt"]) ?? periodEnd,
+                unit: nil,
+                displayValue: "\(Self.dollarsText(used)) / \(Self.dollarsText(limit))"
+            ))
+        }
+
+        guard !usages.isEmpty else {
+            return ParseResult(
+                planName: nil,
+                subscriptionMessage: subscriptionMessage(for: "inactive"),
+                usages: []
+            )
+        }
+
+        // This shape carries no price (the console keeps it in the checkout product), so the plan
+        // name is the bare "Go" — the same fallback the API-key path uses.
+        return ParseResult(planName: "Go", subscriptionMessage: nil, usages: usages)
     }
 
     /// Parse the `GET /zen/go/v1/usage` API response (authenticated by an OpenCode Go API key).
