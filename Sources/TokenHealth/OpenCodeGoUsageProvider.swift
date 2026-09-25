@@ -4,7 +4,7 @@ struct OpenCodeGoUsageProvider: UsageProvider {
     private static let providerTitle = "OpenCode Go"
     private let consoleHost = "console.opencode.ai"
     /// Keep in sync with the web script's `workspaces.slice(0, 5)`.
-    private static let workspaceProbeLimit = 5
+    static let workspaceProbeLimit = 5
     private static let userAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
     private let apiUsageEndpoint = "https://opencode.ai/zen/go/v1/usage"

@@ -265,6 +265,47 @@ struct OpenCodeGoWebSessionScriptTests {
     }
 
     @Test
+    func probesAtMostTheWorkspaceProbeLimit() throws {
+        // Seven workspaces, none with access: the script must probe exactly the provider's
+        // workspaceProbeLimit, so the cap stops being linked by comment alone. The extra ids were
+        // given responses too — a drift in the slice would record them and fail the assertions.
+        var responses: [String: MockResponse] = [
+            "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
+            "/api/me/orgs\n": MockResponse(
+                status: 200,
+                body: #"[{"id":"w1"},{"id":"w2"},{"id":"w3"},{"id":"w4"},{"id":"w5"},{"id":"w6"},{"id":"w7"}]"#
+            ),
+        ]
+        for index in 1...7 {
+            responses["/api/go/status\nw\(index)"] = MockResponse(status: 200, body: #"{"subscriptionStatus":"inactive"}"#)
+        }
+        let run = try runScript(responses: responses)
+
+        let probes = run.requests.filter { $0.path == "/api/go/status" }
+        #expect(probes.count == OpenCodeGoUsageProvider.workspaceProbeLimit)
+        #expect(probes.map(\.orgId) == ["w1", "w2", "w3", "w4", "w5"])
+
+        // No access anywhere: the first attempt stays as the fallback, so "not subscribed" reads
+        // through with the first workspace.
+        #expect(run.envelope["workspaceId"] as? String == "w1")
+        #expect(run.envelope["ok"] as? Bool == true)
+    }
+
+    @Test
+    func probingStopsAtTheFirstWorkspaceWithAccess() throws {
+        let run = try runScript(responses: [
+            "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),
+            "/api/me/orgs\n": MockResponse(status: 200, body: #"[{"id":"w1"},{"id":"w2"},{"id":"w3"}]"#),
+            "/api/go/status\nw1": MockResponse(status: 200, body: #"{"subscriptionStatus":"inactive"}"#),
+            "/api/go/status\nw2": MockResponse(status: 200, body: #"{"access":{"meters":{}}}"#),
+        ])
+
+        // The break at the first workspace with access must stop the loop: w3 is never probed.
+        #expect(run.requests.filter { $0.path == "/api/go/status" }.map(\.orgId) == ["w1", "w2"])
+        #expect(run.envelope["workspaceId"] as? String == "w2")
+    }
+
+    @Test
     func aThrowingSendDegradesToAFailedProbe() throws {
         let run = try runScript(responses: [
             "/auth/session\n": MockResponse(status: 200, body: #"{"user":{"id":"u1"}}"#),

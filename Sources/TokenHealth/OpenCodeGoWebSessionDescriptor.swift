@@ -76,6 +76,9 @@ struct OpenCodeGoWebSessionDescriptor: WebSessionDescriptor {
           let workspaceId = null;
           for (const id of workspaces.slice(0, 5)) {
             const attempt = request('/api/go/status', { 'x-org-id': id });
+            // The first attempt (successful or not) is the fallback status, keeping a first-probe
+            // 401 mappable to session-expired. Native makes any probe failure fatal when no access
+            // is found; here a later probe's failure cannot undo a first probe's "not subscribed".
             if (chosen === null) {
               chosen = attempt;
               workspaceId = id;

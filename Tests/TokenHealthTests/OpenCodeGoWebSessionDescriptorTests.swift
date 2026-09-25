@@ -77,12 +77,8 @@ struct OpenCodeGoWebSessionDescriptorTests {
         #expect(script.contains("usageSummary"))
         #expect(script.contains("usageByDay"))
         #expect(script.contains("usageModels"))
-        // ok/status/text must keep describing the go/status request alone: the kernel throws on
-        // ok == false, so a failed usage call must not be able to fail the whole refresh.
-        #expect(script.contains("ok: !failed"))
-        // A 2xx whose body is not JSON (an expired session redirected to an HTML page) must fail
-        // the fetch, not read as "not subscribed".
-        #expect(script.contains("status.json !== null"))
+        // The envelope contract (ok bound to the status probe, the not-JSON guard, the probe
+        // policy) is pinned behaviourally in OpenCodeGoWebSessionScriptTests.
     }
 
     @Test
