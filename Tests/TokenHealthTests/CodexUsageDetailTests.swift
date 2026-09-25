@@ -129,4 +129,103 @@ struct CodexUsageDetailTests {
         // 额度与用量都填不出来 → nil（浮层退回错误行）。
         #expect(CodexUsageDetail.make(usage: nil, usages: [], today: today) == nil)
     }
+
+    /// 稀疏 buckets：今天两条（求和）、7 天窗口边界 9/19 一条、窗口内更早的 9/18 一条、
+    /// 窗口外的 8/26 一条。窗口是 8/27 … 9/25。
+    private var sparseBuckets: String {
+        """
+        "dailyUsageBuckets": [
+          { "startDate": "2026-08-26", "tokens": 7000000 },
+          { "startDate": "2026-09-18", "tokens": 900000 },
+          { "startDate": "2026-09-19", "tokens": 300000 },
+          { "startDate": "2026-09-24", "tokens": 500000 },
+          { "startDate": "2026-09-25", "tokens": 1200000 },
+          { "startDate": "2026-09-25", "tokens": 800000 }
+        ]
+        """
+    }
+
+    @Test
+    func groupsSumSparseBucketsIntoTodaySevenAndThirtyDays() throws {
+        let response = try usageResponse("{ \(sparseBuckets) }")
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: response,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        #expect(detail.groups.map(\.title) == ["Today", "7 days", "30 days"])
+        // 今天 1.2M + 0.8M；7 天含 9/19 起（300K + 500K + 2M）；30 天再加 9/18 的 900K。
+        // 8/26 那 7M 落在窗口外，不进任何一行。
+        #expect(detail.groups.map { $0.values.map(\.label) } == [["Tokens"], ["Tokens"], ["Tokens"]])
+        #expect(detail.groups.map { $0.values[0].value } == ["2M", "2.8M", "3.7M"])
+    }
+
+    @Test
+    func seriesCoversThirtyDaysWithGapsFilledByZero() throws {
+        let response = try usageResponse("{ \(sparseBuckets) }")
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: response,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        let series = try #require(detail.series)
+        #expect(series.points.count == 30)
+        #expect(series.title == "Tokens · last 30 days")
+        #expect(series.emptyText == "No usage in the last 30 days")
+        #expect(series.axisStart == "8/27")
+        #expect(series.axisEnd == "9/25")
+        // 没有 bucket 的日子补 0；窗口外的 8/26 不许漏进第一天。
+        #expect(series.points.first?.value == 0)
+        #expect(series.points.last?.value == 2_000_000)
+        #expect(series.points.map(\.value).reduce(0, +) == 3_700_000)
+    }
+
+    @Test
+    func emptyBucketsDrawZeroRowsButMissingBucketsDrawNothing() throws {
+        let empty = try usageResponse("{ \(fullSummary), \"dailyUsageBuckets\": [] }")
+        let emptyDetail = try #require(CodexUsageDetail.make(
+            usage: empty,
+            usages: quotaUsages(),
+            today: today
+        ))
+        #expect(emptyDetail.groups.map { $0.values[0].value } == ["0", "0", "0"])
+        #expect(emptyDetail.series?.points.count == 30)
+        #expect(emptyDetail.series?.points.allSatisfy { $0.value == 0 } == true)
+
+        // 键缺席（老后端 / 那次调用失败）→ 两段都不画。
+        let missing = try usageResponse("{ \(fullSummary) }")
+        let missingDetail = try #require(CodexUsageDetail.make(
+            usage: missing,
+            usages: quotaUsages(),
+            today: today
+        ))
+        #expect(missingDetail.groups.isEmpty)
+        #expect(missingDetail.series == nil)
+        #expect(missingDetail.breakdown.count == 4)
+    }
+
+    @Test
+    func bucketsOutsideTheWindowAndUnusableOnesAreIgnored() throws {
+        let response = try usageResponse("""
+        { "dailyUsageBuckets": [
+            { "startDate": "2026-09-25T00:00:00Z", "tokens": 1000 },
+            { "startDate": "not a date", "tokens": 999999 },
+            { "startDate": "2026-09-20", "tokens": null },
+            "nonsense"
+        ] }
+        """)
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: response,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        // 只有第一条可用：日期前缀能解析，tokens 才算数。
+        #expect(detail.groups.map { $0.values[0].value } == ["1K", "1K", "1K"])
+    }
 }
