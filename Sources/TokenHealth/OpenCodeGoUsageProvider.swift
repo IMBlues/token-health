@@ -3,6 +3,10 @@ import Foundation
 struct OpenCodeGoUsageProvider: UsageProvider {
     private static let providerTitle = "OpenCode Go"
     private let consoleHost = "console.opencode.ai"
+    /// Keep in sync with the web script's `workspaces.slice(0, 5)`.
+    private static let workspaceProbeLimit = 5
+    private static let userAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
     private let apiUsageEndpoint = "https://opencode.ai/zen/go/v1/usage"
 
     func fetchUsage(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
@@ -39,8 +43,8 @@ struct OpenCodeGoUsageProvider: UsageProvider {
                 guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
                     throw WebSessionError.unsupportedProvider
                 }
-                // The status endpoint takes no period parameters, so the context is intentionally
-                // unused by its script.
+                // The console script scrapes a fixed 30-day window and takes no period from the
+                // context, so the values passed in are inert.
                 bundleData = try await controller.fetchUsage(
                     context: .currentUTC()
                 )
@@ -140,17 +144,112 @@ struct OpenCodeGoUsageProvider: UsageProvider {
     }
 
     private func fetchUsageBundle(session: OpenCodeGoWebSessionCredential) async throws -> Data {
-        guard let url = URL(string: "https://\(consoleHost)/api/go/status") else {
+        let orgsData = try await fetchData(session: session, path: "/api/me/orgs")
+        let workspaces = OpenCodeGoUsageParser.workspaceIDs(fromOrgs: orgsData)
+
+        // Prefer the first workspace that carries a Go subscription; fall back to the first
+        // workspace's response so "not subscribed" still gets its own message.
+        var statusData: Data?
+        var workspaceID: String?
+        for workspace in workspaces.prefix(Self.workspaceProbeLimit) {
+            let data = try await fetchData(session: session, path: "/api/go/status", workspaceID: workspace)
+            if statusData == nil {
+                statusData = data
+                workspaceID = workspace
+            }
+            if OpenCodeGoUsageParser.hasGoAccess(statusData: data) {
+                statusData = data
+                workspaceID = workspace
+                break
+            }
+        }
+
+        guard let statusData else {
+            throw WebSessionError.requestFailed(
+                providerTitle: Self.providerTitle,
+                message: "OpenCode Go has no workspace"
+            )
+        }
+
+        // A 2xx body that is not a JSON object (an expired session redirected to an HTML page, a
+        // proxy interstitial) must not be reported as "not subscribed" — fail the native path so
+        // the WebView script gets to surface the real error instead.
+        guard (try? JSONSerialization.jsonObject(with: statusData)) is [String: Any] else {
+            throw WebSessionError.requestFailed(
+                providerTitle: Self.providerTitle,
+                message: "OpenCode Go status response was not JSON"
+            )
+        }
+
+        async let summary = fetchUsageData(session: session, path: "/api/usage/summary", query: [("range", "30d")], workspaceID: workspaceID)
+        async let byDay = fetchUsageData(session: session, path: "/api/usage/cost-by-day", query: [("range", "30d"), ("bucket", "day")], workspaceID: workspaceID)
+        async let models = fetchUsageData(session: session, path: "/api/usage/models", query: [("range", "30d"), ("pageSize", "100"), ("costOrder", "desc")], workspaceID: workspaceID)
+
+        return OpenCodeGoUsageEnvelope.make(
+            goStatus: statusData,
+            orgs: orgsData,
+            workspaceId: workspaceID,
+            summary: await summary,
+            byDay: await byDay,
+            models: await models
+        )
+    }
+
+    /// The usage endpoints are a nice-to-have: a failure only drops the matching card section, it
+    /// must not fail the whole refresh.
+    private func fetchUsageData(
+        session: OpenCodeGoWebSessionCredential,
+        path: String,
+        query: [(String, String)],
+        workspaceID: String?
+    ) async -> Data? {
+        do {
+            let data = try await fetchData(session: session, path: path, query: query, workspaceID: workspaceID)
+            // A 2xx body that does not parse is a silent section-drop otherwise; log it so
+            // "why is the by-day chart missing" has a signal in the debug log.
+            guard (try? JSONSerialization.jsonObject(with: data)) != nil else {
+                WebSessionLog.debugLog(
+                    "usage response was not JSON, path=\(path)",
+                    providerTitle: Self.providerTitle
+                )
+                return nil
+            }
+            return data
+        } catch {
+            WebSessionLog.debugLog(
+                "usage request failed path=\(path): \(error.localizedDescription)",
+                providerTitle: Self.providerTitle
+            )
+            return nil
+        }
+    }
+
+    private func fetchData(
+        session: OpenCodeGoWebSessionCredential,
+        path: String,
+        query: [(String, String)] = [],
+        workspaceID: String? = nil
+    ) async throws -> Data {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = consoleHost
+        components.path = path
+        if !query.isEmpty {
+            components.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) }
+        }
+        guard let url = components.url else {
             throw URLError(.badURL)
         }
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 20
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-            forHTTPHeaderField: "User-Agent"
-        )
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        // Scoped console endpoints answer HTTP 400 when this header is missing.
+        if let workspaceID, !workspaceID.isEmpty {
+            request.setValue(workspaceID, forHTTPHeaderField: "x-org-id")
+        }
         if let cookieHeader = session.cookieHeader, !cookieHeader.isEmpty {
             request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         }
@@ -171,7 +270,7 @@ struct OpenCodeGoUsageProvider: UsageProvider {
                 message: "OpenCode Go HTTP \(httpResponse.statusCode): \(body.prefix(160))"
             )
         }
-        WebSessionLog.debugLog("native request succeeded, bytes=\(data.count)", providerTitle: Self.providerTitle)
+        WebSessionLog.debugLog("native request succeeded, path=\(path), bytes=\(data.count)", providerTitle: Self.providerTitle)
         return data
     }
 }
