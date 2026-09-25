@@ -280,6 +280,33 @@ struct OpenCodeGoUsageParser {
         return ParseResult(planName: "Go", subscriptionMessage: nil, usages: usages)
     }
 
+    /// `/api/me/orgs` → `[{id, name}]`; the app only needs the ids.
+    static func workspaceIDs(fromOrgs data: Data) -> [String] {
+        guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return list.compactMap { $0["id"] as? String }.filter { !$0.isEmpty }
+    }
+
+    /// Whether this workspace carries a Go subscription, in either the current (`access`) or the
+    /// legacy (`subscriptionStatus`) shape.
+    ///
+    /// An `access` object without usable meters still counts as "has access": the parser reports
+    /// that as not-subscribed, which is the honest degrade. Do not read `true` as "has quota".
+    static func hasGoAccess(statusData: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: statusData) as? [String: Any] else {
+            return false
+        }
+        let goStatus = (root["goStatus"] as? [String: Any]) ?? root
+        if goStatus["access"] is [String: Any] {
+            return true
+        }
+        guard let status = goStatus["subscriptionStatus"] as? String else {
+            return false
+        }
+        return status == "active" || status == "grace"
+    }
+
     /// Parse the `GET /zen/go/v1/usage` API response (authenticated by an OpenCode Go API key).
     /// Verified shape: `{usage: {rolling: {status, percent, resetsAt}, weekly: {...}, monthly: {...}}}`.
     /// Dollar amounts are derived from the published Go limits ($12 / $30 / $60) × percent.
@@ -546,5 +573,52 @@ struct OpenCodeGoUsageParser {
                 "Unexpected OpenCode Go API response: \(raw.prefix(200))"
             }
         }
+    }
+}
+
+/// Assembles the native path's responses into the same envelope the WebView script returns.
+///
+/// `ok` / `status` / `text` describe the `/api/go/status` request only: the session kernel throws
+/// on `ok == false` (and maps 401/403 to session-expired), so a failed usage call must never flip
+/// them — it only shows up as the matching `usage*` key being absent. Absent keys and explicit
+/// nulls are equivalent: both consumers read them with optional casts.
+enum OpenCodeGoUsageEnvelope {
+    static func make(
+        status: Data,
+        orgs: Data,
+        workspaceId: String?,
+        summary: Data?,
+        byDay: Data?,
+        models: Data?
+    ) -> Data {
+        var object: [String: Any] = [
+            "ok": true,
+            "status": 200,
+            "text": "",
+            "hasSession": true
+        ]
+
+        object["goStatus"] = jsonObject(from: status) ?? [:]
+        if let orgsObject = jsonObject(from: orgs) {
+            object["orgs"] = orgsObject
+        }
+        if let workspaceId {
+            object["workspaceId"] = workspaceId
+        }
+        if let summary, let value = jsonObject(from: summary) {
+            object["usageSummary"] = value
+        }
+        if let byDay, let value = jsonObject(from: byDay) {
+            object["usageByDay"] = value
+        }
+        if let models, let value = jsonObject(from: models) {
+            object["usageModels"] = value
+        }
+
+        return (try? JSONSerialization.data(withJSONObject: object)) ?? status
+    }
+
+    private static func jsonObject(from data: Data) -> Any? {
+        try? JSONSerialization.jsonObject(with: data)
     }
 }

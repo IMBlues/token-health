@@ -500,6 +500,59 @@ struct OpenCodeGoUsageProviderTests {
         #expect(OpenCodeGoUsageParser.dollarsText(100_000_000) == "$1.00")
     }
 
+    @Test
+    func envelopeKeepsOkBoundToTheStatusRequest() throws {
+        // ok/status/text describe /api/go/status only: the kernel throws on ok == false, so a
+        // failed usage call must never flip it — it only shows up as a missing key.
+        let data = OpenCodeGoUsageEnvelope.make(
+            status: Data(#"{"access":{"meters":{}}}"#.utf8),
+            orgs: Data(#"[{"id":"wrk_1","name":"Home"}]"#.utf8),
+            workspaceId: "wrk_1",
+            summary: nil,
+            byDay: nil,
+            models: nil
+        )
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect(object["ok"] as? Bool == true)
+        #expect(object["workspaceId"] as? String == "wrk_1")
+        #expect(object["goStatus"] != nil)
+        #expect((object["orgs"] as? [[String: Any]])?.first?["id"] as? String == "wrk_1")
+        #expect(object["usageSummary"] == nil)
+        #expect(object["usageByDay"] == nil)
+        #expect(object["usageModels"] == nil)
+    }
+
+    @Test
+    func envelopeCarriesEveryUsagePayloadWhenPresent() throws {
+        let data = OpenCodeGoUsageEnvelope.make(
+            status: Data(#"{"access":{"meters":{}}}"#.utf8),
+            orgs: Data("[]".utf8),
+            workspaceId: nil,
+            summary: Data(#"{"totalRequests":1}"#.utf8),
+            byDay: Data(#"[{"date":"2026-09-25","totalRequests":1}]"#.utf8),
+            models: Data(#"{"items":[]}"#.utf8)
+        )
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        #expect((object["usageSummary"] as? [String: Any])?["totalRequests"] as? Int == 1)
+        #expect((object["usageByDay"] as? [[String: Any]])?.count == 1)
+        #expect(object["usageModels"] != nil)
+        #expect(object["workspaceId"] == nil)
+    }
+
+    @Test
+    func workspaceIDsAndAccessAreReadFromRawBodies() throws {
+        let orgs = Data(#"[{"id":"wrk_a","name":"A"},{"id":"","name":"B"},{"nope":1}]"#.utf8)
+        #expect(OpenCodeGoUsageParser.workspaceIDs(fromOrgs: orgs) == ["wrk_a"])
+
+        #expect(OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"access":{"meters":{}}}"#.utf8)))
+        #expect(!OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"access":null}"#.utf8)))
+        #expect(OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"subscriptionStatus":"active","meters":[]}"#.utf8)))
+        #expect(!OpenCodeGoUsageParser.hasGoAccess(statusData: Data(#"{"subscriptionStatus":"canceled"}"#.utf8)))
+        #expect(!OpenCodeGoUsageParser.hasGoAccess(statusData: Data("not json".utf8)))
+    }
+
     private func parse(_ json: String) throws -> OpenCodeGoUsageParser.ParseResult {
         try OpenCodeGoUsageParser().parseBundle(data: Data(json.utf8))
     }
