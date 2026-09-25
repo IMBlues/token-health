@@ -67,6 +67,25 @@ struct OpenCodeGoWebSessionDescriptorTests {
     }
 
     @Test
+    func usageScriptCoversTheConsoleEndpoints() {
+        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9))
+
+        for path in ["/api/me/orgs", "/api/go/status", "/api/usage/summary", "/api/usage/cost-by-day", "/api/usage/models"] {
+            #expect(script.contains(path), "脚本少打了 \(path)")
+        }
+        #expect(script.contains("x-org-id"))
+        #expect(script.contains("usageSummary"))
+        #expect(script.contains("usageByDay"))
+        #expect(script.contains("usageModels"))
+        // ok/status/text must keep describing the go/status request alone: the kernel throws on
+        // ok == false, so a failed usage call must not be able to fail the whole refresh.
+        #expect(script.contains("ok: !failed"))
+        // A 2xx whose body is not JSON (an expired session redirected to an HTML page) must fail
+        // the fetch, not read as "not subscribed".
+        #expect(script.contains("status.json !== null"))
+    }
+
+    @Test
     func exposesProviderCopy() {
         #expect(descriptor.providerTitle == "OpenCode Go")
         #expect(descriptor.loginInstructions == "Log in with GitHub or Google at opencode.ai/auth, wait for the console to load, then import.")
