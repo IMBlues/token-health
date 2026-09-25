@@ -65,7 +65,7 @@
         let json = """
         {
           "summary": {
-            "lifetimeTokens": 172532345, "peakDailyTokens": 117865819,
+            "lifetimeTokens": 172532345, "peakDailyTokens": "117865819",
             "longestRunningTurnSec": 2550, "currentStreakDays": 3, "longestStreakDays": 3
           },
           "dailyUsageBuckets": [
@@ -78,6 +78,7 @@
         let response = try JSONDecoder().decode(CodexAccountUsageResponse.self, from: Data(json.utf8))
 
         #expect(response.summary?.lifetimeTokens == 172532545 - 200)
+        // summary 里的数字同样宽容：fixture 里这个字段是字符串。
         #expect(response.summary?.peakDailyTokens == 117865819)
         #expect(response.summary?.longestRunningTurnSec == 2550)
         #expect(response.summary?.currentStreakDays == 3)
@@ -127,6 +128,27 @@ struct CodexAccountUsageSummary: Decodable, Sendable {
     let peakDailyTokens: Int64?
     let longestRunningTurnSec: Int64?
     let currentStreakDays: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case lifetimeTokens
+        case peakDailyTokens
+        case longestRunningTurnSec
+        case currentStreakDays
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            lifetimeTokens = nil
+            peakDailyTokens = nil
+            longestRunningTurnSec = nil
+            currentStreakDays = nil
+            return
+        }
+        lifetimeTokens = container.decodeFlexibleInt64IfPresent(forKey: .lifetimeTokens)
+        peakDailyTokens = container.decodeFlexibleInt64IfPresent(forKey: .peakDailyTokens)
+        longestRunningTurnSec = container.decodeFlexibleInt64IfPresent(forKey: .longestRunningTurnSec)
+        currentStreakDays = container.decodeFlexibleInt64IfPresent(forKey: .currentStreakDays)
+    }
 }
 
 /// One day's total. Both fields are optional so that a single unusable entry (a bare string in
@@ -152,7 +174,8 @@ struct CodexAccountUsageDay: Decodable, Sendable {
 }
 ```
 
-> `CodexAccountUsageSummary` 用合成的 `init(from:)`：它的键都是可选的，所以某个字段类型不对只会让它变 nil（`decodeIfPresent` 遇到类型不匹配抛错 → 整个 `summary` 解不出 → 上层把整份响应当不可用），这正是 spec §4.1 要的行为。
+> 两个类型都自己写 `init(from:)`，数字统一走 `decodeFlexibleInt64IfPresent` —— 远端把数字写成字符串是有先例的（`usedPercent` / `windowDurationMins` 在既有测试里就是 `"8"` / `"15"`），
+> 而 `Int64?` 用合成解码时，一个字符串就会让**整份响应**解不出、连带 buckets 一起丢。
 > `decodeFlexibleInt64IfPresent` 是文件底部 `private extension KeyedDecodingContainer` 里的方法，同文件可见。
 
 - [ ] **Step 4: 跑测试确认通过**
@@ -245,15 +268,18 @@ struct CodexUsageDetailTests {
         let usages = quotaUsages() + [
             // 模型桶（label 带 " · "）不算账号级指标，不进 headline。
             TokenUsage(window: .fiveHours, label: "gpt-5 · 5h", used: 3, limit: 100, unit: "%"),
-            // 两个窗口折出同一个 label：DetailStat.id == label，集合内必须唯一，只留第一条。
-            TokenUsage(window: .fiveHours, label: "1h30m", used: 40, limit: 100, unit: "%"),
-            TokenUsage(window: .week, label: "1h30m", used: 70, limit: 100, unit: "%")
+            // 两个窗口折出同一个 label（`CodexRateLimitsMapper.durationLabel(60)` 就是 "1h"）。
+            // `pinnedMetrics` 先按窗口 rank、同 rank 再按 label 字典序，所以两条 "1h" 各自排在
+            // 同 rank 的第一位：最终顺序是 ["1h"(40%), "5h", "1h"(70%), "Week"]。
+            // `DetailStat.id == label` 要求集合内唯一，去重只留第一条（.fiveHours 那条）。
+            TokenUsage(window: .fiveHours, label: "1h", used: 40, limit: 100, unit: "%"),
+            TokenUsage(window: .week, label: "1h", used: 70, limit: 100, unit: "%")
         ]
 
         let detail = try #require(CodexUsageDetail.make(usage: nil, usages: usages, today: today))
 
-        #expect(detail.headline.map(\.label) == ["5h", "Week", "1h30m"])
-        #expect(detail.headline.map(\.value) == ["12%", "58%", "40%"])
+        #expect(detail.headline.map(\.label) == ["1h", "5h", "Week"])
+        #expect(detail.headline.map(\.value) == ["40%", "12%", "58%"])
     }
 
     @Test
@@ -549,7 +575,7 @@ Expected: 失败 —— `groups` 为空、`series` 为 nil（`#require(detail.se
 
 - [ ] **Step 3: 写实现**
 
-在 `CodexUsageDetail.swift` 的 `make` 里，把 `detail.breakdown = ...` 那行**之前**插入两段（完整形态见下），并补齐辅助函数：
+在 `CodexUsageDetail.swift` 里改两处：先把 `make` 里 `detail.breakdown = breakdown(usage?.summary)` 那一行**之前**的代码补成下面这样（即在 headline 之后插入 `if let buckets` 整块）：
 
 ```swift
         detail.headline = headline(from: usages)
