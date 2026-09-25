@@ -111,6 +111,7 @@ func fetchQuotaBundle() async throws -> CodexQuotaBundle
 - **id=1（额度）是必需项**：响应缺席、是 JSON-RPC error、或解不出 `CodexRateLimitsResponse` → 抛错，整次刷新按今天的方式失败。
 - **id=2（用量）有应答但不是成功结果** —— 是 error（不支持该方法的 Codex 会回 `-32601`），或 result 解不出 `CodexAccountUsageResponse` → `accountUsage = nil`，**不抛错**，额度照常。
 - **id=2 完全无应答** → 会话等不到那个 id，走超时（30 秒）→ 整次刷新失败，与今天会话超时的表现一致。这不是降级路径，是失败路径（§11 说明为何接受）。
+- **什么才算一条应答**：id 命中（数字或数字字符串都认）**且**该行带着 `result` 或 `error`。服务端主动发来的请求同样带 id，只看 id 会把它当成应答吃下去，随后解不出 → 把整次刷新拖成失败。畸形到解不开的行无法与沉默区分，仍按无应答（超时）处理。
 - 两条响应在同一个进程里发出、同一个超时窗口内收齐，不串行。
 
 `CodexAppServerClient.fetchRateLimits()` **删除**：生产路径只有批量这一条，留一个单独取额度的入口就是死代码。
@@ -275,7 +276,7 @@ label 撞车（两个非标准时长的桶都折出 `1h`）时**只留第一条*
 | 测试 | 覆盖 |
 | --- | --- |
 | `CodexUsageDetailTests`（新） | headline 取自 `pinnedMetrics` 的顺序与文案（含模型桶被排除、label 撞车只留第一条）；三行汇总（补 0、越界忽略、同日求和、空数组、nil 不画、负数丢弃不减计）；趋势 30 点与轴文案；breakdown 四项与各自缺失时的降级、时长格式四档（`42s` / `42m` / `1h` / `1h 5m`、负数不占位）；`summary` 缺失但 buckets 在 → 只少 breakdown；全空返回 nil；饱和加法（两个 `Int64.max` 的 bucket 不许 trap）；`today` 注入固定时刻**并附一条下午锚点用例**（覆盖 `startOfDay` 规范化，锚点不规范化会让所有 bucket 被拒 = 三行全 0） |
-| `CodexUsageProviderTests`（扩） | `snapshot(config:bundle:fetchedAt:today:)` 的纯函数层：带 usage 的 bundle → `ready` 且 detail 齐全；usage 为 nil → detail 只有 headline；无额度窗口 → `unavailable` 且无 detail。会话层仍走假 app-server（`timeout: 3`）：`fetchQuotaBundle()` 两条都回 → bundle 两半都在；id=2 回 error（`-32601`）/ 回坏 JSON → `accountUsage == nil` 且不抛；id=1 回坏 → 抛错；**id=2 完全无应答**（脚本回完 id=1 后 `sleep` 住不退出）→ 抛 `CodexAppServerError.timeout`；缓存命中不重起进程 |
+| `CodexUsageProviderTests`（扩） | `snapshot(config:bundle:fetchedAt:today:)` 的纯函数层：带 usage 的 bundle → `ready` 且 detail 齐全；usage 为 nil → detail 只有 headline；无额度窗口 → `unavailable` 且无 detail。会话层仍走假 app-server（成功路径 `timeout: 5`）：`fetchQuotaBundle()` 两条都回 → bundle 两半都在；**乱序回**、**重复回**都不影响结果；id=2 回 error（`-32601`）/ 回一个解不出的 result → `accountUsage == nil` 且不抛；id=1 回坏 → 抛错；带数字字符串 id 的应答照收；**服务端主动发来的、id 撞车的请求不算应答**；**id=2 完全无应答**（假脚本回完 id=1 后阻塞在 stdin 读循环上，既不退出也不 EOF）→ 抛 `CodexAppServerError.timeout`；缓存命中不重起进程 |
 | `CodexTestSupport`（改） | 假 app-server 脚本读满四条请求、补 id=2 的响应（保留既有「先发一条无关通知」的行为）；`fetchFromFakeAppServer()` 与 `fetchLiveCodexQuota()` 的返回类型都改成 `CodexQuotaBundle`、内部改调 `fetchQuotaBundle()`，两处调用点（`testAppServerClientIgnoresNotificationsAndReadsExpectedResponse`、`testLiveCodexQuotaWhenExplicitlyEnabled`）相应读 `.rateLimits`；`rpcSummary` 断言四条报文 |
 | `CodexUsageProviderTests.testQuotaRPCUsesOnlyTheReadOnlyAllowlist`（改，**唯一一处安全姿态断言，别顺手删**） | 方法名断言补上 `account/usage/read`；`keySets.count` 3 → 4（`keySets[3] == ["id", "method"]`）；`forbiddenMethod` 列表**只删 `"account/usage/read"` 一项，其余 11 项（含 `capabilities`、`experimentalApi`）逐字保留** —— 删掉的那项与 `account/rateLimits/read` 同属只读账号方法，是本次有意放行的唯一一个 |
 | `ProviderDetailCapabilityTests`（扩） | `.codex` 在两种 authMode 下都为真；`everyOtherProviderIsUnsupported` 的例外集合加上 `.codex` |
