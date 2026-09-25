@@ -239,7 +239,8 @@ struct OpenCodeGoUsageParser {
 
     /// Parse the current console shape:
     /// `{access: {meters: {fiveHour|week|month: {limitMicroCents, usedMicroCents, resetsAt}}, endsAt}}`.
-    /// `access` absent or null means no subscription and falls through to the legacy shape.
+    /// `access` absent or null just means this is not that shape: the caller falls through to the
+    /// legacy walk, and only "no usable meters" ends up reported as not-subscribed.
     private func accessShapeResult(access: [String: Any]) -> ParseResult {
         let meters = access["meters"] as? [String: Any] ?? [:]
         let periodEnd = dateValue(access["endsAt"])
@@ -250,13 +251,17 @@ struct OpenCodeGoUsageParser {
                   let limit = intValue(item["limitMicroCents"]), limit > 0 else {
                 continue
             }
+            // Floor-only clamp, same as the legacy path: a window can exceed its limit, and the
+            // card should show that rather than quietly pinning it to the limit.
             let used = max(0, intValue(item["usedMicroCents"]) ?? 0)
             usages.append(TokenUsage(
                 window: window,
                 used: used,
                 limit: limit,
-                // The month meter has no resetsAt of its own; the paid period end stands in for it.
-                resetDate: dateValue(item["resetsAt"]) ?? periodEnd,
+                // Only the month meter lacks a resetsAt of its own; the paid period end stands in
+                // for it. The shorter windows must not borrow it — a 5-hour meter showing the
+                // month's end would read as a 6-day window.
+                resetDate: dateValue(item["resetsAt"]) ?? (window == .month ? periodEnd : nil),
                 unit: nil,
                 displayValue: "\(Self.dollarsText(used)) / \(Self.dollarsText(limit))"
             ))

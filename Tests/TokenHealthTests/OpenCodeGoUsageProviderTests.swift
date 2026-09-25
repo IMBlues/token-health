@@ -196,7 +196,7 @@ struct OpenCodeGoUsageProviderTests {
             "endsAt": "2026-10-01T00:00:00.000Z",
             "meters": {
               "fiveHour": { "limitMicroCents": 1200000000, "usedMicroCents": 32000000, "resetsAt": "2026-09-25T12:00:00.000Z" },
-              "week": { "limitMicroCents": 3000000000, "usedMicroCents": 95000000, "resetsAt": "2026-09-28T00:00:00.000Z" },
+              "week": { "limitMicroCents": "3000000000", "usedMicroCents": "95000000", "resetsAt": "2026-09-28T00:00:00.000Z" },
               "month": { "limitMicroCents": 6000000000, "usedMicroCents": 222000000 }
             }
           },
@@ -212,6 +212,11 @@ struct OpenCodeGoUsageProviderTests {
         #expect(result.usages.map(\.used) == [32_000_000, 95_000_000, 222_000_000])
         #expect(result.usages.map(\.limit) == [1_200_000_000, 3_000_000_000, 6_000_000_000])
         #expect(result.usages.map(\.displayValue) == ["$0.32 / $12.00", "$0.95 / $30.00", "$2.22 / $60.00"])
+        // The console serialises BigInt fields, so the week meter's amounts arrive string-typed;
+        // they must parse the same as numbers.
+        #expect(result.usages[1].used == 95_000_000)
+        #expect(result.usages[1].limit == 3_000_000_000)
+        #expect(result.usages[1].displayValue == "$0.95 / $30.00")
         // The month window has no resetsAt of its own; it falls back to access.endsAt.
         #expect(result.usages[2].resetDate == ISO8601DateFormatter().date(from: "2026-10-01T00:00:00Z"))
         #expect(result.usages[0].resetDate == ISO8601DateFormatter().date(from: "2026-09-25T12:00:00Z"))
@@ -226,6 +231,40 @@ struct OpenCodeGoUsageProviderTests {
 
         #expect(result.usages.isEmpty)
         #expect(result.subscriptionMessage?.contains("not subscribed") == true)
+    }
+
+    @Test
+    func accessShapeSkipsWindowsWithoutALimit() throws {
+        // A meter with a zero or negative limit is not usable and must be skipped, not rendered.
+        let response = """
+        {
+          "access": { "meters": {
+            "fiveHour": { "limitMicroCents": 0, "usedMicroCents": 1000000, "resetsAt": "2026-09-25T12:00:00.000Z" },
+            "week": { "limitMicroCents": 3000000000, "usedMicroCents": 95000000, "resetsAt": "2026-09-28T00:00:00.000Z" },
+            "month": { "limitMicroCents": -5, "usedMicroCents": 222000000 }
+          } }
+        }
+        """
+        let result = try parse(response)
+
+        #expect(result.usages.map(\.window) == [.week])
+        #expect(result.usages[0].displayValue == "$0.95 / $30.00")
+    }
+
+    @Test
+    func accessShapeShortWindowsDoNotBorrowThePeriodEnd() throws {
+        // Only the month meter falls back to access.endsAt. A 5-hour meter without its own
+        // resetsAt must stay undated rather than show the paid period's end as its window.
+        let response = """
+        { "access": { "endsAt": "2026-10-01T00:00:00.000Z", "meters": {
+          "fiveHour": { "limitMicroCents": 1200000000, "usedMicroCents": 32000000 }
+        } } }
+        """
+        let result = try parse(response)
+
+        #expect(result.usages.count == 1)
+        #expect(result.usages[0].window == .fiveHours)
+        #expect(result.usages[0].resetDate == nil)
     }
 
     @Test
@@ -244,6 +283,22 @@ struct OpenCodeGoUsageProviderTests {
         #expect(result.usages.count == 1)
         #expect(result.usages[0].window == .fiveHours)
         #expect(result.usages[0].used == 30_000_000)
+
+        // An explicit "access": null takes the same legacy path, not the access-shape early return.
+        let nullAccess = """
+        {
+          "access": null,
+          "subscriptionStatus": "active",
+          "meters": [
+            { "kind": "calendar_week", "resetsAt": "2026-08-10T00:00:00.000Z", "limitMicroCents": 300000000, "remainingMicroCents": 200000000 }
+          ]
+        }
+        """
+        let nullResult = try parse(nullAccess)
+
+        #expect(nullResult.usages.count == 1)
+        #expect(nullResult.usages[0].window == .week)
+        #expect(nullResult.usages[0].used == 100_000_000)
     }
 
     @Test
