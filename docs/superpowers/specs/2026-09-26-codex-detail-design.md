@@ -264,7 +264,7 @@ label 撞车（两个非标准时长的桶都折出 `1h`）时**只留第一条*
 | `summary` 缺失或某字段为 null | 对应 breakdown 项不占位；`dailyUsageBuckets` 不受影响 |
 | `dailyUsageBuckets` 缺失 | groups 与 series 不画，headline 与 breakdown 照常 |
 | `dailyUsageBuckets` 为空数组 | 三行全 0、趋势图走 `emptyText` |
-| bucket 的 `startDate` 解析失败 / 落在 30 天外 / `tokens` 缺失 | 该条忽略 |
+| bucket 的 `startDate` 解析失败 / 落在 30 天外 / `tokens` 缺失或为负 | 该条忽略 |
 | 额度窗口为空（`usages.isEmpty`） | 与今天一致 unavailable，不产详情 |
 | 刷新失败但有旧 detail | 沿用 `AppState.storeSnapshot` 的「非 ready 且无新 detail 时保留上次 detail」 |
 
