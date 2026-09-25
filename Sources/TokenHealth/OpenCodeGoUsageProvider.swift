@@ -274,6 +274,9 @@ struct OpenCodeGoUsageParser {
         let root = (object["data"] as? [String: Any]) ?? (object["result"] as? [String: Any]) ?? object
 
         var meters: [Meter] = []
+        // Amounts here come straight from the response, so they share the console's microcent
+        // scale (1 USD = 1e8); unlike the API-key path's published limits, this branch has never
+        // been checked against a real Zen response.
         if let list = (root["limits"] as? [[String: Any]]) ?? (root["usage"] as? [[String: Any]]) {
             meters = list.compactMap { item in
                 guard let kind = stringValue(item["kind"]) ?? stringValue(item["window"]) else {
@@ -291,6 +294,9 @@ struct OpenCodeGoUsageParser {
             }
         } else if let dict = (root["limits"] as? [String: Any]) ?? (root["usage"] as? [String: Any]) {
             // {limits: {five_hour: {...}, week: {...}}} style.
+            // Amounts here come straight from the response, so they share the console's microcent
+            // scale (1 USD = 1e8); unlike the API-key path's published limits, this branch has never
+            // been checked against a real Zen response.
             meters = dict.compactMap { kind, value in
                 guard let item = value as? [String: Any] else {
                     return nil
@@ -329,15 +335,15 @@ struct OpenCodeGoUsageParser {
         }
     }
 
-    /// Published OpenCode Go dollar limits per window, in microCents.
+    /// Published OpenCode Go dollar limits per window, in microcents (1 USD = 1e8).
     static func apiLimitMicroCents(for key: String) -> Int? {
         switch key {
         case "rolling", "five_hour", "fiveHours", "5h":
-            12 * 1_000_000
+            12 * 100_000_000
         case "weekly", "week", "calendar_week":
-            30 * 1_000_000
+            30 * 100_000_000
         case "monthly", "month", "calendar_month":
-            60 * 1_000_000
+            60 * 100_000_000
         default:
             nil
         }
@@ -425,9 +431,13 @@ struct OpenCodeGoUsageParser {
         return status == "grace" ? "Go · Grace" : "Go Plan"
     }
 
+    /// Console money fields are microcents: 1 USD = 1e8.
+    static func dollars(_ microCents: Int) -> Double {
+        Double(microCents) / 100_000_000
+    }
+
     static func dollarsText(_ microCents: Int) -> String {
-        let dollars = Double(microCents) / 1_000_000
-        return String(format: "$%.2f", locale: Locale(identifier: "en_US_POSIX"), dollars)
+        String(format: "$%.2f", locale: Locale(identifier: "en_US_POSIX"), dollars(microCents))
     }
 
     // MARK: - Value helpers

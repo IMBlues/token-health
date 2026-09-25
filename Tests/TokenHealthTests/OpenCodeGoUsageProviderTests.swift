@@ -11,12 +11,12 @@ struct OpenCodeGoUsageProviderTests {
       "currentPeriod": {
         "id": "period_1",
         "status": "active",
-        "amountMicroCents": 10000000,
+        "amountMicroCents": 1000000000,
         "startsAt": "2026-08-01T00:00:00.000Z",
         "endsAt": "2026-09-01T00:00:00.000Z"
       },
-      "nextChargeMicroCents": 1000000,
-      "recurringChargeMicroCents": 1000000,
+      "nextChargeMicroCents": 100000000,
+      "recurringChargeMicroCents": 100000000,
       "cancelAtPeriodEnd": false,
       "durableBalanceFallbackEnabled": false,
       "meters": [
@@ -24,28 +24,28 @@ struct OpenCodeGoUsageProviderTests {
           "kind": "five_hour",
           "windowStartsAt": "2026-08-07T07:00:00.000Z",
           "resetsAt": "2026-08-07T12:00:00.000Z",
-          "limitMicroCents": 1200000,
-          "settledMicroCents": 310000,
-          "reservedMicroCents": 9000,
-          "remainingMicroCents": 881000
+          "limitMicroCents": 120000000,
+          "settledMicroCents": 31000000,
+          "reservedMicroCents": 900000,
+          "remainingMicroCents": 88100000
         },
         {
           "kind": "calendar_week",
           "windowStartsAt": "2026-08-03T00:00:00.000Z",
           "resetsAt": "2026-08-10T00:00:00.000Z",
-          "limitMicroCents": 3000000,
-          "settledMicroCents": 900000,
-          "reservedMicroCents": 50000,
-          "remainingMicroCents": 2050000
+          "limitMicroCents": 300000000,
+          "settledMicroCents": 90000000,
+          "reservedMicroCents": 5000000,
+          "remainingMicroCents": 205000000
         },
         {
           "kind": "calendar_month",
           "windowStartsAt": "2026-08-01T00:00:00.000Z",
           "resetsAt": "2026-09-01T00:00:00.000Z",
-          "limitMicroCents": 6000000,
-          "settledMicroCents": 2100000,
-          "reservedMicroCents": 120000,
-          "remainingMicroCents": 3780000
+          "limitMicroCents": 600000000,
+          "settledMicroCents": 210000000,
+          "reservedMicroCents": 12000000,
+          "remainingMicroCents": 378000000
         }
       ],
       "availableActions": [],
@@ -60,10 +60,10 @@ struct OpenCodeGoUsageProviderTests {
         #expect(result.subscriptionMessage == nil)
         #expect(result.planName == "Go · $10.00/mo")
         #expect(result.usages.map(\.window) == [.fiveHours, .week, .month])
-        // used = limit - remaining, in microCents
-        #expect(result.usages.map(\.used) == [319_000, 950_000, 2_220_000])
-        #expect(result.usages.map(\.limit) == [1_200_000, 3_000_000, 6_000_000])
-        // displayValue is dollar-formatted
+        // used = limit - remaining, in microcents
+        #expect(result.usages.map(\.used) == [31_900_000, 95_000_000, 222_000_000])
+        #expect(result.usages.map(\.limit) == [120_000_000, 300_000_000, 600_000_000])
+        // displayValue is dollar-formatted and must not change with the scale
         #expect(result.usages.map(\.displayValue) == ["$0.32 / $1.20", "$0.95 / $3.00", "$2.22 / $6.00"])
         // reset dates present
         #expect(result.usages.compactMap(\.resetDate).count == 3)
@@ -107,8 +107,8 @@ struct OpenCodeGoUsageProviderTests {
             {
               "kind": "five_hour",
               "resetsAt": "2026-08-07T12:00:00.000Z",
-              "limitMicroCents": 1200000,
-              "settledMicroCents": 330000
+              "limitMicroCents": 120000000,
+              "settledMicroCents": 33000000
             }
           ]
         }
@@ -117,8 +117,8 @@ struct OpenCodeGoUsageProviderTests {
 
         #expect(result.usages.count == 1)
         #expect(result.usages[0].window == .fiveHours)
-        #expect(result.usages[0].used == 330_000)
-        #expect(result.usages[0].limit == 1_200_000)
+        #expect(result.usages[0].used == 33_000_000)
+        #expect(result.usages[0].limit == 120_000_000)
     }
 
     @Test
@@ -127,8 +127,8 @@ struct OpenCodeGoUsageProviderTests {
         {
           "subscriptionStatus": "active",
           "meters": [
-            { "kind": "some_other_window", "limitMicroCents": 1000, "remainingMicroCents": 500 },
-            { "kind": "five_hour", "resetsAt": "2026-08-07T12:00:00.000Z", "limitMicroCents": 1200000, "remainingMicroCents": 900000 }
+            { "kind": "some_other_window", "limitMicroCents": 100000, "remainingMicroCents": 50000 },
+            { "kind": "five_hour", "resetsAt": "2026-08-07T12:00:00.000Z", "limitMicroCents": 120000000, "remainingMicroCents": 90000000 }
           ]
         }
         """
@@ -151,9 +151,9 @@ struct OpenCodeGoUsageProviderTests {
           "goStatus": {
             "subscriptionStatus": "active",
             "meters": [
-              { "kind": "five_hour", "resetsAt": "2026-08-07T12:00:00.000Z", "limitMicroCents": 1200000, "remainingMicroCents": 900000 },
-              { "kind": "calendar_week", "resetsAt": "2026-08-10T00:00:00.000Z", "limitMicroCents": 3000000, "remainingMicroCents": 2000000 },
-              { "kind": "calendar_month", "resetsAt": "2026-09-01T00:00:00.000Z", "limitMicroCents": 6000000, "remainingMicroCents": 4000000 }
+              { "kind": "five_hour", "resetsAt": "2026-08-07T12:00:00.000Z", "limitMicroCents": 120000000, "remainingMicroCents": 90000000 },
+              { "kind": "calendar_week", "resetsAt": "2026-08-10T00:00:00.000Z", "limitMicroCents": 300000000, "remainingMicroCents": 200000000 },
+              { "kind": "calendar_month", "resetsAt": "2026-09-01T00:00:00.000Z", "limitMicroCents": 600000000, "remainingMicroCents": 400000000 }
             ]
           },
           "session": { "expiresAt": "2026-08-08T00:00:00.000Z", "user": { "id": "u1", "email": "a@b.c" } }
@@ -163,7 +163,7 @@ struct OpenCodeGoUsageProviderTests {
 
         #expect(result.usages.count == 3)
         #expect(result.usages.map(\.window) == [.fiveHours, .week, .month])
-        #expect(result.usages.map(\.used) == [300_000, 1_000_000, 2_000_000])
+        #expect(result.usages.map(\.used) == [30_000_000, 100_000_000, 200_000_000])
     }
 
     @Test
@@ -234,8 +234,8 @@ struct OpenCodeGoUsageProviderTests {
 
         #expect(sorted.map(\.window) == [.fiveHours, .week, .month])
         // percent × published limits: 5%×$12, 16%×$30, 8%×$60 (microCents)
-        #expect(sorted.map(\.used) == [600_000, 4_800_000, 4_800_000])
-        #expect(sorted.map(\.limit) == [12_000_000, 30_000_000, 60_000_000])
+        #expect(sorted.map(\.used) == [60_000_000, 480_000_000, 480_000_000])
+        #expect(sorted.map(\.limit) == [1_200_000_000, 3_000_000_000, 6_000_000_000])
         #expect(sorted.map(\.displayValue) == ["$0.60 / $12.00", "$4.80 / $30.00", "$4.80 / $60.00"])
         #expect(sorted.compactMap(\.resetDate).count == 3)
     }
@@ -252,8 +252,8 @@ struct OpenCodeGoUsageProviderTests {
         let result = try OpenCodeGoUsageParser().parseAPIResponse(data: Data(response.utf8))
 
         #expect(result.usages.count == 1)
-        #expect(result.usages[0].used == 12_000_000)
-        #expect(result.usages[0].limit == 12_000_000)
+        #expect(result.usages[0].used == 1_200_000_000)
+        #expect(result.usages[0].limit == 1_200_000_000)
         #expect(result.usages[0].ratio == 1)
     }
 
@@ -262,17 +262,17 @@ struct OpenCodeGoUsageProviderTests {
         let response = """
         {
           "limits": [
-            { "kind": "five_hour", "limitMicroCents": 1200000, "usedMicroCents": 300000, "resetsAt": "2026-08-07T12:00:00.000Z" },
-            { "kind": "calendar_week", "limitMicroCents": 3000000, "usedMicroCents": 900000, "resetsAt": "2026-08-10T00:00:00.000Z" },
-            { "kind": "calendar_month", "limitMicroCents": 6000000, "usedMicroCents": 2100000, "resetsAt": "2026-09-01T00:00:00.000Z" }
+            { "kind": "five_hour", "limitMicroCents": 120000000, "usedMicroCents": 30000000, "resetsAt": "2026-08-07T12:00:00.000Z" },
+            { "kind": "calendar_week", "limitMicroCents": 300000000, "usedMicroCents": 90000000, "resetsAt": "2026-08-10T00:00:00.000Z" },
+            { "kind": "calendar_month", "limitMicroCents": 600000000, "usedMicroCents": 210000000, "resetsAt": "2026-09-01T00:00:00.000Z" }
           ]
         }
         """
         let result = try OpenCodeGoUsageParser().parseAPIResponse(data: Data(response.utf8))
 
         #expect(result.usages.map(\.window) == [.fiveHours, .week, .month])
-        #expect(result.usages.map(\.used) == [300_000, 900_000, 2_100_000])
-        #expect(result.usages.map(\.limit) == [1_200_000, 3_000_000, 6_000_000])
+        #expect(result.usages.map(\.used) == [30_000_000, 90_000_000, 210_000_000])
+        #expect(result.usages.map(\.limit) == [120_000_000, 300_000_000, 600_000_000])
     }
 
     @Test
@@ -280,9 +280,9 @@ struct OpenCodeGoUsageProviderTests {
         let response = """
         {
           "usage": {
-            "five_hour": { "limit": 1200000, "used": 400000, "resetAt": "2026-08-07T12:00:00.000Z" },
-            "week": { "limit": 3000000, "used": 800000, "resetAt": "2026-08-10T00:00:00.000Z" },
-            "month": { "limit": 6000000, "used": 2000000, "resetAt": "2026-09-01T00:00:00.000Z" }
+            "five_hour": { "limit": 120000000, "used": 40000000, "resetAt": "2026-08-07T12:00:00.000Z" },
+            "week": { "limit": 300000000, "used": 80000000, "resetAt": "2026-08-10T00:00:00.000Z" },
+            "month": { "limit": 600000000, "used": 200000000, "resetAt": "2026-09-01T00:00:00.000Z" }
           }
         }
         """
@@ -290,7 +290,7 @@ struct OpenCodeGoUsageProviderTests {
         let sorted = result.usages.sorted { usageRank($0.window) < usageRank($1.window) }
 
         #expect(sorted.map(\.window) == [.fiveHours, .week, .month])
-        #expect(sorted.map(\.used) == [400_000, 800_000, 2_000_000])
+        #expect(sorted.map(\.used) == [40_000_000, 80_000_000, 200_000_000])
     }
 
     private func usageRank(_ window: UsageWindow) -> Int {
@@ -308,7 +308,7 @@ struct OpenCodeGoUsageProviderTests {
         {
           "data": {
             "limits": [
-              { "kind": "five_hour", "limitMicroCents": 1200000, "remainingMicroCents": 1000000, "resetsAt": "2026-08-07T12:00:00.000Z" }
+              { "kind": "five_hour", "limitMicroCents": 120000000, "remainingMicroCents": 100000000, "resetsAt": "2026-08-07T12:00:00.000Z" }
             ]
           }
         }
@@ -316,8 +316,8 @@ struct OpenCodeGoUsageProviderTests {
         let result = try OpenCodeGoUsageParser().parseAPIResponse(data: Data(response.utf8))
 
         #expect(result.usages.count == 1)
-        #expect(result.usages[0].used == 200_000)
-        #expect(result.usages[0].limit == 1_200_000)
+        #expect(result.usages[0].used == 20_000_000)
+        #expect(result.usages[0].limit == 120_000_000)
     }
 
     @Test
@@ -359,10 +359,12 @@ struct OpenCodeGoUsageProviderTests {
 
     @Test
     func formatsDollarsFromMicroCents() {
-        #expect(OpenCodeGoUsageParser.dollarsText(1_200_000) == "$1.20")
-        #expect(OpenCodeGoUsageParser.dollarsText(12_000_000) == "$12.00")
-        #expect(OpenCodeGoUsageParser.dollarsText(50_000) == "$0.05")
-        #expect(OpenCodeGoUsageParser.dollarsText(1_000_000) == "$1.00")
+        // microcents: 1 USD = 1e8. The console's own price constants use this scale
+        // (Go plan recurringMicroCents = 1000000000n is $10/mo).
+        #expect(OpenCodeGoUsageParser.dollarsText(120_000_000) == "$1.20")
+        #expect(OpenCodeGoUsageParser.dollarsText(1_200_000_000) == "$12.00")
+        #expect(OpenCodeGoUsageParser.dollarsText(5_000_000) == "$0.05")
+        #expect(OpenCodeGoUsageParser.dollarsText(100_000_000) == "$1.00")
     }
 
     private func parse(_ json: String) throws -> OpenCodeGoUsageParser.ParseResult {
