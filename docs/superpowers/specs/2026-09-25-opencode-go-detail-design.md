@@ -38,9 +38,14 @@
 `OpenCodeGoUsageParser.dollarsText` 现在按 `/1e6` 换算（把 microcents 当 microdollars）。按 §2 的证据，console 的单位是 1e-8 美元，
 现路径会把 $12 的额度显示成 $1200。修法：
 
-- `dollarsText`：除数改为 `1_000_000_000` 量级即 `1e8`（实现为 `1e8`）。
+- `dollarsText`：除数改为 `100_000_000`（即 1e8）。
 - `apiLimitMicroCents`：常量从 `12/30/60 × 1_000_000` 改为 `× 100_000_000`。API key 路径的**显示值因此逐字不变**（百分比 × 新常量 ÷ 新除数 == 旧值），只有内部标度变。
-- 既有测试 `formatsDollarsFromMicroCents`、`parsesRealAPIUsageShape` 的期望值按新标度更新（后者断言的是显示字符串，应当**保持不变**，正好验证这一点）。
+- **既有测试的统一口径：把所有代表美元金额的 fixture 数值 ×100**（从旧的 1e-6 标度换到线上真实的 1e-8 标度，`1_200_000` → `120_000_000` 一类），然后按四类更新断言：
+  1. **所有显示字符串逐字不变**（`displayValue`、`planName`）——这正是「用户可见行为没变」的验收。
+  2. **常量驱动的数字 ×100**：`apiUsageOverLimitClampsToLimit`（`used`/`limit` 的 `12_000_000` → `1_200_000_000`）、`parsesRealAPIUsageShape`（百分比 × 新常量的结果）。
+  3. **fixture 驱动的数字随 fixture ×100**：`parsesActiveGoStatusIntoThreeMeters`、`fallsBackToSettledMicroCentsWhenRemainingMissing`、`unwrapsWebViewEnvelopeFromGoStatus`、`parsesAPIUsageLimitsArray` / `Dictionary` / `DataEnvelope`。
+  4. **纯百分比/零值用例不动**；`formatsDollarsFromMicroCents` 改参数、期望不变。
+
 
 ### 3.2 网页会话取数路径解析不了现在的响应，也缺 workspace 作用域
 
@@ -69,8 +74,9 @@
 修法（本节全部落在 `OpenCodeGoUsageParser.parseBundle` 与 provider 的取数流程里）：
 
 1. 新形状解析：`access.meters.fiveHour/week/month` → `TokenUsage(window: .fiveHours/.week/.month, used: usedMicroCents, limit: limitMicroCents, resetDate: resetsAt ?? access.endsAt, displayValue: "$used / $limit")`。月窗口没有 `resetsAt`，用 `access.endsAt`。`access` 缺失或为 null → 视为未订阅（沿用既有文案）。
-2. 旧形状保留为兜底（解析顺序：新形状 → 旧形状），行为不变。
-3. 取数时先 `GET /api/me/orgs` 拿 workspace 列表；逐个（上限 5 个）带 `x-org-id` 请求 `/api/go/status`，取**第一个 `access` 非空**的 workspace 作为本次卡片的 workspace；若都没有订阅，用第一个 workspace 的响应走"未订阅"分支。后续用量请求用同一个 workspace id。
+2. **新形状没有 `currentPeriod`，`planName` 固定为 `"Go"`**（与 API key 路径的兜底一致）；不再走「`Go · $10.00/mo`」——那个价格在新响应里拿不到，凭 §2 的常量硬编码属于臆造。旧形状仍按原逻辑产出 `Go · $X/mo`。
+3. 旧形状保留为兜底（解析顺序：新形状 → 旧形状），行为不变。
+4. 取数时先 `GET /api/me/orgs` 拿 workspace 列表；逐个（上限 5 个）带 `x-org-id` 请求 `/api/go/status`，取**第一个 `access` 非空**的 workspace 作为本次卡片的 workspace；若都没有订阅，用第一个 workspace 的响应走"未订阅"分支。后续用量请求用同一个 workspace id。
 
 ## 4. 数据来源与请求序列
 
@@ -78,13 +84,14 @@
 
 | # | 请求 | 作用域 | 用途 |
 | --- | --- | --- | --- |
-| 1 | `GET /api/me/orgs` | 无 | workspace 列表 |
+| 1 | `GET /api/me/orgs` | 无 | workspace 列表：`[{id, name}]` |
 | 2 | `GET /api/go/status`（逐个 workspace，直到有 `access`） | `x-org-id` | 三额度 + 订阅信息（现有） |
-| 3 | `GET /api/usage/summary?range=30d` | `x-org-id` | 30 天合计：请求数、输入/输出/缓存读/缓存写 tokens、总花费 |
+| 3 | `GET /api/usage/summary?range=30d` | `x-org-id` | token 构成（§7.4）。**30 天汇总行不来自它**，来自 cost-by-day 的按日求和（§7.2） |
 | 4 | `GET /api/usage/cost-by-day?range=30d&bucket=day` | `x-org-id` | 每日 `{date, totalCostMicroCents, totalTokens, totalRequests}`，`date` 为 `"YYYY-MM-DD"` |
-| 5 | `GET /api/usage/models?range=30d&pageSize=100&costOrder=desc` | `x-org-id` | `{items: [{model, provider, totalRequests, total…Tokens, totalCostMicroCents}], pageInfo}` |
+| 5 | `GET /api/usage/models?range=30d&pageSize=100&costOrder=desc` | `x-org-id` | `{items: […], pageInfo}`，item 字段：`model`、`provider`、`totalRequests`、`totalInputTokens`、`totalOutputTokens`、`totalCacheReadTokens`、`totalCacheWrite5mTokens`、`totalCacheWrite1hTokens`、`totalCostMicroCents` |
 
 - 3–5 任一失败（非 2xx / 解析不了）→ 该区块的数据在 bundle 里缺席，卡片少画那一段，**不影响额度**。
+- **tokens 口径**：`summary` 与 `models` 的响应**没有** tokens 总计字段，总计一律按五个分量求和（input + output + cache read + cache write 5m + cache write 1h），与 console 前端自己的 `totalTokens` getter 同口径；`cost-by-day` 自带 `totalTokens`，直接用。
 - 金额字段线上可能是数字或字符串（console 用 BigInt schema），解析一律两种都收。
 - 时间口径：`range=30d` 指 `[今天-29, 今天]`（UTC 自然日），与 console 用量页一致。
 
@@ -106,6 +113,7 @@
 ```
 
 - 信封拼装抽成纯函数（如 `OpenCodeGoUsageEnvelope.make(goStatus:orgs:workspaceId:summary:byDay:models:)`），便于测试。
+- **`ok` / `status` / `text` 三个字段仍然只描述 `/api/go/status` 这一次请求**。内核 `WebSessionController.fetchUsage` 在 `envelope.ok == false` 时直接抛错（并把 401/403 判成会话过期），所以如果把 `ok` 写成「5 个请求都成功」，任何一个用量接口失败都会让整次刷新变成 unavailable —— 与 §4「区块级降级」直接冲突。用量接口的成败只体现在 `usageSummary` / `usageByDay` / `usageModels` 缺席（null）上。
 - `parseBundle` 对新旧两种 `goStatus` 都能解析（§3.2），信封缺 `goStatus` 时维持现有行为。
 - 脚本路径：`request()` 辅助函数扩展为可带额外请求头（`x-org-id`）；先取 `/api/me/orgs`，再按 §3.2 选 workspace、取状态与三份用量。`hasSession`/`session` 字段维持现状。
 
@@ -132,11 +140,13 @@ static func producesUsageDetail(for config: ServiceConfig) -> Bool {
 
 ```swift
 enum OpenCodeGoUsageDetail {
-    static func make(bundle: Data, usages: [TokenUsage]) -> UsageDetail?
+    static func make(bundle: Data, usages: [TokenUsage], today: Date) -> UsageDetail?
 }
 ```
 
 不抛错：解析不出来就返回 nil（浮层退回错误行）；区块级数据缺失只让该区块缺席。信封里额度与用量都拿不到时返回 nil。
+
+**时间锚点显式注入**（与 `DeepSeekUsageDetail.make(bundle:balances:today:)` 同一约定）：「今天」以及 §7.2/§7.3 的所有日期窗口都按**传入 `today` 的 UTC 自然日**推导，构建器内部不做 `Date()` 取时；provider 传 `Date()`，测试传固定时刻，避免 UTC 午夜 flake。
 
 ### 7.1 headline（三额度）
 
@@ -174,6 +184,7 @@ enum OpenCodeGoUsageDetail {
 - 模型名为空或缺失 → 合并进 `Unknown model` 一行。
 - **tokens 与花费都为 0 的行不成行**。
 - 排序：花费降序，相同则模型名升序。**只列前 6 行**，其余进 `footnote`（`+N more models`），被截断的行不参与任何合计（合计在 §7.2/§7.4 里按全量算）。
+- `Tokens` 列按 §4 的 tokens 口径（五个分量求和）；`Requests` 取 `totalRequests`，`Cost` 取 `totalCostMicroCents`。
 - `title` = `By model · last 30 days`，列 `Model` / `Requests` / `Tokens` / `Cost`。
 - `usageModels` 缺席或没有可成行的模型时整段不画。
 
@@ -191,6 +202,8 @@ enum OpenCodeGoUsageDetail {
 
 `DetailSeries` 增加 `emptyText: String`（浮层现在把 `No usage this month` 写死在视图里）。`DeepSeekUsageDetail` 传入同一句 `No usage this month`，
 `DetailPopoverView` 改读 `series.emptyText`——DeepSeek 的显示逐字不变，由既有 `DeepSeekUsageDetailTests` / 渲染冒烟兜底。
+
+`emptyText` **不给默认值**（与模型里其他字段一致，缺失应当编译期就暴露）。既有 `DetailPopoverRenderTests` 里有两处直接构造 `DetailSeries`，实现时一并补上该字段。
 
 ## 10. 错误与边界
 
@@ -214,18 +227,20 @@ enum OpenCodeGoUsageDetail {
 
 | 测试 | 覆盖 |
 | --- | --- |
-| `OpenCodeGoUsageDetailTests`（新） | headline 三行与顺序；今天/7 天/30 天汇总（含补 0、越界日期、同日求和）；趋势 30 点与轴标签；构成（5m+1h 合并）；模型表（合并、丢空行、排序、6 行截断 + footnote、Unknown model）；用量键缺席 → 对应区块不在且不抛错；额度与用量全空 → nil |
-| `OpenCodeGoUsageProviderTests`（扩充） | 新形状 `access.meters` 解析（含月窗口用 `endsAt` 兜底重置时间）；旧形状兜底不变；`dollarsText` 新标度；API key 路径显示值逐字不变；信封拼装纯函数 |
+| `OpenCodeGoUsageDetailTests`（新） | headline 三行与顺序；今天/7 天/30 天汇总（含补 0、越界日期、同日求和；`today` 注入固定时刻）；趋势 30 点与轴标签；构成（5m+1h 合并）；模型表（合并、丢空行、排序、6 行截断 + footnote、Unknown model）；用量键缺席 → 对应区块不在且不抛错；额度与用量全空 → nil |
+| `OpenCodeGoUsageProviderTests`（扩充） | 新形状 `access.meters` 解析（含月窗口用 `endsAt` 兜底重置时间、`planName == "Go"`）；旧形状兜底不变；**既有 fixture 金额 ×100 后所有 `displayValue` / `planName` 字符串断言逐字不变**（§3.1）；API key 路径数字断言按新标度；信封拼装纯函数 |
 | `ProviderDetailCapabilityTests`（扩充） | `.openCodeGo` + `.browserLogin` 为真；`.api` 为假 |
-| `OpenCodeGoWebSessionDescriptorTests`（扩充） | 脚本包含 5 个端点、`x-org-id` 与 workspace 选择逻辑 |
-| 既有测试 | 全绿（`DetailSeries` 加字段的影响面） |
+| `OpenCodeGoWebSessionDescriptorTests`（扩充） | 脚本包含 5 个端点、`x-org-id` 与 workspace 选择逻辑；`ok` 仍只跟随 `/api/go/status` |
+| `DetailPopoverRenderTests`（小改） | 两处 `DetailSeries` 构造补 `emptyText` |
+| 既有测试 | 全绿 |
 
 ## 12. 已知取舍
 
 - **金额标度以 console 自身的常量为准**（§2），既有 `/1e6` 是笔误。验收时用"已用 ÷ 上限 == console 百分比"复核。
+- **API key 路径的容错分支标度未独立验证**：`parseAPIResponse` 里 `limits` / `usage` 形状的兜底分支直接读响应自带的金额，不经 `apiLimitMicroCents` 常量；本机 Zen 账号未实测过这些分支，实现时在代码里留注释说明「单位为 1e-8，未经真实 Zen 响应复核」。
 - **固定 30 天滚动**：不跟随 console 的 24h/7d/30d 选择器（浮层不可交互）。要别的范围请回控制台。
 - **选第一个有订阅的 workspace**：多 workspace 账号不提供选择器；上限 5 个，避免异常账号拖慢刷新。
-- **每次刷新多 3–5 个请求**：跟随现有刷新节奏（含浮层打开时的 5 分钟新鲜度刷新），不做懒加载。
+- **每次刷新多 4 个请求**（单 workspace：orgs + 3 份用量；最坏 5 个 workspace 探测时多 8 个）：跟随现有刷新节奏（含浮层打开时的 5 分钟新鲜度刷新），不做懒加载。
 
 ## 13. 验收
 
