@@ -82,7 +82,16 @@ struct OpenCodeGoWebSessionDescriptor: WebSessionDescriptor {
               break;
             }
           }
-          const status = chosen || { ok: false, status: 400, text: 'OpenCode Go has no workspace', json: null };
+          // No probe ran (the workspace list itself failed or was empty). Carry the orgs request's
+          // auth failure through untouched so the kernel still maps an expired session; anything
+          // else is a plain "no workspace" with a 400.
+          const orgsFailed = orgs.status === 401 || orgs.status === 403;
+          const status = chosen || {
+            ok: false,
+            status: orgsFailed ? orgs.status : 400,
+            text: orgsFailed && orgs.text ? orgs.text : 'OpenCode Go has no workspace',
+            json: null
+          };
           const scoped = (path) => workspaceId
             ? request(path, { 'x-org-id': workspaceId })
             : { ok: false, status: 0, text: '', json: null };
