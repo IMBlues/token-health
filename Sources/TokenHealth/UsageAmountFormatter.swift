@@ -50,7 +50,12 @@ enum UsageAmountFormatter {
     }
 
     static func tint(for usage: TokenUsage) -> Color {
-        guard let ratio = usage.ratio else {
+        tint(forRatio: usage.ratio)
+    }
+
+    /// 阈值与菜单栏竖条、下拉卡片一致：≥90% 红、≥70% 橙、其余绿。没有比例时给强调色。
+    static func tint(forRatio ratio: Double?) -> Color {
+        guard let ratio else {
             return .accentColor
         }
         if ratio >= 0.9 {

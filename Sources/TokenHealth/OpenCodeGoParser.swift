@@ -1,0 +1,455 @@
+import Foundation
+
+struct OpenCodeGoUsageParser {
+    struct ParseResult {
+        var planName: String?
+        var subscriptionMessage: String?
+        var usages: [TokenUsage]
+    }
+
+    private struct Meter {
+        var kind: String
+        var limitMicroCents: Int?
+        var settledMicroCents: Int?
+        var reservedMicroCents: Int?
+        var remainingMicroCents: Int?
+        var resetsAt: Date?
+        var windowStartsAt: Date?
+    }
+
+    func parseBundle(data: Data) throws -> ParseResult {
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard let root = object as? [String: Any] else {
+            throw ParserError.invalidShape
+        }
+
+        // The WebView fallback returns a `{ok, status, ..., goStatus: {...}}` envelope while
+        // the native request returns the GoStatus object itself. Normalize both to GoStatus.
+        let goStatusRoot = (root["goStatus"] as? [String: Any]) ?? root
+
+        // The live console shape (2026-09) carries its meters under `access`; it has no price or
+        // subscriptionStatus, so it returns early and never reaches the legacy walk below.
+        if let access = goStatusRoot["access"] as? [String: Any] {
+            return accessShapeResult(access: access)
+        }
+
+        let status = stringValue(goStatusRoot["subscriptionStatus"]) ?? "inactive"
+        let currentPeriod = goStatusRoot["currentPeriod"] as? [String: Any]
+        let meters = (goStatusRoot["meters"] as? [[String: Any]] ?? []).compactMap(parseMeter)
+
+        var usages: [TokenUsage] = []
+        for meter in meters {
+            guard let usage = usage(for: meter) else {
+                continue
+            }
+            usages.append(usage)
+        }
+
+        guard Self.isActiveStatus(status), !usages.isEmpty else {
+            let message = subscriptionMessage(for: status)
+            return ParseResult(
+                planName: nil,
+                subscriptionMessage: message,
+                usages: []
+            )
+        }
+
+        return ParseResult(
+            planName: planName(currentPeriod: currentPeriod, status: status),
+            subscriptionMessage: nil,
+            usages: usages
+        )
+    }
+
+    /// Parse the current console shape:
+    /// `{access: {meters: {fiveHour|week|month: {limitMicroCents, usedMicroCents, resetsAt}}, endsAt}}`.
+    /// `access` absent or null just means this is not that shape: the caller falls through to the
+    /// legacy walk, and only "no usable meters" ends up reported as not-subscribed.
+    private func accessShapeResult(access: [String: Any]) -> ParseResult {
+        let meters = access["meters"] as? [String: Any] ?? [:]
+        let periodEnd = dateValue(access["endsAt"])
+
+        var usages: [TokenUsage] = []
+        for (key, window) in [("fiveHour", UsageWindow.fiveHours), ("week", .week), ("month", .month)] {
+            guard let item = meters[key] as? [String: Any],
+                  let limit = intValue(item["limitMicroCents"]), limit > 0 else {
+                continue
+            }
+            // Floor-only clamp, same as the legacy path: a window can exceed its limit, and the
+            // card should show that rather than quietly pinning it to the limit.
+            let used = max(0, intValue(item["usedMicroCents"]) ?? 0)
+            usages.append(TokenUsage(
+                window: window,
+                used: used,
+                limit: limit,
+                // Only the month meter lacks a resetsAt of its own; the paid period end stands in
+                // for it. The shorter windows must not borrow it — a 5-hour meter showing the
+                // month's end would read as a 6-day window.
+                resetDate: dateValue(item["resetsAt"]) ?? (window == .month ? periodEnd : nil),
+                unit: nil,
+                displayValue: "\(Self.dollarsText(used)) / \(Self.dollarsText(limit))"
+            ))
+        }
+
+        guard !usages.isEmpty else {
+            return ParseResult(
+                planName: nil,
+                subscriptionMessage: subscriptionMessage(for: "inactive"),
+                usages: []
+            )
+        }
+
+        // This shape carries no price (the console keeps it in the checkout product), so the plan
+        // name is the bare "Go" — the same fallback the API-key path uses.
+        return ParseResult(planName: "Go", subscriptionMessage: nil, usages: usages)
+    }
+
+    /// `/api/orgs` → `[{id, name}]`; the app only needs the ids.
+    static func workspaceIDs(fromOrgs data: Data) -> [String] {
+        guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return list.compactMap { $0["id"] as? String }.filter { !$0.isEmpty }
+    }
+
+    /// Whether this workspace carries a Go subscription, in either the current (`access`) or the
+    /// legacy (`subscriptionStatus`) shape.
+    ///
+    /// An `access` object without usable meters still counts as "has access": the parser reports
+    /// that as not-subscribed, which is the honest degrade. Do not read `true` as "has quota".
+    static func hasGoAccess(statusData: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: statusData) as? [String: Any] else {
+            return false
+        }
+        let goStatus = (root["goStatus"] as? [String: Any]) ?? root
+        if goStatus["access"] is [String: Any] {
+            return true
+        }
+        guard let status = goStatus["subscriptionStatus"] as? String else {
+            return false
+        }
+        return Self.isActiveStatus(status)
+    }
+
+    /// Parse the `GET /zen/go/v1/usage` API response (authenticated by an OpenCode Go API key).
+    /// Verified shape: `{usage: {rolling: {status, percent, resetsAt}, weekly: {...}, monthly: {...}}}`.
+    /// Dollar amounts are derived from the published Go limits ($12 / $30 / $60) × percent.
+    func parseAPIResponse(data: Data) throws -> ParseResult {
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ParserError.invalidShape
+        }
+
+        // Primary shape: {usage: {rolling|weekly|monthly: {percent, resetsAt}}}.
+        if let usage = object["usage"] as? [String: Any] {
+            var usages: [TokenUsage] = []
+            for (key, value) in usage {
+                guard let item = value as? [String: Any],
+                      let window = apiWindow(for: key),
+                      let percent = intValue(item["percent"]) else {
+                    continue
+                }
+                guard let limitMicroCents = Self.apiLimitMicroCents(for: key), limitMicroCents > 0 else {
+                    continue
+                }
+                let used = max(0, min(limitMicroCents, limitMicroCents * percent / 100))
+                usages.append(TokenUsage(
+                    window: window,
+                    used: used,
+                    limit: limitMicroCents,
+                    resetDate: dateValue(item["resetsAt"]),
+                    unit: nil,
+                    displayValue: "\(Self.dollarsText(used)) / \(Self.dollarsText(limitMicroCents))"
+                ))
+            }
+            if !usages.isEmpty {
+                return ParseResult(planName: "Go", subscriptionMessage: nil, usages: usages)
+            }
+        }
+
+        // Fallback: tolerantly try the GoStatus `meters` shape, then common
+        // `{limits|usage: [...]}` / `{data: {...}}` envelopes.
+        if let result = try? parseBundle(data: data), !result.usages.isEmpty {
+            return result
+        }
+        let root = (object["data"] as? [String: Any]) ?? (object["result"] as? [String: Any]) ?? object
+
+        var meters: [Meter] = []
+        // Amounts here come straight from the response; assume the console's microcent scale
+        // (1 USD = 1e8). Unlike the percent branch's published limits above
+        // (apiLimitMicroCents), this shape has never been seen from a real Zen account, so the
+        // scale is unverified.
+        if let list = (root["limits"] as? [[String: Any]]) ?? (root["usage"] as? [[String: Any]]) {
+            meters = list.compactMap { item in
+                guard let kind = stringValue(item["kind"]) ?? stringValue(item["window"]) else {
+                    return nil
+                }
+                return Meter(
+                    kind: kind,
+                    limitMicroCents: intValue(item["limitMicroCents"]) ?? intValue(item["limit"]),
+                    settledMicroCents: intValue(item["settledMicroCents"]) ?? intValue(item["usedMicroCents"]) ?? intValue(item["used"]),
+                    reservedMicroCents: intValue(item["reservedMicroCents"]),
+                    remainingMicroCents: intValue(item["remainingMicroCents"]) ?? intValue(item["remaining"]),
+                    resetsAt: dateValue(item["resetsAt"]) ?? dateValue(item["resetAt"]),
+                    windowStartsAt: dateValue(item["windowStartsAt"])
+                )
+            }
+        } else if let dict = (root["limits"] as? [String: Any]) ?? (root["usage"] as? [String: Any]) {
+            // {limits: {five_hour: {...}, week: {...}}} style.
+            // Amounts here come straight from the response; assume the console's microcent scale
+            // (1 USD = 1e8). Unlike the percent branch's published limits above
+            // (apiLimitMicroCents), this shape has never been seen from a real Zen account, so the
+            // scale is unverified.
+            meters = dict.compactMap { kind, value in
+                guard let item = value as? [String: Any] else {
+                    return nil
+                }
+                return Meter(
+                    kind: kind,
+                    limitMicroCents: intValue(item["limitMicroCents"]) ?? intValue(item["limit"]),
+                    settledMicroCents: intValue(item["settledMicroCents"]) ?? intValue(item["usedMicroCents"]) ?? intValue(item["used"]),
+                    reservedMicroCents: intValue(item["reservedMicroCents"]),
+                    remainingMicroCents: intValue(item["remainingMicroCents"]) ?? intValue(item["remaining"]),
+                    resetsAt: dateValue(item["resetsAt"]) ?? dateValue(item["resetAt"]),
+                    windowStartsAt: dateValue(item["windowStartsAt"])
+                )
+            }
+        }
+
+        let usages = meters.compactMap(usage(for:))
+        if !usages.isEmpty {
+            return ParseResult(planName: "Go", subscriptionMessage: nil, usages: usages)
+        }
+
+        let raw = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+        throw ParserError.unsupportedShape(raw)
+    }
+
+    private func apiWindow(for key: String) -> UsageWindow? {
+        switch key {
+        case "rolling", "five_hour", "fiveHours", "5h":
+            .fiveHours
+        case "weekly", "week", "calendar_week":
+            .week
+        case "monthly", "month", "calendar_month":
+            .month
+        default:
+            nil
+        }
+    }
+
+    /// Published OpenCode Go dollar limits per window, in microcents (1 USD = 1e8).
+    static func apiLimitMicroCents(for key: String) -> Int? {
+        switch key {
+        case "rolling", "five_hour", "fiveHours", "5h":
+            12 * microCentsPerDollar
+        case "weekly", "week", "calendar_week":
+            30 * microCentsPerDollar
+        case "monthly", "month", "calendar_month":
+            60 * microCentsPerDollar
+        default:
+            nil
+        }
+    }
+
+    private func parseMeter(_ object: [String: Any]) -> Meter? {
+        guard let kind = stringValue(object["kind"]) else {
+            return nil
+        }
+        return Meter(
+            kind: kind,
+            limitMicroCents: intValue(object["limitMicroCents"]),
+            settledMicroCents: intValue(object["settledMicroCents"]),
+            reservedMicroCents: intValue(object["reservedMicroCents"]),
+            remainingMicroCents: intValue(object["remainingMicroCents"]),
+            resetsAt: dateValue(object["resetsAt"]),
+            windowStartsAt: dateValue(object["windowStartsAt"])
+        )
+    }
+
+    private func usage(for meter: Meter) -> TokenUsage? {
+        let window: UsageWindow? = switch meter.kind {
+        case "five_hour", "5h", "fiveHours", "five_hours":
+            .fiveHours
+        case "calendar_week", "week", "weekly", "calendar_weeks":
+            .week
+        case "calendar_month", "month", "monthly", "calendar_months":
+            .month
+        default:
+            nil
+        }
+        guard let window, let limit = meter.limitMicroCents, limit > 0 else {
+            return nil
+        }
+
+        let used: Int
+        if let remaining = meter.remainingMicroCents {
+            used = max(0, limit - remaining)
+        } else {
+            used = meter.settledMicroCents ?? 0
+        }
+
+        let usedText = Self.dollarsText(used)
+        let limitText = Self.dollarsText(limit)
+        return TokenUsage(
+            window: window,
+            used: used,
+            limit: limit,
+            resetDate: meter.resetsAt,
+            unit: nil,
+            displayValue: "\(usedText) / \(limitText)"
+        )
+    }
+
+    private static func isActiveStatus(_ status: String) -> Bool {
+        switch status {
+        case "active", "grace":
+            true
+        case "inactive", "suspended", "canceled", "":
+            false
+        default:
+            false
+        }
+    }
+
+    private func subscriptionMessage(for status: String) -> String {
+        switch status {
+        case "inactive":
+            "OpenCode Go is not subscribed. Subscribe at opencode.ai/zen first."
+        case "suspended":
+            "OpenCode Go subscription is suspended."
+        case "canceled":
+            "OpenCode Go subscription is canceled."
+        case "grace":
+            "OpenCode Go subscription is in grace period."
+        default:
+            "OpenCode Go has no active usage data."
+        }
+    }
+
+    private func planName(currentPeriod: [String: Any]?, status: String) -> String? {
+        if let amount = intValue(currentPeriod?["amountMicroCents"]), amount > 0 {
+            return "Go · \(Self.dollarsText(amount))/mo"
+        }
+        return status == "grace" ? "Go · Grace" : "Go Plan"
+    }
+
+    /// Console money fields are microcents: 1 USD = 1e8.
+    static let microCentsPerDollar = 100_000_000
+
+    static func dollars(_ microCents: Int) -> Double {
+        Double(microCents) / Double(microCentsPerDollar)
+    }
+
+    static func dollarsText(_ microCents: Int) -> String {
+        String(format: "$%.2f", locale: Locale(identifier: "en_US_POSIX"), dollars(microCents))
+    }
+
+    // MARK: - Value helpers
+
+    private func stringValue(_ value: Any?) -> String? {
+        if let string = value as? String, !string.isEmpty {
+            return string
+        }
+        return nil
+    }
+
+    private func intValue(_ value: Any?) -> Int? {
+        if let int = value as? Int {
+            return int
+        }
+        if let double = value as? Double {
+            guard double.isFinite, let converted = Int(exactly: double.rounded(.towardZero)) else {
+                return nil
+            }
+            return converted
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let string = value as? String {
+            return Int(string)
+        }
+        return nil
+    }
+
+    private func dateValue(_ value: Any?) -> Date? {
+        guard let string = value as? String, !string.isEmpty else {
+            return nil
+        }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: string) {
+            return date
+        }
+        iso.formatOptions = [.withInternetDateTime]
+        return iso.date(from: string)
+    }
+
+    enum ParserError: LocalizedError {
+        case invalidShape
+        case noUsage
+        case unsupportedShape(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidShape:
+                "Expected a JSON object"
+            case .noUsage:
+                "No OpenCode Go usage data found"
+            case let .unsupportedShape(raw):
+                "Unexpected OpenCode Go API response: \(raw.prefix(200))"
+            }
+        }
+    }
+}
+
+/// Assembles the native path's responses into the same envelope the WebView script returns.
+///
+/// `ok` / `status` / `text` describe a successful `/api/go/status` request: the session kernel
+/// throws on `ok == false` (and maps 401/403 to session-expired), so a failed usage call must
+/// never flip them — it only shows up as the matching `usage*` key being absent. Nothing in the
+/// app reads this native envelope through the session kernel: `ok` / `status` / `text` /
+/// `hasSession` are constants kept for shape parity with the WebView script's envelope. Absent
+/// keys and explicit nulls are equivalent: both consumers read them with optional casts. The
+/// serialization-failure fallback returns the raw status body, which `parseBundle` also accepts,
+/// so meters still render and only the usage sections are absent.
+enum OpenCodeGoUsageEnvelope {
+    static func make(
+        goStatus: Data,
+        orgs: Data,
+        workspaceId: String?,
+        summary: Data?,
+        byDay: Data?,
+        models: Data?
+    ) -> Data {
+        var object: [String: Any] = [
+            "ok": true,
+            "status": 200,
+            "text": "",
+            "hasSession": true
+        ]
+
+        object["goStatus"] = jsonObject(from: goStatus) ?? [:]
+        if let orgsObject = jsonObject(from: orgs) {
+            object["orgs"] = orgsObject
+        }
+        if let workspaceId {
+            object["workspaceId"] = workspaceId
+        }
+        if let summary, let value = jsonObject(from: summary) {
+            object["usageSummary"] = value
+        }
+        if let byDay, let value = jsonObject(from: byDay) {
+            object["usageByDay"] = value
+        }
+        if let models, let value = jsonObject(from: models) {
+            object["usageModels"] = value
+        }
+
+        return (try? JSONSerialization.data(withJSONObject: object)) ?? goStatus
+    }
+
+    private static func jsonObject(from data: Data) -> Any? {
+        try? JSONSerialization.jsonObject(with: data)
+    }
+}

@@ -57,6 +57,9 @@ if [[ ! -d "$APP_DIR/Contents/Resources/TokenHealth_TokenHealth.bundle" ]]; then
   exit 1
 fi
 
+# ad-hoc 就够：凭据条目的 ACL 是「允许所有应用」（见 KeychainStore 的注释），重建不会再
+# 触发钥匙串授权弹窗，签名身份也就无关紧要 —— 不要为了免弹窗去折腾证书签名，2026-09-28
+# 实测过：这台 macOS 把非 Apple 签名的授权记忆按 cdhash 存（XARA），换证书也躲不掉。
 codesign --force --deep --sign - "$APP_DIR"
 
 # 资源包必须落在 Contents 里，散在 .app 根目录会让签名「unsealed」，别人那台机器

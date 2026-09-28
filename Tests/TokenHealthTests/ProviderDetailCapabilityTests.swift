@@ -17,8 +17,25 @@ struct ProviderDetailCapabilityTests {
     }
 
     @Test
+    func browserLoginOpenCodeGoProducesDetail() {
+        #expect(ProviderFactory.producesUsageDetail(for: config(.openCodeGo, auth: .browserLogin)))
+        #expect(
+            !ProviderFactory.producesUsageDetail(for: config(.openCodeGo, auth: .api)),
+            "API key 模式只有百分比与重置时间，撑不起卡片"
+        )
+    }
+
+    @Test
+    func codexProducesDetailInEitherMode() {
+        // Codex 没有登录 / API 之分：`usesLocalLogin` 把它的 authMode 固定成 `.api`，
+        // 所以这个分支不能看 authMode（与 DeepSeek / Go 那条规则不同）。
+        #expect(ProviderFactory.producesUsageDetail(for: config(.codex, auth: .api)))
+        #expect(ProviderFactory.producesUsageDetail(for: config(.codex, auth: .browserLogin)))
+    }
+
+    @Test
     func everyOtherProviderIsUnsupported() {
-        for kind in ProviderKind.allCases where kind != .deepSeek {
+        for kind in ProviderKind.allCases where kind != .deepSeek && kind != .openCodeGo && kind != .codex {
             for auth in AuthMode.allCases {
                 #expect(
                     !ProviderFactory.producesUsageDetail(for: config(kind, auth: auth)),

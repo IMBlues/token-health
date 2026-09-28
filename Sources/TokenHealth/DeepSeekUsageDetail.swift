@@ -6,8 +6,6 @@ import Foundation
 enum DeepSeekUsageDetail {
     static let tableRowLimit = 6
     static let unknownModelName = "Unknown model"
-    static let dateFormat = "yyyy-MM-dd"
-    static let axisDateFormat = "M/d"
 
     /// 一天或一个模型的合计。
     private struct Totals: Equatable {
@@ -37,8 +35,8 @@ enum DeepSeekUsageDetail {
         }
 
         // 当月 1 号到今天的日期列表，趋势图与「本月」都基于它。
-        let calendar = calendar(today: today)
-        let daysInRange = dayList(today: today, calendar: calendar)
+        let calendar = UsageDetailSupport.utcCalendar()
+        let daysInRange = UsageDetailSupport.monthToDateDayList(day: today.day, calendar: calendar)
         guard !daysInRange.isEmpty else {
             return nil
         }
@@ -120,12 +118,13 @@ enum DeepSeekUsageDetail {
         let points = daysInRange.map { date in
             DetailSeriesPoint(date: date, value: Double(byDay[date]?.tokens ?? 0))
         }
-        let formatter = axisDateFormatter(calendar: calendar)
+        let formatter = UsageDetailSupport.axisDateFormatter(calendar: calendar)
         return DetailSeries(
             title: "Tokens this month",
             points: points,
             axisStart: daysInRange.first.map { formatter.string(from: $0) } ?? "",
-            axisEnd: daysInRange.last.map { formatter.string(from: $0) } ?? ""
+            axisEnd: daysInRange.last.map { formatter.string(from: $0) } ?? "",
+            emptyText: "No usage this month"
         )
     }
 
@@ -205,8 +204,12 @@ enum DeepSeekUsageDetail {
         into byModel: inout [String: Totals]
     ) -> [Date: Totals] {
         var byDay: [Date: Totals] = [:]
+        let formatter = UsageDetailSupport.dateFormatter(calendar: calendar)
         for day in DeepSeekPayload.days(fromAmount: root) {
-            guard let date = date(fromDay: day, calendar: calendar), allowed.contains(date) else {
+            guard let date = UsageDetailSupport.date(
+                fromDay: DeepSeekPayload.dateText(day),
+                formatter: formatter
+            ), allowed.contains(date) else {
                 continue
             }
             var totals = byDay[date] ?? Totals()
@@ -235,9 +238,13 @@ enum DeepSeekUsageDetail {
         into byModel: inout [String: Totals]
     ) -> [Date: Totals] {
         var byDay: [Date: Totals] = [:]
+        let formatter = UsageDetailSupport.dateFormatter(calendar: calendar)
         for currency in DeepSeekPayload.costCurrencies(fromCost: root) {
             for day in currency.days {
-                guard let date = date(fromDay: day, calendar: calendar), allowed.contains(date) else {
+                guard let date = UsageDetailSupport.date(
+                    fromDay: DeepSeekPayload.dateText(day),
+                    formatter: formatter
+                ), allowed.contains(date) else {
                     continue
                 }
                 var totals = byDay[date] ?? Totals()
@@ -274,62 +281,6 @@ enum DeepSeekUsageDetail {
 
     private static func modelName(from item: [String: Any]) -> String {
         DeepSeekPayload.modelName(in: item) ?? unknownModelName
-    }
-
-    // MARK: - 日期
-
-    /// 取前 10 个字符解析 —— 与前缀匹配的既有解析器同样宽容，能容忍 `"2026-09-24T00:00:00Z"`。
-    private static func date(fromDay day: [String: Any], calendar: Calendar) -> Date? {
-        guard let text = DeepSeekPayload.dateText(day), text.count >= 10 else {
-            return nil
-        }
-        return dateFormatter(calendar: calendar).date(from: String(text.prefix(10)))
-    }
-
-    /// 当月 1 号到今天（UTC），逐日一个。
-    private static func dayList(today: DeepSeekUsagePeriod, calendar: Calendar) -> [Date] {
-        guard let todayDate = dateFormatter(calendar: calendar).date(from: today.day) else {
-            return []
-        }
-        let components = calendar.dateComponents([.year, .month], from: todayDate)
-        guard let first = calendar.date(
-            from: DateComponents(year: components.year, month: components.month, day: 1)
-        ) else {
-            return []
-        }
-
-        var days: [Date] = []
-        var cursor = first
-        while cursor <= todayDate {
-            days.append(cursor)
-            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else {
-                break
-            }
-            cursor = next
-        }
-        return days
-    }
-
-    private static func calendar(today: DeepSeekUsagePeriod) -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
-        return calendar
-    }
-
-    private static func dateFormatter(calendar: Calendar) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = dateFormat
-        return formatter
-    }
-
-    private static func axisDateFormatter(calendar: Calendar) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = axisDateFormat
-        return formatter
     }
 
     private static func money(_ amount: Decimal, currency: String) -> String {

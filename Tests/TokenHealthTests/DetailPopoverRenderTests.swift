@@ -28,7 +28,7 @@ struct DetailPopoverRenderTests {
         }
         let detail = UsageDetail(
             headline: [DetailStat(label: "CNY", value: "1,284.60")],
-            series: DetailSeries(title: "Tokens this month", points: points, axisStart: "9/1", axisEnd: "9/24")
+            series: DetailSeries(title: "Tokens this month", points: points, axisStart: "9/1", axisEnd: "9/24", emptyText: "No usage this month")
         )
         let image = try render(detail)
         #expect(image.height > 0, "全零的月份不该崩")
@@ -75,7 +75,8 @@ struct DetailPopoverRenderTests {
                     )
                 },
                 axisStart: "9/1",
-                axisEnd: "9/24"
+                axisEnd: "9/24",
+                emptyText: "No usage this month"
             ),
             breakdown: [
                 DetailStat(label: "Output", value: "8.1M"),
@@ -93,6 +94,23 @@ struct DetailPopoverRenderTests {
                 footnote: "+2 more models"
             )
         )
+    }
+
+    @Test
+    func rendersQuotaBars() throws {
+        let bars = try render(UsageDetail(headline: [
+            DetailStat(label: "5h", value: "100%", ratio: 1),
+            DetailStat(label: "Week", value: "75%", ratio: 0.75),
+            // 极小比例走最小可见宽度那条分支，同样不该崩。
+            DetailStat(label: "Month", value: "0.1%", ratio: 0.001)
+        ]))
+        let plain = try render(UsageDetail(headline: [
+            DetailStat(label: "5h", value: "100%"),
+            DetailStat(label: "Week", value: "75%"),
+            DetailStat(label: "Month", value: "0.1%")
+        ]))
+
+        #expect(bars.height > plain.height, "有比例的额度行比纯文字多出一条")
     }
 
     private func render(

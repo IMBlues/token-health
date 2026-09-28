@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 struct CodexUsageProvider: UsageProvider {
-    private static let cache = CodexRateLimitsCache()
+    private static let cache = CodexQuotaCache()
     private let client: CodexAppServerClient
 
     init(client: CodexAppServerClient = CodexAppServerClient()) {
@@ -12,20 +12,20 @@ struct CodexUsageProvider: UsageProvider {
 
     func fetchUsage(config: ServiceConfig, secrets _: ProviderSecrets) async -> ProviderUsageSnapshot {
         do {
-            let response: CodexRateLimitsResponse
+            let bundle: CodexQuotaBundle
             let fetchedAt: Date
             let cacheKey = client.cacheKey
             switch await Self.cache.lookup(key: cacheKey, maxAge: 60, minimumRequestInterval: 60) {
             case let .cached(cached):
-                response = cached.value
+                bundle = cached.value
                 fetchedAt = cached.fetchedAt
             case let .failed(error):
                 throw error
             case .fetch:
                 do {
-                    response = try await client.fetchRateLimits()
+                    bundle = try await client.fetchQuotaBundle()
                     fetchedAt = Date()
-                    await Self.cache.store(response, key: cacheKey, fetchedAt: fetchedAt)
+                    await Self.cache.store(bundle, key: cacheKey, fetchedAt: fetchedAt)
                 } catch let error as CodexAppServerError {
                     await Self.cache.storeFailure(error, key: cacheKey, failedAt: Date())
                     throw error
@@ -37,25 +37,7 @@ struct CodexUsageProvider: UsageProvider {
                 throw CodexAppServerError.refreshThrottled
             }
 
-            let mapped = CodexRateLimitsMapper.map(response)
-            guard !mapped.usages.isEmpty else {
-                return snapshot(
-                    config: config,
-                    state: .unavailable,
-                    message: "Codex did not return any quota windows"
-                )
-            }
-
-            return ProviderUsageSnapshot(
-                id: config.id,
-                serviceName: config.displayName,
-                providerTitle: config.providerKind.title,
-                planName: mapped.planName,
-                usages: mapped.usages,
-                state: .ready,
-                statusMessage: mapped.statusMessage,
-                updatedAt: fetchedAt
-            )
+            return snapshot(config: config, bundle: bundle, fetchedAt: fetchedAt, today: Date())
         } catch let error as CodexAppServerError {
             let state: ProviderUsageSnapshot.State = switch error {
             case .executableNotFound, .requestRejected:
@@ -63,13 +45,39 @@ struct CodexUsageProvider: UsageProvider {
             case .invalidResponse, .launchFailed, .processExited, .refreshThrottled, .responseTooLarge, .timeout:
                 .unavailable
             }
-            return snapshot(config: config, state: state, message: error.localizedDescription)
+            return failureSnapshot(config: config, state: state, message: error.localizedDescription)
         } catch {
-            return snapshot(config: config, state: .unavailable, message: "Codex quota is unavailable")
+            return failureSnapshot(config: config, state: .unavailable, message: "Codex quota is unavailable")
         }
     }
 
-    private func snapshot(
+    /// Internal rather than private: tests hand it a synthetic bundle and a fixed `today` instead
+    /// of spawning a Codex process, and never race UTC midnight.
+    func snapshot(
+        config: ServiceConfig,
+        bundle: CodexQuotaBundle,
+        fetchedAt: Date,
+        today: Date
+    ) -> ProviderUsageSnapshot {
+        let mapped = CodexRateLimitsMapper.map(bundle.rateLimits)
+        guard !mapped.usages.isEmpty else {
+            return ProviderUsageSnapshot.unavailable(config: config, message: "Codex did not return any quota windows")
+        }
+
+        return ProviderUsageSnapshot(
+            id: config.id,
+            serviceName: config.displayName,
+            providerTitle: config.providerKind.title,
+            planName: mapped.planName,
+            usages: mapped.usages,
+            detail: CodexUsageDetail.make(usage: bundle.accountUsage, usages: mapped.usages, today: today),
+            state: .ready,
+            statusMessage: mapped.statusMessage,
+            updatedAt: fetchedAt
+        )
+    }
+
+    private func failureSnapshot(
         config: ServiceConfig,
         state: ProviderUsageSnapshot.State,
         message: String
@@ -84,6 +92,13 @@ struct CodexUsageProvider: UsageProvider {
             updatedAt: Date()
         )
     }
+}
+
+/// One app-server round trip's payloads. The quota read is required; the account usage read is a
+/// nice-to-have whose absence only costs the detail's usage sections.
+struct CodexQuotaBundle: Sendable {
+    var rateLimits: CodexRateLimitsResponse
+    var accountUsage: CodexAccountUsageResponse?
 }
 
 struct CodexAppServerClient: Sendable {
@@ -117,7 +132,7 @@ struct CodexAppServerClient: Sendable {
         return "\(executablePath)|\(codexHome)"
     }
 
-    func fetchRateLimits() async throws -> CodexRateLimitsResponse {
+    func fetchQuotaBundle() async throws -> CodexQuotaBundle {
         guard let executableURL = testExecutableURL ?? CodexExecutableResolver.resolve() else {
             throw CodexAppServerError.executableNotFound
         }
@@ -129,17 +144,29 @@ struct CodexAppServerClient: Sendable {
             throw CodexAppServerError.invalidResponse
         }
 
-        let responseData = try await CodexAppServerSession.run(
+        let responses = try await CodexAppServerSession.run(
             executableURL: executableURL,
             arguments: Self.arguments,
             requestData: requestData,
-            responseID: CodexQuotaRPC.responseID,
+            responseIDs: CodexQuotaRPC.responseIDs,
             timeout: timeout
         )
 
-        let response: CodexRPCQuotaResponse
+        guard let quotaData = responses[CodexQuotaRPC.quotaResponseID] else {
+            throw CodexAppServerError.invalidResponse
+        }
+        return CodexQuotaBundle(
+            rateLimits: try Self.rateLimits(from: quotaData),
+            accountUsage: Self.accountUsage(from: responses[CodexQuotaRPC.usageResponseID])
+        )
+    }
+
+    /// A missing, rejected or unreadable quota result fails the whole refresh: every number the
+    /// menu bar shows comes from it.
+    private static func rateLimits(from data: Data) throws -> CodexRateLimitsResponse {
+        let response: CodexRPCResult<CodexRateLimitsResponse>
         do {
-            response = try JSONDecoder().decode(CodexRPCQuotaResponse.self, from: responseData)
+            response = try JSONDecoder().decode(CodexRPCResult.self, from: data)
         } catch {
             throw CodexAppServerError.invalidResponse
         }
@@ -147,8 +174,21 @@ struct CodexAppServerClient: Sendable {
         if response.error != nil {
             throw CodexAppServerError.requestRejected
         }
-        guard response.id == CodexQuotaRPC.responseID, let result = response.result else {
+        guard response.id == CodexQuotaRPC.quotaResponseID, let result = response.result else {
             throw CodexAppServerError.invalidResponse
+        }
+        return result
+    }
+
+    /// An answered-but-bad usage read (an older Codex rejects the method with `-32601`) only
+    /// drops the usage sections; a missing answer never reaches here — that is a session timeout.
+    private static func accountUsage(from data: Data?) -> CodexAccountUsageResponse? {
+        guard let data,
+              let response = try? JSONDecoder().decode(CodexRPCResult<CodexAccountUsageResponse>.self, from: data),
+              response.error == nil,
+              response.id == CodexQuotaRPC.usageResponseID,
+              let result = response.result else {
+            return nil
         }
         return result
     }
@@ -159,8 +199,16 @@ struct CodexAppServerClient: Sendable {
 }
 
 enum CodexQuotaRPC {
-    static let responseID = 1
-    static let outboundMethods = ["initialize", "initialized", "account/rateLimits/read"]
+    static let quotaResponseID = 1
+    static let usageResponseID = 2
+    /// Both replies are expected in the same session; `CodexAppServerSession` waits for all of them.
+    static let responseIDs: Set<Int> = [quotaResponseID, usageResponseID]
+    static let outboundMethods = [
+        "initialize",
+        "initialized",
+        "account/rateLimits/read",
+        "account/usage/read"
+    ]
 
     static func requestData(version: String) throws -> Data {
         let messages: [[String: Any]] = [
@@ -175,7 +223,9 @@ enum CodexQuotaRPC {
                 ]
             ],
             ["method": outboundMethods[1]],
-            ["method": outboundMethods[2], "id": responseID]
+            ["method": outboundMethods[2], "id": quotaResponseID],
+            // No params: the method takes none (the request schema requires only `id` and `method`).
+            ["method": outboundMethods[3], "id": usageResponseID]
         ]
 
         var data = Data()
@@ -287,11 +337,12 @@ private final class CodexAppServerSession: @unchecked Sendable {
     private let outputPipe = Pipe()
     private let ioQueue = DispatchQueue(label: "local.token-health.codex-app-server")
     private let requestData: Data
-    private let responseID: Int
+    private let responseIDs: Set<Int>
     private let timeout: TimeInterval
     private let lock = NSLock()
 
-    private var continuation: CheckedContinuation<Data, Error>?
+    private var continuation: CheckedContinuation<[Int: Data], Error>?
+    private var responses: [Int: Data] = [:]
     private var outputBuffer = Data()
     private var outputBytes = 0
     private var timeoutWorkItem: DispatchWorkItem?
@@ -301,12 +352,12 @@ private final class CodexAppServerSession: @unchecked Sendable {
         executableURL: URL,
         arguments: [String],
         requestData: Data,
-        responseID: Int,
+        responseIDs: Set<Int>,
         timeout: TimeInterval,
-        continuation: CheckedContinuation<Data, Error>
+        continuation: CheckedContinuation<[Int: Data], Error>
     ) {
         self.requestData = requestData
-        self.responseID = responseID
+        self.responseIDs = responseIDs
         self.timeout = timeout
         self.continuation = continuation
         process.executableURL = executableURL
@@ -321,15 +372,15 @@ private final class CodexAppServerSession: @unchecked Sendable {
         executableURL: URL,
         arguments: [String],
         requestData: Data,
-        responseID: Int,
+        responseIDs: Set<Int>,
         timeout: TimeInterval
-    ) async throws -> Data {
+    ) async throws -> [Int: Data] {
         try await withCheckedThrowingContinuation { continuation in
             let session = CodexAppServerSession(
                 executableURL: executableURL,
                 arguments: arguments,
                 requestData: requestData,
-                responseID: responseID,
+                responseIDs: responseIDs,
                 timeout: timeout,
                 continuation: continuation
             )
@@ -403,16 +454,28 @@ private final class CodexAppServerSession: @unchecked Sendable {
 
         for line in lines where !line.isEmpty {
             guard let envelope = try? JSONDecoder().decode(CodexRPCIDEnvelope.self, from: line),
-                  envelope.id == responseID else {
+                  envelope.isReply,
+                  let id = envelope.id, responseIDs.contains(id) else {
                 continue
             }
-            complete(.success(line))
-            return
+            let collected: [Int: Data]? = lock.withLock {
+                guard !isFinished else {
+                    return nil
+                }
+                responses[id] = line
+                // Only once every requested id has answered. A request that never answers is a
+                // session timeout, not a partial result — see the spec's error table.
+                return responses.count == responseIDs.count ? responses : nil
+            }
+            if let collected {
+                complete(.success(collected))
+                return
+            }
         }
     }
 
-    private func complete(_ result: Result<Data, Error>) {
-        let pending: (CheckedContinuation<Data, Error>, DispatchWorkItem?)? = lock.withLock {
+    private func complete(_ result: Result<[Int: Data], Error>) {
+        let pending: (CheckedContinuation<[Int: Data], Error>, DispatchWorkItem?)? = lock.withLock {
             guard !isFinished, let continuation else {
                 return nil
             }
@@ -445,15 +508,119 @@ private final class CodexAppServerSession: @unchecked Sendable {
 
 private struct CodexRPCIDEnvelope: Decodable {
     let id: Int?
+    /// A reply carries `result` or `error`; a server-initiated request carries `method` and
+    /// `params` instead. Matching on the id alone would let such a request pass for the reply we
+    /// are waiting for — and then the wait for the requested ids could never complete.
+    let isReply: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case result
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isReply = container.contains(.result) || container.contains(.error)
+        if let number = try? container.decodeIfPresent(Int.self, forKey: .id) {
+            id = number
+        } else if let text = try? container.decodeIfPresent(String.self, forKey: .id) {
+            id = Int(text)
+        } else {
+            id = nil
+        }
+    }
 }
 
-private struct CodexRPCQuotaResponse: Decodable {
+private struct CodexRPCResult<Value: Decodable>: Decodable {
     let id: Int
-    let result: CodexRateLimitsResponse?
+    let result: Value?
     let error: CodexRPCErrorPayload?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case result
+        case error
+    }
+
+    /// The id counts whether it arrives as a number or as a numeric string, the same leniency the
+    /// session's matching applies. `result` and `error` keep the synthesized decoding's strictness.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let number = try? container.decodeIfPresent(Int.self, forKey: .id) {
+            id = number
+        } else if let text = try? container.decodeIfPresent(String.self, forKey: .id), let number = Int(text) {
+            id = number
+        } else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .id,
+                in: container,
+                debugDescription: "Expected a numeric id"
+            )
+        }
+        result = try container.decodeIfPresent(Value.self, forKey: .result)
+        error = try container.decodeIfPresent(CodexRPCErrorPayload.self, forKey: .error)
+    }
 }
 
 private struct CodexRPCErrorPayload: Decodable {}
+
+/// The `account/usage/read` result. The protocol marks most of these fields required, but a
+/// missing one only costs the matching detail section, so everything decodes leniently.
+struct CodexAccountUsageResponse: Decodable, Sendable {
+    let summary: CodexAccountUsageSummary?
+    let dailyUsageBuckets: [CodexAccountUsageDay]?
+}
+
+struct CodexAccountUsageSummary: Decodable, Sendable {
+    let lifetimeTokens: Int64?
+    let peakDailyTokens: Int64?
+    let longestRunningTurnSec: Int64?
+    let currentStreakDays: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case lifetimeTokens
+        case peakDailyTokens
+        case longestRunningTurnSec
+        case currentStreakDays
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            lifetimeTokens = nil
+            peakDailyTokens = nil
+            longestRunningTurnSec = nil
+            currentStreakDays = nil
+            return
+        }
+        lifetimeTokens = container.decodeFlexibleInt64IfPresent(forKey: .lifetimeTokens)
+        peakDailyTokens = container.decodeFlexibleInt64IfPresent(forKey: .peakDailyTokens)
+        longestRunningTurnSec = container.decodeFlexibleInt64IfPresent(forKey: .longestRunningTurnSec)
+        currentStreakDays = container.decodeFlexibleInt64IfPresent(forKey: .currentStreakDays)
+    }
+}
+
+/// One day's total. Both fields are optional so that a single unusable entry (a bare string in
+/// the array, a missing key) cannot fail the whole array — the detail builder skips it instead.
+struct CodexAccountUsageDay: Decodable, Sendable {
+    let startDate: String?
+    let tokens: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case startDate
+        case tokens
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            startDate = nil
+            tokens = nil
+            return
+        }
+        startDate = try? container.decodeIfPresent(String.self, forKey: .startDate)
+        tokens = container.decodeFlexibleInt64IfPresent(forKey: .tokens)
+    }
+}
 
 struct CodexRateLimitsResponse: Decodable, Sendable {
     let rateLimits: CodexRateLimitSnapshot?
@@ -650,29 +817,29 @@ private extension KeyedDecodingContainer {
     }
 }
 
-private struct CodexRateLimitsCacheEntry: Sendable {
+private struct CodexQuotaCacheEntry: Sendable {
     let fetchedAt: Date
-    let value: CodexRateLimitsResponse
+    let value: CodexQuotaBundle
 }
 
-private struct CodexRateLimitsFailureEntry: Sendable {
+private struct CodexQuotaFailureEntry: Sendable {
     let failedAt: Date
     let error: CodexAppServerError
 }
 
-private enum CodexRateLimitsLookup: Sendable {
-    case cached(CodexRateLimitsCacheEntry)
+private enum CodexQuotaLookup: Sendable {
+    case cached(CodexQuotaCacheEntry)
     case failed(CodexAppServerError)
     case fetch
     case throttled
 }
 
-private actor CodexRateLimitsCache {
-    private var entries: [String: CodexRateLimitsCacheEntry] = [:]
-    private var failures: [String: CodexRateLimitsFailureEntry] = [:]
+private actor CodexQuotaCache {
+    private var entries: [String: CodexQuotaCacheEntry] = [:]
+    private var failures: [String: CodexQuotaFailureEntry] = [:]
     private var lastRequestDates: [String: Date] = [:]
 
-    func lookup(key: String, maxAge: TimeInterval, minimumRequestInterval: TimeInterval) -> CodexRateLimitsLookup {
+    func lookup(key: String, maxAge: TimeInterval, minimumRequestInterval: TimeInterval) -> CodexQuotaLookup {
         let now = Date()
         if let entry = entries[key], now.timeIntervalSince(entry.fetchedAt) < maxAge {
             return .cached(entry)
@@ -687,13 +854,13 @@ private actor CodexRateLimitsCache {
         return .fetch
     }
 
-    func store(_ value: CodexRateLimitsResponse, key: String, fetchedAt: Date) {
-        entries[key] = CodexRateLimitsCacheEntry(fetchedAt: fetchedAt, value: value)
+    func store(_ value: CodexQuotaBundle, key: String, fetchedAt: Date) {
+        entries[key] = CodexQuotaCacheEntry(fetchedAt: fetchedAt, value: value)
         failures[key] = nil
     }
 
     func storeFailure(_ error: CodexAppServerError, key: String, failedAt: Date) {
-        failures[key] = CodexRateLimitsFailureEntry(failedAt: failedAt, error: error)
+        failures[key] = CodexQuotaFailureEntry(failedAt: failedAt, error: error)
     }
 
     func clearRequest(key: String) {

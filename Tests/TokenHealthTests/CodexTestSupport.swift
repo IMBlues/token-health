@@ -63,33 +63,49 @@ enum CodexTestSupport {
         }
     }
 
-    static func fetchFromFakeAppServer() async throws -> CodexRateLimitsResponse {
+    static let fakeQuotaReply = #"{"id":1,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":21,"windowDurationMins":300,"resetsAt":1783665814},"secondary":{"usedPercent":8,"windowDurationMins":10080,"resetsAt":1784252614},"planType":"plus"}}}"#
+
+    static let fakeUsageReply = #"{"id":2,"result":{"summary":{"lifetimeTokens":172532345,"peakDailyTokens":117865819,"longestRunningTurnSec":2550,"currentStreakDays":3},"dailyUsageBuckets":[{"startDate":"2026-09-23","tokens":117865819}]}}"#
+
+    /// Starts a fake `codex`: after reading the four request lines it answers line by line from
+    /// `replies`, then blocks in that last read loop — it neither exits nor hits EOF, because the
+    /// client keeps holding the stdin write end until `complete()`. That is exactly what lets the
+    /// "id=2 never answers" case reach `.timeout` instead of `.processExited`, so the trailing
+    /// `while IFS= read -r _` loop must not be removed.
+    static func fetchFromFakeAppServer(
+        replies: [String] = [fakeQuotaReply, fakeUsageReply],
+        timeout: TimeInterval = 5
+    ) async throws -> CodexQuotaBundle {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TokenHealthTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let executable = directory.appendingPathComponent("codex")
+        let printed = replies.map { "printf '%s\\n' '\($0)'" }.joined(separator: "\n")
         let script = """
         #!/bin/sh
         IFS= read -r _
         IFS= read -r _
         IFS= read -r _
+        IFS= read -r _
         printf '%s\\n' '{"method":"remoteControl/status/changed","params":{}}'
-        printf '%s\\n' '{"id":1,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":21,"windowDurationMins":300,"resetsAt":1783665814},"secondary":{"usedPercent":8,"windowDurationMins":10080,"resetsAt":1784252614},"planType":"plus"}}}'
+        \(printed)
+        while IFS= read -r _; do :; done
         """
         try Data(script.utf8).write(to: executable, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
 
-        return try await CodexAppServerClient(testExecutableURL: executable, timeout: 3).fetchRateLimits()
+        return try await CodexAppServerClient(testExecutableURL: executable, timeout: timeout)
+            .fetchQuotaBundle()
     }
 
     static var liveCodexCheckEnabled: Bool {
         ProcessInfo.processInfo.environment["TOKEN_HEALTH_LIVE_CODEX"] == "1"
     }
 
-    static func fetchLiveCodexQuota() async throws -> CodexRateLimitsResponse {
-        try await CodexAppServerClient().fetchRateLimits()
+    static func fetchLiveCodexQuota() async throws -> CodexQuotaBundle {
+        try await CodexAppServerClient().fetchQuotaBundle()
     }
 
     static func configMigrationResult() throws -> ConfigMigrationResult {

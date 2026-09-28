@@ -425,7 +425,7 @@ Expected: FAIL —— `OpenCodeGoUsageEnvelope` / `workspaceIDs` / `hasGoAccess`
 在 `OpenCodeGoUsageProvider.swift` 的 `OpenCodeGoUsageParser` 里新增两个静态方法（放在 `accessShapeResult` 附近）：
 
 ```swift
-    /// `/api/me/orgs` → `[{id, name}]`; the app only needs the ids.
+    /// `/api/orgs` → `[{id, name}]`; the app only needs the ids.
     static func workspaceIDs(fromOrgs data: Data) -> [String] {
         guard let list = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return []
@@ -523,7 +523,7 @@ EOF
 
 ### Task 4: 原生路径改多请求（orgs → 逐 workspace 状态 → 三份用量）
 
-**背景**：`/api/go/status` 与 `/api/usage/*` 都要 `x-org-id`（缺了 400），workspace 列表来自 `GET /api/me/orgs`。现有 `fetchUsageBundle` 只打一个无作用域的 `/api/go/status`。
+**背景**：`/api/go/status` 与 `/api/usage/*` 都要 `x-org-id`（缺了 400），workspace 列表来自 `GET /api/orgs`。现有 `fetchUsageBundle` 只打一个无作用域的 `/api/go/status`。
 
 **Files:**
 - Modify: `Sources/TokenHealth/OpenCodeGoUsageProvider.swift:142-176`（`fetchUsageBundle`）
@@ -532,7 +532,7 @@ EOF
 
 ```swift
     private func fetchUsageBundle(session: OpenCodeGoWebSessionCredential) async throws -> Data {
-        let orgsData = try await fetchData(session: session, path: "/api/me/orgs")
+        let orgsData = try await fetchData(session: session, path: "/api/orgs")
         let workspaces = OpenCodeGoUsageParser.workspaceIDs(fromOrgs: orgsData)
 
         // Prefer the first workspace that carries a Go subscription; fall back to the first
@@ -695,7 +695,7 @@ EOF
     func usageScriptCoversTheConsoleEndpoints() {
         let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9))
 
-        for path in ["/api/me/orgs", "/api/go/status", "/api/usage/summary", "/api/usage/cost-by-day", "/api/usage/models"] {
+        for path in ["/api/orgs", "/api/go/status", "/api/usage/summary", "/api/usage/cost-by-day", "/api/usage/models"] {
             #expect(script.contains(path), "脚本少打了 \(path)")
         }
         #expect(script.contains("x-org-id"))
@@ -711,7 +711,7 @@ EOF
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `bash scripts/test.sh --filter OpenCodeGoWebSessionDescriptorTests`
-Expected: FAIL —— 脚本里还没有 `/api/me/orgs`。
+Expected: FAIL —— 脚本里还没有 `/api/orgs`。
 
 - [ ] **Step 3: 替换脚本**
 
@@ -741,7 +741,7 @@ Expected: FAIL —— 脚本里还没有 `/api/me/orgs`。
             };
           };
           const session = request('/auth/session');
-          const orgs = request('/api/me/orgs');
+          const orgs = request('/api/orgs');
           const workspaces = Array.isArray(orgs.json)
             ? orgs.json.map((item) => item && item.id).filter(Boolean)
             : [];

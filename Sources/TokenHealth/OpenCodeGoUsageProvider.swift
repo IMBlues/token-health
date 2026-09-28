@@ -3,6 +3,10 @@ import Foundation
 struct OpenCodeGoUsageProvider: UsageProvider {
     private static let providerTitle = "OpenCode Go"
     private let consoleHost = "console.opencode.ai"
+    /// Keep in sync with the web script's `workspaces.slice(0, 5)`.
+    static let workspaceProbeLimit = 5
+    private static let userAgent =
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
     private let apiUsageEndpoint = "https://opencode.ai/zen/go/v1/usage"
 
     func fetchUsage(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
@@ -39,30 +43,14 @@ struct OpenCodeGoUsageProvider: UsageProvider {
                 guard let controller = await WebSessionRegistry.shared.controller(for: config) else {
                     throw WebSessionError.unsupportedProvider
                 }
-                // The status endpoint takes no period parameters, so the context is intentionally
-                // unused by its script.
+                // The console script scrapes a fixed 30-day window and takes no period from the
+                // context, so the values passed in are inert.
                 bundleData = try await controller.fetchUsage(
                     context: .currentUTC()
                 )
             }
 
-            let result = try OpenCodeGoUsageParser().parseBundle(data: bundleData)
-            guard !result.usages.isEmpty else {
-                return ProviderUsageSnapshot.unavailable(
-                    config: config,
-                    message: result.subscriptionMessage ?? "No OpenCode Go usage found"
-                )
-            }
-            return ProviderUsageSnapshot(
-                id: config.id,
-                serviceName: config.displayName,
-                providerTitle: config.providerKind.title,
-                planName: result.planName ?? session.accountName,
-                usages: result.usages,
-                state: .ready,
-                statusMessage: "OpenCode Go API",
-                updatedAt: Date()
-            )
+            return consoleSnapshot(config: config, bundle: bundleData, accountName: session.accountName, today: Date())
         } catch {
             let message: String
             if let sessionError = error as? WebSessionError {
@@ -80,6 +68,42 @@ struct OpenCodeGoUsageProvider: UsageProvider {
                 message = error.localizedDescription
             }
             return ProviderUsageSnapshot.unavailable(config: config, message: message)
+        }
+    }
+
+    /// 把一次取回的信封变成快照。
+    ///
+    /// 抽出来是因为 `fetchUsage` 永远会打真实网络（失败还回落到 WebKit 会话），没有注入点 ——
+    /// 拿合成信封测这一层，才不用去碰 console.opencode.ai。
+    func consoleSnapshot(
+        config: ServiceConfig,
+        bundle: Data,
+        accountName: String?,
+        today: Date
+    ) -> ProviderUsageSnapshot {
+        do {
+            let result = try OpenCodeGoUsageParser().parseBundle(data: bundle)
+            guard !result.usages.isEmpty else {
+                return ProviderUsageSnapshot.unavailable(
+                    config: config,
+                    message: result.subscriptionMessage ?? "No OpenCode Go usage found"
+                )
+            }
+            return ProviderUsageSnapshot(
+                id: config.id,
+                serviceName: config.displayName,
+                providerTitle: config.providerKind.title,
+                planName: result.planName ?? accountName,
+                usages: result.usages,
+                detail: OpenCodeGoUsageDetail.make(bundle: bundle, usages: result.usages, today: today),
+                state: .ready,
+                statusMessage: "OpenCode Go API",
+                updatedAt: Date()
+            )
+        } catch {
+            // 这里只可能接到 parser 的错：WebSessionError →「重登/会话过期」的映射在上层
+            // fetchConsoleUsage 的 catch 里；别让 parser 抛会话错误，否则那条映射会被绕过。
+            return ProviderUsageSnapshot.unavailable(config: config, message: error.localizedDescription)
         }
     }
 
@@ -140,17 +164,130 @@ struct OpenCodeGoUsageProvider: UsageProvider {
     }
 
     private func fetchUsageBundle(session: OpenCodeGoWebSessionCredential) async throws -> Data {
-        guard let url = URL(string: "https://\(consoleHost)/api/go/status") else {
+        let orgsData = try await fetchData(session: session, path: "/api/orgs")
+        let workspaces = OpenCodeGoUsageParser.workspaceIDs(fromOrgs: orgsData)
+
+        let outcome = await OpenCodeGoWorkspaceProbe.run(
+            workspaces: workspaces,
+            limit: Self.workspaceProbeLimit,
+            // `try?` rather than fetchUsageData: a probe failure is a failed request, not a 2xx
+            // body that later fails the JSON guard — the guard below reads that distinction.
+            fetch: { workspaceID in
+                try? await fetchData(session: session, path: "/api/go/status", workspaceID: workspaceID)
+            },
+            hasAccess: OpenCodeGoUsageParser.hasGoAccess
+        )
+
+        // All probes succeeded but none carries Go: keep the first response so the "not subscribed"
+        // message survives. A probe failure with no access-carrying response means the session (or
+        // the console) is broken — throw so the WebView path can surface the real error. An
+        // access-carrying response is exactly the probe's chosen one, so `hasAccess` re-reads the
+        // old `chosen == nil`.
+        if outcome.sawFailure, !(outcome.statusData.map(OpenCodeGoUsageParser.hasGoAccess) ?? false) {
+            throw WebSessionError.requestFailed(
+                providerTitle: Self.providerTitle,
+                message: "OpenCode Go status probe failed"
+            )
+        }
+
+        guard let statusData = outcome.statusData,
+              let workspaceID = outcome.workspaceID else {
+            throw WebSessionError.requestFailed(
+                providerTitle: Self.providerTitle,
+                message: "OpenCode Go has no workspace"
+            )
+        }
+
+        // A 2xx body that is not a JSON object (an expired session redirected to an HTML page, a
+        // proxy interstitial) must not be reported as "not subscribed" — fail the native path so
+        // the WebView script gets to surface the real error instead.
+        guard (try? JSONSerialization.jsonObject(with: statusData)) is [String: Any] else {
+            throw WebSessionError.requestFailed(
+                providerTitle: Self.providerTitle,
+                message: "OpenCode Go status response was not JSON"
+            )
+        }
+
+        async let summary = fetchUsageData(
+            session: session,
+            path: "/api/usage/summary",
+            query: [("range", "30d")],
+            workspaceID: workspaceID
+        )
+        async let byDay = fetchUsageData(
+            session: session,
+            path: "/api/usage/cost-by-day",
+            query: [("range", "30d"), ("bucket", "day")],
+            workspaceID: workspaceID
+        )
+        async let models = fetchUsageData(
+            session: session,
+            path: "/api/usage/models",
+            query: [("range", "30d"), ("pageSize", "100"), ("costOrder", "desc")],
+            workspaceID: workspaceID
+        )
+
+        return OpenCodeGoUsageEnvelope.make(
+            goStatus: statusData,
+            orgs: orgsData,
+            workspaceId: workspaceID,
+            summary: await summary,
+            byDay: await byDay,
+            models: await models
+        )
+    }
+
+    /// The usage endpoints are a nice-to-have: a failure only drops the matching card section, it
+    /// must not fail the whole refresh.
+    private func fetchUsageData(
+        session: OpenCodeGoWebSessionCredential,
+        path: String,
+        query: [(String, String)],
+        workspaceID: String?
+    ) async -> Data? {
+        // A failed request is already logged by fetchData (with the status and body), so this
+        // swallows it silently rather than printing the same failure twice.
+        guard let data = try? await fetchData(session: session, path: path, query: query, workspaceID: workspaceID) else {
+            return nil
+        }
+        // A 2xx body that does not parse is a silent section-drop otherwise; log it so
+        // "why is the by-day chart missing" has a signal in the debug log.
+        guard (try? JSONSerialization.jsonObject(with: data)) != nil else {
+            WebSessionLog.debugLog(
+                "usage response was not JSON, path=\(path)",
+                providerTitle: Self.providerTitle
+            )
+            return nil
+        }
+        return data
+    }
+
+    private func fetchData(
+        session: OpenCodeGoWebSessionCredential,
+        path: String,
+        query: [(String, String)] = [],
+        workspaceID: String? = nil
+    ) async throws -> Data {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = consoleHost
+        components.path = path
+        if !query.isEmpty {
+            components.queryItems = query.map { URLQueryItem(name: $0.0, value: $0.1) }
+        }
+        guard let url = components.url else {
             throw URLError(.badURL)
         }
+
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.timeoutInterval = 20
         request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
-        request.setValue(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-            forHTTPHeaderField: "User-Agent"
-        )
+        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        // Scoped console endpoints answer HTTP 400 when this header is missing.
+        if let workspaceID, !workspaceID.isEmpty {
+            request.setValue(workspaceID, forHTTPHeaderField: "x-org-id")
+        }
         if let cookieHeader = session.cookieHeader, !cookieHeader.isEmpty {
             request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
         }
@@ -171,317 +308,54 @@ struct OpenCodeGoUsageProvider: UsageProvider {
                 message: "OpenCode Go HTTP \(httpResponse.statusCode): \(body.prefix(160))"
             )
         }
-        WebSessionLog.debugLog("native request succeeded, bytes=\(data.count)", providerTitle: Self.providerTitle)
+        WebSessionLog.debugLog("native request succeeded, path=\(path), bytes=\(data.count)", providerTitle: Self.providerTitle)
         return data
     }
 }
 
-struct OpenCodeGoUsageParser {
-    struct ParseResult {
-        var planName: String?
-        var subscriptionMessage: String?
-        var usages: [TokenUsage]
+/// The native path's workspace-probe policy, mirroring the web script's: walk the workspaces in
+/// order, prefer the first response that reports a Go subscription, and otherwise keep the first
+/// response that came back at all. A failed probe (`fetch` returning nil) is skipped and probing
+/// continues — matching the script, which also keeps going — so one unusable workspace does not
+/// cut the search short. `fetch` is injected so the policy can be tested without a network.
+///
+/// `statusData` carries the chosen access-carrying response when one was found, else the first
+/// response that arrived; the two are distinguishable with the same `hasAccess` predicate.
+enum OpenCodeGoWorkspaceProbe {
+    struct Outcome: Equatable {
+        var statusData: Data?
+        var workspaceID: String?
+        var sawFailure: Bool
     }
 
-    private struct Meter {
-        var kind: String
-        var limitMicroCents: Int?
-        var settledMicroCents: Int?
-        var reservedMicroCents: Int?
-        var remainingMicroCents: Int?
-        var resetsAt: Date?
-        var windowStartsAt: Date?
-    }
-
-    func parseBundle(data: Data) throws -> ParseResult {
-        let object = try JSONSerialization.jsonObject(with: data)
-        guard let root = object as? [String: Any] else {
-            throw ParserError.invalidShape
-        }
-
-        // The WebView fallback returns a `{ok, status, ..., goStatus: {...}}` envelope while
-        // the native request returns the GoStatus object itself. Normalize both to GoStatus.
-        let goStatusRoot = (root["goStatus"] as? [String: Any]) ?? root
-
-        let status = stringValue(goStatusRoot["subscriptionStatus"]) ?? "inactive"
-        let currentPeriod = goStatusRoot["currentPeriod"] as? [String: Any]
-        let meters = (goStatusRoot["meters"] as? [[String: Any]] ?? []).compactMap(parseMeter)
-
-        var usages: [TokenUsage] = []
-        for meter in meters {
-            guard let usage = usage(for: meter) else {
+    static func run(
+        workspaces: [String],
+        limit: Int,
+        fetch: (String) async -> Data?,
+        hasAccess: (Data) -> Bool
+    ) async -> Outcome {
+        var firstData: Data?
+        var firstID: String?
+        var chosen: (data: Data, id: String)?
+        var sawFailure = false
+        for workspace in workspaces.prefix(limit) {
+            guard let data = await fetch(workspace) else {
+                sawFailure = true
                 continue
             }
-            usages.append(usage)
+            if firstData == nil {
+                firstData = data
+                firstID = workspace
+            }
+            if hasAccess(data) {
+                chosen = (data, workspace)
+                break
+            }
         }
-
-        guard isActiveStatus(status), !usages.isEmpty else {
-            let message = subscriptionMessage(for: status)
-            return ParseResult(
-                planName: nil,
-                subscriptionMessage: message,
-                usages: []
-            )
-        }
-
-        return ParseResult(
-            planName: planName(currentPeriod: currentPeriod, status: status),
-            subscriptionMessage: nil,
-            usages: usages
+        return Outcome(
+            statusData: chosen?.data ?? firstData,
+            workspaceID: chosen?.id ?? firstID,
+            sawFailure: sawFailure
         )
-    }
-
-    /// Parse the `GET /zen/go/v1/usage` API response (authenticated by an OpenCode Go API key).
-    /// Verified shape: `{usage: {rolling: {status, percent, resetsAt}, weekly: {...}, monthly: {...}}}`.
-    /// Dollar amounts are derived from the published Go limits ($12 / $30 / $60) × percent.
-    func parseAPIResponse(data: Data) throws -> ParseResult {
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ParserError.invalidShape
-        }
-
-        // Primary shape: {usage: {rolling|weekly|monthly: {percent, resetsAt}}}.
-        if let usage = object["usage"] as? [String: Any] {
-            var usages: [TokenUsage] = []
-            for (key, value) in usage {
-                guard let item = value as? [String: Any],
-                      let window = apiWindow(for: key),
-                      let percent = intValue(item["percent"]) else {
-                    continue
-                }
-                guard let limitMicroCents = Self.apiLimitMicroCents(for: key), limitMicroCents > 0 else {
-                    continue
-                }
-                let used = max(0, min(limitMicroCents, limitMicroCents * percent / 100))
-                usages.append(TokenUsage(
-                    window: window,
-                    used: used,
-                    limit: limitMicroCents,
-                    resetDate: dateValue(item["resetsAt"]),
-                    unit: nil,
-                    displayValue: "\(Self.dollarsText(used)) / \(Self.dollarsText(limitMicroCents))"
-                ))
-            }
-            if !usages.isEmpty {
-                return ParseResult(planName: "Go", subscriptionMessage: nil, usages: usages)
-            }
-        }
-
-        // Fallback: tolerantly try the GoStatus `meters` shape, then common
-        // `{limits|usage: [...]}` / `{data: {...}}` envelopes.
-        if let result = try? parseBundle(data: data), !result.usages.isEmpty {
-            return result
-        }
-        let root = (object["data"] as? [String: Any]) ?? (object["result"] as? [String: Any]) ?? object
-
-        var meters: [Meter] = []
-        if let list = (root["limits"] as? [[String: Any]]) ?? (root["usage"] as? [[String: Any]]) {
-            meters = list.compactMap { item in
-                guard let kind = stringValue(item["kind"]) ?? stringValue(item["window"]) else {
-                    return nil
-                }
-                return Meter(
-                    kind: kind,
-                    limitMicroCents: intValue(item["limitMicroCents"]) ?? intValue(item["limit"]),
-                    settledMicroCents: intValue(item["settledMicroCents"]) ?? intValue(item["usedMicroCents"]) ?? intValue(item["used"]),
-                    reservedMicroCents: intValue(item["reservedMicroCents"]),
-                    remainingMicroCents: intValue(item["remainingMicroCents"]) ?? intValue(item["remaining"]),
-                    resetsAt: dateValue(item["resetsAt"]) ?? dateValue(item["resetAt"]),
-                    windowStartsAt: dateValue(item["windowStartsAt"])
-                )
-            }
-        } else if let dict = (root["limits"] as? [String: Any]) ?? (root["usage"] as? [String: Any]) {
-            // {limits: {five_hour: {...}, week: {...}}} style.
-            meters = dict.compactMap { kind, value in
-                guard let item = value as? [String: Any] else {
-                    return nil
-                }
-                return Meter(
-                    kind: kind,
-                    limitMicroCents: intValue(item["limitMicroCents"]) ?? intValue(item["limit"]),
-                    settledMicroCents: intValue(item["settledMicroCents"]) ?? intValue(item["usedMicroCents"]) ?? intValue(item["used"]),
-                    reservedMicroCents: intValue(item["reservedMicroCents"]),
-                    remainingMicroCents: intValue(item["remainingMicroCents"]) ?? intValue(item["remaining"]),
-                    resetsAt: dateValue(item["resetsAt"]) ?? dateValue(item["resetAt"]),
-                    windowStartsAt: dateValue(item["windowStartsAt"])
-                )
-            }
-        }
-
-        let usages = meters.compactMap(usage(for:))
-        if !usages.isEmpty {
-            return ParseResult(planName: "Go", subscriptionMessage: nil, usages: usages)
-        }
-
-        let raw = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
-        throw ParserError.unsupportedShape(raw)
-    }
-
-    private func apiWindow(for key: String) -> UsageWindow? {
-        switch key {
-        case "rolling", "five_hour", "fiveHours", "5h":
-            .fiveHours
-        case "weekly", "week", "calendar_week":
-            .week
-        case "monthly", "month", "calendar_month":
-            .month
-        default:
-            nil
-        }
-    }
-
-    /// Published OpenCode Go dollar limits per window, in microCents.
-    static func apiLimitMicroCents(for key: String) -> Int? {
-        switch key {
-        case "rolling", "five_hour", "fiveHours", "5h":
-            12 * 1_000_000
-        case "weekly", "week", "calendar_week":
-            30 * 1_000_000
-        case "monthly", "month", "calendar_month":
-            60 * 1_000_000
-        default:
-            nil
-        }
-    }
-
-    private func parseMeter(_ object: [String: Any]) -> Meter? {
-        guard let kind = stringValue(object["kind"]) else {
-            return nil
-        }
-        return Meter(
-            kind: kind,
-            limitMicroCents: intValue(object["limitMicroCents"]),
-            settledMicroCents: intValue(object["settledMicroCents"]),
-            reservedMicroCents: intValue(object["reservedMicroCents"]),
-            remainingMicroCents: intValue(object["remainingMicroCents"]),
-            resetsAt: dateValue(object["resetsAt"]),
-            windowStartsAt: dateValue(object["windowStartsAt"])
-        )
-    }
-
-    private func usage(for meter: Meter) -> TokenUsage? {
-        let window: UsageWindow? = switch meter.kind {
-        case "five_hour", "5h", "fiveHours", "five_hours":
-            .fiveHours
-        case "calendar_week", "week", "weekly", "calendar_weeks":
-            .week
-        case "calendar_month", "month", "monthly", "calendar_months":
-            .month
-        default:
-            nil
-        }
-        guard let window, let limit = meter.limitMicroCents, limit > 0 else {
-            return nil
-        }
-
-        let used: Int
-        if let remaining = meter.remainingMicroCents {
-            used = max(0, limit - remaining)
-        } else {
-            used = meter.settledMicroCents ?? 0
-        }
-
-        let usedText = Self.dollarsText(used)
-        let limitText = Self.dollarsText(limit)
-        return TokenUsage(
-            window: window,
-            used: used,
-            limit: limit,
-            resetDate: meter.resetsAt,
-            unit: nil,
-            displayValue: "\(usedText) / \(limitText)"
-        )
-    }
-
-    private func isActiveStatus(_ status: String) -> Bool {
-        switch status {
-        case "active", "grace":
-            true
-        case "inactive", "suspended", "canceled", "":
-            false
-        default:
-            false
-        }
-    }
-
-    private func subscriptionMessage(for status: String) -> String {
-        switch status {
-        case "inactive":
-            "OpenCode Go is not subscribed. Subscribe at opencode.ai/zen first."
-        case "suspended":
-            "OpenCode Go subscription is suspended."
-        case "canceled":
-            "OpenCode Go subscription is canceled."
-        case "grace":
-            "OpenCode Go subscription is in grace period."
-        default:
-            "OpenCode Go has no active usage data."
-        }
-    }
-
-    private func planName(currentPeriod: [String: Any]?, status: String) -> String? {
-        if let amount = intValue(currentPeriod?["amountMicroCents"]), amount > 0 {
-            return "Go · \(Self.dollarsText(amount))/mo"
-        }
-        return status == "grace" ? "Go · Grace" : "Go Plan"
-    }
-
-    static func dollarsText(_ microCents: Int) -> String {
-        let dollars = Double(microCents) / 1_000_000
-        return String(format: "$%.2f", locale: Locale(identifier: "en_US_POSIX"), dollars)
-    }
-
-    // MARK: - Value helpers
-
-    private func stringValue(_ value: Any?) -> String? {
-        if let string = value as? String, !string.isEmpty {
-            return string
-        }
-        return nil
-    }
-
-    private func intValue(_ value: Any?) -> Int? {
-        if let int = value as? Int {
-            return int
-        }
-        if let double = value as? Double {
-            return Int(double)
-        }
-        if let number = value as? NSNumber {
-            return number.intValue
-        }
-        if let string = value as? String {
-            return Int(string)
-        }
-        return nil
-    }
-
-    private func dateValue(_ value: Any?) -> Date? {
-        guard let string = value as? String, !string.isEmpty else {
-            return nil
-        }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = iso.date(from: string) {
-            return date
-        }
-        iso.formatOptions = [.withInternetDateTime]
-        return iso.date(from: string)
-    }
-
-    enum ParserError: LocalizedError {
-        case invalidShape
-        case noUsage
-        case unsupportedShape(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .invalidShape:
-                "Expected a JSON object"
-            case .noUsage:
-                "No OpenCode Go usage data found"
-            case let .unsupportedShape(raw):
-                "Unexpected OpenCode Go API response: \(raw.prefix(200))"
-            }
-        }
     }
 }

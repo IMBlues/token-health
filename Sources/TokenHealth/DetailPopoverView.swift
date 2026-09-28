@@ -68,13 +68,20 @@ struct DetailPopoverView: View {
         if !detail.headline.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(detail.headline) { stat in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(stat.label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 8)
-                        Text(stat.value)
-                            .font(.title3.monospacedDigit())
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(stat.label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Text(stat.value)
+                                .font(.title3.monospacedDigit())
+                        }
+                        // 额度行（Codex / OpenCode Go）配一条通栏条：只有百分比的话，得先想
+                        // 「这个数是用了多少还是剩多少」，条子一眼就是「用掉几成」。
+                        if let ratio = stat.ratio {
+                            quotaBar(ratio)
+                        }
                     }
                 }
             }
@@ -114,7 +121,7 @@ struct DetailPopoverView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 if DetailSeriesChart.maximum(of: series.points) == 0 {
-                    Text("No usage this month")
+                    Text(series.emptyText)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 } else {
@@ -178,6 +185,29 @@ struct DetailPopoverView: View {
                 }
             }
         }
+    }
+
+    /// 额度条：一条通栏轨道 + 一段填充，填充色与菜单栏竖条、下拉卡片同一套阈值。
+    private func quotaBar(_ ratio: Double) -> some View {
+        let clamped = min(max(ratio, 0), 1)
+        return GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.25))
+                Capsule()
+                    .fill(UsageAmountFormatter.tint(forRatio: clamped))
+                    .frame(width: fillWidth(clamped, total: proxy.size.width))
+            }
+        }
+        .frame(height: 4)
+    }
+
+    /// 极小比例给一个最小可见宽度：0.1% 的条不兜底就是一条空槽，读起来和「一点没用」一样。
+    private func fillWidth(_ ratio: Double, total: CGFloat) -> CGFloat {
+        guard ratio > 0 else {
+            return 0
+        }
+        return max(2, total * ratio)
     }
 
     /// 自己画的迷你柱状图：柱高由纯计算的 `DetailSeriesChart` 给出。

@@ -104,6 +104,14 @@ The exchange rate is fetched once a day from ECB data, falling back to the last 
 Clicking a pinned DeepSeek item opens a detail popover: balance, request count / tokens / spend for `Today` and `This month`, a by-day trend for the month, the token breakdown (`Output` / `Cache hit` / `Cache miss`), and a `By model · this month` split.
 Everything comes from the response already fetched at refresh time — no extra requests.
 
+A pinned Codex item opens the same kind of popover: the 5-hour and weekly quota (the same numbers the menu bar draws), token totals for `Today` / `7 days` / `30 days`, a by-day token trend for the last 30 days, and `Lifetime` / `Peak day` / `Streak` / `Longest turn`.
+It all comes from the local Codex login's `app-server` session — one extra question on the same round trip, no re-login and no reading of `~/.codex/auth.json`.
+
+A pinned OpenCode Go item opens the same popover: the 5-hour / weekly / monthly quota (the same numbers the menu bar draws), request / token / cost totals for `Today` / `7 days` / `30 days`, a by-day cost trend for the last 30 days, the `Input` / `Output` / `Cache read` / `Cache write` breakdown, and a `By model · last 30 days` split.
+It all comes back with the refresh: API-key accounts ask the console endpoints directly, console-login accounts use the imported web session.
+
+Quota rows in the popover draw a used-fraction bar tinted with the same thresholds as the menu bar and the dropdown cards; DeepSeek's balance rows stay text-only — balances report what's left, quota windows report what's spent, and the two are not forced into one drawing.
+
 It is display-only: no filtering, no date range, no drill-down. For deeper analysis, go back to the vendor's console.
 Numbers in the detail view older than 5 minutes refresh once automatically when you open it, and there's a manual refresh in the top-right; if a fetch fails, the previous numbers stay and the error is marked.
 

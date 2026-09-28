@@ -10,14 +10,20 @@ struct ProviderFactory {
     /// 按 **Provider 能力**判断而不是按快照内容判断：首次刷新还没回来时也得能弹出浮层，
     /// 否则会出现「先弹菜单、快照回来后再改行为」的漂移。
     ///
-    /// 注意这个判断只看得到 config、看不到 Keychain：`DeepSeekUsageProvider.fetchUsage` 是先看
-    /// 凭据里有没有网页会话、再看 `authMode` 的。所以一个配成 API 模式、但 Keychain 里还留着
-    /// 网页会话的账号实际上会取回带明细的平台数据，而这里回报 false。无害（只是不给它弹浮层），
-    /// 但别把「API 模式一定走公开余额接口」当成事实写进注释。
+    /// 注意这个判断只看得到 config、看不到 Keychain：`DeepSeekUsageProvider.fetchUsage` 与
+    /// `OpenCodeGoUsageProvider.fetchUsage` 是先看凭据里有没有网页会话、再看 `authMode` 的。
+    /// 所以一个配成 API 模式、但 Keychain 里还留着网页会话的账号实际上会取回带明细的平台数据，
+    /// 而这里回报 false。无害（只是不给它弹浮层），但别把「API 模式一定走公开余额接口」当成事实
+    /// 写进注释。
     static func producesUsageDetail(for config: ServiceConfig) -> Bool {
         switch config.providerKind {
-        case .deepSeek:
+        case .deepSeek, .openCodeGo:
             config.authMode == .browserLogin
+        case .codex:
+            // Codex 没有登录 / API 之分：`usesLocalLogin` 让 `AppState.saveConfigs()` 把 authMode
+            // 固定成 `.api`，所以这一支**不能**看 authMode —— 照上面那条写就永远不会为真。
+            // Cursor 同为本地登录，本次不给它详情。
+            true
         default:
             false
         }

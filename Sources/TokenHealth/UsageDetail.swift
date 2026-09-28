@@ -20,6 +20,9 @@ struct UsageDetail: Equatable, Sendable {
 struct DetailStat: Equatable, Sendable, Identifiable {
     var label: String
     var value: String
+    /// 有比例时浮层会在这行下面画一条额度条。为 nil 表示这行没有「用了几成」这回事
+    /// （余额是金额，不是占比），浮层就不画。
+    var ratio: Double? = nil
 
     var id: String { label }
 }
@@ -36,6 +39,8 @@ struct DetailSeries: Equatable, Sendable {
     var points: [DetailSeriesPoint]
     var axisStart: String
     var axisEnd: String
+    /// 全零时视图要显示的那句话：文案随数据来源不同（「本月」或「最近 30 天」），由填充方给。
+    var emptyText: String
 }
 
 struct DetailSeriesPoint: Equatable, Sendable, Identifiable {
