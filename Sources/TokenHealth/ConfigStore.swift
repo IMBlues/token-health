@@ -1,6 +1,11 @@
 import Foundation
 
-final class ConfigStore {
+/// 配置与凭据的读写入口。
+///
+/// `@unchecked Sendable`：`prepareVault`/`retryVaultLoad` 会在主线程之外等系统授权框，
+/// 接收者因此要能跨隔离域。类的状态里，`defaults`（UserDefaults）本身线程安全，
+/// `secretStore` 已要求 Sendable，本类自己的属性只在主线程读写 —— 没有共享的可变状态。
+final class ConfigStore: @unchecked Sendable {
     private let defaultsKey = "service.configs.v2"
     // Leave v1 untouched so older builds can still load their last compatible snapshot.
     private let legacyDefaultsKey = "service.configs.v1"
@@ -102,6 +107,21 @@ final class ConfigStore {
 
     func saveReportHookToken(_ token: String) throws {
         try secretStore.saveReportHookToken(token)
+    }
+
+    /// 凭据库的可用性：界面据此显示「需要重新授权」。「重新授权」入口在 AppState 上。
+    var vaultAvailability: SecretVaultAvailability {
+        secretStore.vaultAvailability
+    }
+
+    /// 后台完成首次读取（可能等系统授权框）。App 启动时先 await 它，再开始取数。
+    func prepareVault() async {
+        await secretStore.prepareVault()
+    }
+
+    /// 用户要求重新授权；返回 nil 表示这次读成功。
+    func retryVaultLoad() async -> String? {
+        await secretStore.retryVaultLoad()
     }
 
     func migrateLegacySecrets(for configs: [ServiceConfig]) throws {

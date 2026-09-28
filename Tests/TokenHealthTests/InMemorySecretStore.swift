@@ -5,7 +5,9 @@ import Foundation
 ///
 /// 真机上 `KeychainStore` 里已经有条目，测试进程去读会触发系统授权框并卡住，
 /// 所以凡是会经过凭据的测试都必须注入这个替身。
-final class InMemorySecretStore: SecretStoring {
+///
+/// `@unchecked Sendable`：可变字典本身没有加锁，但测试都在单个线程里驱动它。
+final class InMemorySecretStore: SecretStoring, @unchecked Sendable {
     private var stored: [UUID: ProviderSecrets] = [:]
     private var reportToken = ""
     private(set) var migratedConfigIDs: Set<UUID>?
@@ -37,4 +39,11 @@ final class InMemorySecretStore: SecretStoring {
     func migrateLegacyItems(for activeConfigIDs: Set<UUID>) throws {
         migratedConfigIDs = activeConfigIDs
     }
+
+    // 替身没有系统授权这一步：凭据永远当场可读，没有「等授权」和「重新授权」。
+    var vaultAvailability: SecretVaultAvailability { .ready }
+
+    func prepareVault() async {}
+
+    func retryVaultLoad() async -> String? { nil }
 }

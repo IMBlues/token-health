@@ -90,6 +90,30 @@ struct SettingsView: View {
                 selectedID = appState.settingsSelectedID
             }
         }
+        // 凭据库在系统授权之前是空的，界面这一栏会先显示「没有存过密钥」。等授权到位
+        // （用户点了「重新授权」，或首次读取终于落地）再把这一栏按真实凭据重画一遍。
+        .onChange(of: appState.secretVaultAvailability) {
+            if appState.secretVaultAvailability == .ready {
+                loadSecretsIfNeeded(force: true)
+            }
+        }
+    }
+
+    /// 系统没批准钥匙串访问时的「重新授权」入口。
+    ///
+    /// 授权框超时（-60008）之后凭据就彻底读不到了，以前只能重启 App 再等弹框；现在
+    /// 在这里重新发起一次，弹框里选「始终允许」即可当场恢复。
+    @ViewBuilder
+    private var keychainRetryButton: some View {
+        if appState.canRetryKeychainAccess {
+            Button(appState.isRetryingKeychainAccess ? "Waiting for macOS…" : "Retry Keychain Access") {
+                Task {
+                    await appState.retryKeychainAccess()
+                }
+            }
+            .font(.caption)
+            .disabled(appState.isRetryingKeychainAccess)
+        }
     }
 
     /// 侧边栏底部的增删条。
@@ -244,9 +268,12 @@ struct SettingsView: View {
                 }
 
                 if let error = appState.lastError {
-                    Text(error)
-                        .foregroundStyle(.red)
-                        .font(.caption)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(error)
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                        keychainRetryButton
+                    }
                 }
 
                 // 这里原来是 Save 与 Refresh 两个按钮 —— 它们做的事一模一样（保存密钥 + 保存配置 +
@@ -423,9 +450,12 @@ struct SettingsView: View {
             }
 
             if let error = appState.lastError {
-                Text(error)
-                    .foregroundStyle(.red)
-                    .font(.caption)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(error)
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                    keychainRetryButton
+                }
             }
 
             HStack {

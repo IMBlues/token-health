@@ -20,6 +20,10 @@ final class AppState: ObservableObject {
     @Published var isReporting = false
     @Published var lastReportMessage: String?
     @Published var lastReportSucceeded: Bool?
+    /// 凭据库能不能用。`.unavailable` 时界面给一个「重新授权」入口 —— 系统授权框被拒或
+    /// 超时之后，不重启 App 也得能把凭据救回来。
+    @Published private(set) var secretVaultAvailability: SecretVaultAvailability = .loading
+    @Published private(set) var isRetryingKeychainAccess = false
 
     private let configStore: ConfigStore
     private let providerFactory = ProviderFactory()
@@ -45,17 +49,65 @@ final class AppState: ObservableObject {
         pinnedConfigIDs = configStore.loadPinnedConfigIDs()
         normalizeReportProviderSelection()
         normalizePinnedConfigIDs()
+
+        scheduleNextRefresh()
+
+        Task {
+            await prepareSecrets()
+            await refreshAll()
+        }
+    }
+
+    /// 首次读凭据库（可能要等系统授权框）并迁移旧条目。
+    ///
+    /// 刻意不留在 `init` 里同步做：授权框没人应答时会一直阻塞到超时，主线程一旦被钉住，
+    /// App 启动后就是一块转圈的砖（2026-09-26 实测被钉了约 47 分钟，最后 READ 以
+    /// -60008 失败）。放到 async 里，主线程先活下来，界面还能提示「等待/重新授权」。
+    private func prepareSecrets() async {
+        await configStore.prepareVault()
+        secretVaultAvailability = configStore.vaultAvailability
         do {
             try configStore.migrateLegacySecrets(for: configs)
         } catch {
             lastError = error.localizedDescription
         }
+    }
 
-        scheduleNextRefresh()
-
-        Task {
-            await refreshAll()
+    /// 凭据库被系统拒绝授权时，用户从这里重新发起一次；成功就把凭据补上并重新取数。
+    func retryKeychainAccess() async {
+        guard !isRetryingKeychainAccess else {
+            return
         }
+        isRetryingKeychainAccess = true
+        defer { isRetryingKeychainAccess = false }
+
+        let issue = await configStore.retryVaultLoad()
+        secretVaultAvailability = configStore.vaultAvailability
+        guard issue == nil else {
+            lastError = issue
+            return
+        }
+        lastError = nil
+        do {
+            try configStore.migrateLegacySecrets(for: configs)
+        } catch {
+            lastError = error.localizedDescription
+        }
+        await refreshAll()
+    }
+
+    var canRetryKeychainAccess: Bool {
+        if case .unavailable = secretVaultAvailability {
+            return true
+        }
+        return false
+    }
+
+    /// 凭据读写失败时统一走这里：错误照旧显示，同时刷新可用性 —— 失败要是因为系统没
+    /// 授权，界面得立刻长出「重新授权」按钮，而不是只丢一句看不懂的状态码。
+    private func recordSecretFailure(_ error: Error) {
+        lastError = error.localizedDescription
+        secretVaultAvailability = configStore.vaultAvailability
     }
 
     private func scheduleNextRefresh(from date: Date = Date()) {
@@ -220,7 +272,7 @@ final class AppState: ObservableObject {
             do {
                 try configStore.saveSecrets(.empty, for: config.id)
             } catch {
-                lastError = error.localizedDescription
+                recordSecretFailure(error)
             }
         }
     }
@@ -234,9 +286,10 @@ final class AppState: ObservableObject {
         do {
             try configStore.saveSecrets(secrets, for: id)
             lastError = nil
+            secretVaultAvailability = configStore.vaultAvailability
             return true
         } catch {
-            lastError = error.localizedDescription
+            recordSecretFailure(error)
             return false
         }
     }
@@ -254,9 +307,10 @@ final class AppState: ObservableObject {
         do {
             try configStore.saveReportHookToken(bearerToken)
             lastError = nil
+            secretVaultAvailability = configStore.vaultAvailability
             return true
         } catch {
-            lastError = error.localizedDescription
+            recordSecretFailure(error)
             return false
         }
     }

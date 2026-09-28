@@ -1,19 +1,43 @@
 import Foundation
-import LocalAuthentication
 import Security
+
+/// 凭据库的可用性，供界面决定要不要提示、要不要给「重新授权」入口。
+enum SecretVaultAvailability: Equatable {
+    /// 首次读取还没落地（可能正在等系统授权框）。
+    case loading
+    case ready
+    /// 读不到凭据，关联值是 `SecItemCopyMatching` 的原始状态码。凭据库在系统授权之前
+    /// 一律是这个状态，而不是「空库」—— 两者的区别是能不能写。
+    case unavailable(OSStatus)
+}
 
 /// 凭据的存放处。抽成协议是为了让 ConfigStore 与 AppState 能在测试里不碰真实钥匙串 ——
 /// 测试进程读钥匙串会触发系统授权，在无人值守时会直接卡住。
-protocol SecretStoring {
+///
+/// 要求 Sendable：首次读取要放到非主线程去等系统授权框（见 `prepareVault`），这条跨
+/// 隔离域的调用链上不能有非 Sendable 的接收者。
+protocol SecretStoring: Sendable {
     func loadSecrets(for id: UUID) -> ProviderSecrets
     func saveSecrets(_ secrets: ProviderSecrets, for id: UUID) throws
     func deleteSecrets(for id: UUID) throws
     func loadReportHookToken() -> String
     func saveReportHookToken(_ token: String) throws
     func migrateLegacyItems(for activeConfigIDs: Set<UUID>) throws
+
+    var vaultAvailability: SecretVaultAvailability { get }
+
+    /// 在后台完成首次读取。
+    ///
+    /// 这是唯一会**等**系统授权框的地方，所以它必须是 async 的：授权框没人应答时会一直
+    /// 阻塞到超时（实测约 47 分钟），一旦钉在主线程上，整个 App 就是一块转圈的砖。
+    func prepareVault() async
+
+    /// 用户要求重新授权：解除「不再自动重试」的闸门，在后台再读一次。
+    /// 返回 nil 表示这次读成功，否则是给用户看的说明。
+    func retryVaultLoad() async -> String?
 }
 
-final class KeychainStore: SecretStoring {
+final class KeychainStore: SecretStoring, @unchecked Sendable {
     private struct CredentialVault: Codable {
         var providerSecrets: [String: ProviderSecrets]
         var reportHookToken: String?
@@ -63,9 +87,39 @@ final class KeychainStore: SecretStoring {
     private let service = "local.token-health.credentials"
     private let vaultAccount = "credential-vault.v1"
     private let reportTokenAccount = "usage-report-hook.bearer-token"
-    private let authenticationContext = LAContext()
+    private let backing: any KeychainBacking
+
+    /// 首次读取（可能等系统授权框）只在这条串行队列上做，绝不占用主线程。
+    private static let loadQueue = DispatchQueue(
+        label: "local.token-health.keychain-load",
+        qos: .userInitiated
+    )
+
+    /// 下面几个状态会被主线程、串行队列和写路径同时碰，统一由这把锁保护。
+    private let lock = NSLock()
     private var cachedVault: CredentialVault?
-    private var vaultLoadError: OSStatus?
+    private var loadFailure: OSStatus?
+    private var isLoading = false
+    /// 读失败之后不再自动重试：每次重试都会把系统授权框再弹一遍，只能等用户明确要求。
+    private var retryBlocked = false
+
+    init(backing: any KeychainBacking = SecItemKeychainBacking()) {
+        self.backing = backing
+    }
+
+    // MARK: - 读
+
+    var vaultAvailability: SecretVaultAvailability {
+        lock.lock()
+        defer { lock.unlock() }
+        if cachedVault != nil {
+            return .ready
+        }
+        if let loadFailure {
+            return .unavailable(loadFailure)
+        }
+        return .loading
+    }
 
     func loadSecrets(for id: UUID) -> ProviderSecrets {
         let vault = loadVault()
@@ -76,9 +130,88 @@ final class KeychainStore: SecretStoring {
         return .empty
     }
 
+    func loadReportHookToken() -> String {
+        let vault = loadVault()
+        if let token = vault.reportHookToken {
+            return token
+        }
+        return ""
+    }
+
+    func prepareVault() async {
+        await withCheckedContinuation { continuation in
+            Self.loadQueue.async {
+                _ = self.loadVault()
+                continuation.resume()
+            }
+        }
+    }
+
+    func retryVaultLoad() async -> String? {
+        await withCheckedContinuation { continuation in
+            Self.loadQueue.async {
+                self.lock.lock()
+                self.retryBlocked = false
+                self.lock.unlock()
+                _ = self.loadVault()
+                continuation.resume(returning: self.vaultAccessIssueMessage())
+            }
+        }
+    }
+
+    /// 读一次钥匙串，结果进缓存。可能等系统授权框，**不要在写路径以外同步调用它**。
+    private func loadVault() -> CredentialVault {
+        lock.lock()
+        if let cachedVault {
+            lock.unlock()
+            return cachedVault
+        }
+        if retryBlocked || isLoading {
+            // 已经失败过（或正在读）就别再碰钥匙串：读不到就先当空库，写路径会拦住。
+            lock.unlock()
+            return .empty
+        }
+        isLoading = true
+        lock.unlock()
+
+        let result = backing.copyData(service: service, account: vaultAccount)
+
+        var vault: CredentialVault
+        var failure: OSStatus?
+        switch result.status {
+        case errSecSuccess:
+            if let data = result.data,
+               let decoded = try? JSONDecoder().decode(CredentialVault.self, from: data) {
+                vault = decoded
+            } else {
+                vault = .empty
+                failure = errSecDecode
+            }
+        case errSecItemNotFound:
+            vault = .empty
+        default:
+            vault = .empty
+            failure = result.status
+        }
+
+        lock.lock()
+        isLoading = false
+        loadFailure = failure
+        if failure == nil {
+            cachedVault = vault
+            retryBlocked = false
+        } else {
+            retryBlocked = true
+        }
+        lock.unlock()
+        return vault
+    }
+
+    // MARK: - 写
+
     func saveSecrets(_ secrets: ProviderSecrets, for id: UUID) throws {
         var vault = loadVault()
-        try throwIfVaultLoadFailed()
+        try throwIfVaultUnavailable()
         let key = id.uuidString
         let changed: Bool
         if secrets == .empty {
@@ -97,7 +230,7 @@ final class KeychainStore: SecretStoring {
 
     func deleteSecrets(for id: UUID) throws {
         var vault = loadVault()
-        try throwIfVaultLoadFailed()
+        try throwIfVaultUnavailable()
         if vault.providerSecrets.removeValue(forKey: id.uuidString) != nil {
             try saveVault(vault)
         }
@@ -105,17 +238,9 @@ final class KeychainStore: SecretStoring {
         try delete(account: legacyAccount(.password, id: id))
     }
 
-    func loadReportHookToken() -> String {
-        let vault = loadVault()
-        if let token = vault.reportHookToken {
-            return token
-        }
-        return ""
-    }
-
     func saveReportHookToken(_ token: String) throws {
         var vault = loadVault()
-        try throwIfVaultLoadFailed()
+        try throwIfVaultUnavailable()
         guard vault.reportHookToken != token else {
             return
         }
@@ -125,12 +250,12 @@ final class KeychainStore: SecretStoring {
 
     func migrateLegacyItems(for activeConfigIDs: Set<UUID>) throws {
         var vault = loadVault()
-        try throwIfVaultLoadFailed()
+        try throwIfVaultUnavailable()
         guard !vault.legacyMigrationComplete else {
             return
         }
 
-        let result = copyAllAccounts()
+        let result = backing.copyAllAccounts(service: service)
         guard result.status == errSecSuccess || result.status == errSecItemNotFound else {
             throw keychainError(status: result.status, operation: "migration read")
         }
@@ -180,39 +305,14 @@ final class KeychainStore: SecretStoring {
         try saveVault(vault)
     }
 
+    // MARK: - 底层读写
+
     private func legacyAccount(_ secret: Secret, id: UUID) -> String {
         "\(id.uuidString).\(secret.rawValue)"
     }
 
-    private func loadVault() -> CredentialVault {
-        if let cachedVault {
-            return cachedVault
-        }
-        if vaultLoadError != nil {
-            return .empty
-        }
-        let result = copyData(account: vaultAccount)
-        var vault: CredentialVault
-        switch result.status {
-        case errSecSuccess:
-            guard let data = result.data,
-                  let decoded = try? JSONDecoder().decode(CredentialVault.self, from: data) else {
-                vaultLoadError = errSecDecode
-                return .empty
-            }
-            vault = decoded
-        case errSecItemNotFound:
-            vault = .empty
-        default:
-            vaultLoadError = result.status
-            return .empty
-        }
-        cachedVault = vault
-        return vault
-    }
-
     private func copyLegacyString(account: String) throws -> String {
-        let result = copyData(account: account)
+        let result = backing.copyData(service: service, account: account)
         guard result.status == errSecSuccess else {
             throw keychainError(status: result.status, operation: "legacy read")
         }
@@ -224,59 +324,15 @@ final class KeychainStore: SecretStoring {
     }
 
     private func saveVault(_ vault: CredentialVault) throws {
-        try throwIfVaultLoadFailed()
         let data = try JSONEncoder().encode(vault)
         try save(data, account: vaultAccount)
+        lock.lock()
         cachedVault = vault
-    }
-
-    private func copyData(account: String) -> (status: OSStatus, data: Data?) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-            kSecUseAuthenticationContext as String: authenticationContext
-        ]
-
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        return (status, item as? Data)
-    }
-
-    private func copyAllAccounts() -> (status: OSStatus, accounts: [String]) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnAttributes as String: true,
-            kSecMatchLimit as String: kSecMatchLimitAll
-        ]
-
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if let items = result as? [[String: Any]] {
-            return (status, items.compactMap { $0[kSecAttrAccount as String] as? String })
-        }
-        if let item = result as? [String: Any] {
-            return (status, [item[kSecAttrAccount as String] as? String].compactMap { $0 })
-        }
-        return (status, [])
+        lock.unlock()
     }
 
     private func save(_ data: Data, account: String) throws {
-        let itemQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        var updateQuery = itemQuery
-        updateQuery[kSecUseAuthenticationContext as String] = authenticationContext
-        let attributes: [String: Any] = [
-            kSecValueData as String: data
-        ]
-
-        let updateStatus = SecItemUpdate(updateQuery as CFDictionary, attributes as CFDictionary)
+        let updateStatus = backing.update(service: service, account: account, data: data)
         if updateStatus == errSecSuccess {
             return
         }
@@ -284,38 +340,90 @@ final class KeychainStore: SecretStoring {
             throw keychainError(status: updateStatus, operation: "update")
         }
 
-        var item = itemQuery
-        item[kSecValueData as String] = data
-        let addStatus = SecItemAdd(item as CFDictionary, nil)
+        let addStatus = backing.add(service: service, account: account, data: data)
         guard addStatus == errSecSuccess else {
             throw keychainError(status: addStatus, operation: "write")
         }
     }
 
     private func delete(account: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        let status = SecItemDelete(query as CFDictionary)
+        let status = backing.delete(service: service, account: account)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw keychainError(status: status, operation: "delete")
         }
+    }
+
+    // MARK: - 出错时说什么
+
+    /// 写路径的前置条件。整个凭据库是一个条目，用没读到的库去写等于抹掉别的账号。
+    private func throwIfVaultUnavailable() throws {
+        lock.lock()
+        let failure = loadFailure
+        let loading = isLoading
+        lock.unlock()
+        if let failure {
+            throw keychainError(status: failure, operation: "read")
+        }
+        if loading {
+            throw NSError(
+                domain: NSOSStatusErrorDomain,
+                code: Int(errSecNotAvailable),
+                userInfo: [NSLocalizedDescriptionKey: Self.pendingAuthorizationMessage]
+            )
+        }
+    }
+
+    /// 读失败时给用户看的说明；没有失败就是 nil。
+    private func vaultAccessIssueMessage() -> String? {
+        lock.lock()
+        let failure = loadFailure
+        lock.unlock()
+        guard let failure else {
+            return nil
+        }
+        return Self.message(status: failure, operation: "read")
     }
 
     private func keychainError(status: OSStatus, operation: String) -> NSError {
         NSError(
             domain: NSOSStatusErrorDomain,
             code: Int(status),
-            userInfo: [NSLocalizedDescriptionKey: "Keychain \(operation) failed: \(status)"]
+            userInfo: [NSLocalizedDescriptionKey: Self.message(status: status, operation: operation)]
         )
     }
 
-    private func throwIfVaultLoadFailed() throws {
-        if let vaultLoadError {
-            throw keychainError(status: vaultLoadError, operation: "read")
+    static let pendingAuthorizationMessage =
+        "Keychain access is still waiting for the macOS authorization prompt. "
+        + "Approve it (choose \"Always Allow\") and try again."
+
+    /// 授权类失败的原始状态码有三种来源：Authorization Services（-60008 等，实测就是这个）、
+    /// Security 的 auth 类错误，以及弹框被用户取消。它们对用户是同一件事：需要他去弹框里点允许。
+    static func isAuthorizationFailure(_ status: OSStatus) -> Bool {
+        switch status {
+        case errAuthorizationInternal,
+             errAuthorizationCanceled,
+             errAuthorizationDenied,
+             errAuthorizationInteractionNotAllowed,
+             errSecAuthFailed,
+             errSecUserCanceled,
+             errSecInteractionNotAllowed,
+             errSecNotAvailable:
+            return true
+        default:
+            return false
         }
     }
 
+    static func message(status: OSStatus, operation: String) -> String {
+        let base = "Keychain \(operation) failed: \(status)"
+        if status == errSecDecode {
+            return "\(base) — the stored credential vault could not be decoded."
+        }
+        if isAuthorizationFailure(status) {
+            return "\(base) — macOS did not authorize this access: the authorization prompt was "
+                + "denied, ignored, or timed out. Approve the macOS prompt next time, choose "
+                + "\"Always Allow\", then use Retry Keychain Access in Settings."
+        }
+        return base
+    }
 }
