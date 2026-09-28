@@ -253,6 +253,34 @@ struct OpenCodeGoUsageDetailTests {
         #expect(detail.groups[0].values.map(\.value) == ["13", "1.3M", "$0.42"])
     }
 
+    /// 窗口按 UTC 天切分，跟机器在哪个时区无关：锚点落在 9/25 这一 UTC 天的哪个小时，都该给出
+    /// 同一条 8/27 … 9/25 的窗口，9/26 那行始终在窗口外。本地日历在 UTC+8 会把 20:00Z 算成
+    /// 9/26、在 UTC-5 会把 02:00Z 算成 9/24，两种情况窗口都整体平移一天 —— 这就是「必须用 UTC」
+    /// 的回归钉子。测试进程改不了系统时区，只能从 `today` 这个注入点造边界锚点。
+    @Test
+    func theWindowFollowsTheUTCDayNotTheLocalOne() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let payload = bundle()
+
+        for hour in [0, 2, 12, 20, 23] {
+            let anchor = calendar.date(from: DateComponents(
+                year: 2026, month: 9, day: 25, hour: hour
+            ))!
+            let detail = try #require(OpenCodeGoUsageDetail.make(
+                bundle: payload,
+                usages: usages,
+                today: anchor
+            ))
+            let series = try #require(detail.series)
+
+            #expect(series.axisStart == "8/27")
+            #expect(series.axisEnd == "9/25")
+            #expect(detail.groups[0].values.map(\.value) == ["13", "1.3M", "$0.42"])
+            #expect(detail.groups[2].values.map(\.value) == ["49", "4.9M", "$1.11"])
+        }
+    }
+
     @Test
     func extremeAmountsSaturateInsteadOfTrapping() throws {
         // A JSON integer constant beyond Int64 reaches JSONSerialization as an NSDecimalNumber that

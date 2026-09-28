@@ -274,6 +274,45 @@ struct CodexUsageDetailTests {
         #expect(detail.series?.axisEnd == "9/25")
     }
 
+    /// 窗口按 UTC 天切分，跟机器在哪个时区无关：锚点落在 9/25 这一 UTC 天的哪个小时，都该给出
+    /// 同一条 8/27 … 9/25 的窗口。本地日历在 UTC+8 会把 20:00Z 算成 9/26、在 UTC-5 会把 02:00Z
+    /// 算成 9/24，两种情况窗口都整体平移一天 —— 这就是「必须用 UTC」的回归钉子。
+    ///
+    /// 测试进程改不了系统时区，只能从 `today` 这个注入点造边界锚点；两端各取一个小时候，
+    /// 任何非 UTC 的机器都会红。
+    @Test
+    func theWindowFollowsTheUTCDayNotTheLocalOne() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let response = try usageResponse("{ \(sparseBuckets) }")
+
+        for hour in [0, 2, 12, 20, 23] {
+            let anchor = calendar.date(from: DateComponents(
+                year: 2026, month: 9, day: 25, hour: hour
+            ))!
+            let detail = try #require(CodexUsageDetail.make(
+                usage: response,
+                usages: quotaUsages(),
+                today: anchor
+            ))
+
+            #expect(detail.series?.axisStart == "8/27")
+            #expect(detail.series?.axisEnd == "9/25")
+            #expect(detail.groups.map { $0.values[0].value } == ["2M", "2.8M", "3.7M"])
+        }
+    }
+
+    /// 三个构建器共用同一处窗口日历，这一行钉住那份定义本身 —— 上面那条行为用例在 UTC 机器上
+    /// 看不出差别（`.current` 恰好就是 UTC），这条至少把共享的 `utcCalendar()` 钉死；两个
+    /// formatter 的时区取自同一个日历，一并钉住，防止将来有人把它们改成各自的 `.current`。
+    @Test
+    func theSharedWindowCalendarAndFormattersAreUTC() {
+        let calendar = UsageDetailSupport.utcCalendar()
+        #expect(calendar.timeZone.secondsFromGMT() == 0)
+        #expect(UsageDetailSupport.dateFormatter(calendar: calendar).timeZone.secondsFromGMT() == 0)
+        #expect(UsageDetailSupport.axisDateFormatter(calendar: calendar).timeZone.secondsFromGMT() == 0)
+    }
+
     @Test
     func negativeBucketCountsAreDroppedRatherThanSubtracted() throws {
         let response = try usageResponse("""

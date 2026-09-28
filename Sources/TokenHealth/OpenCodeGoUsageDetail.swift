@@ -7,9 +7,6 @@ import Foundation
 enum OpenCodeGoUsageDetail {
     static let tableRowLimit = 6
     static let unknownModelName = "Unknown model"
-    static let dayFormat = "yyyy-MM-dd"
-    static let axisDateFormat = "M/d"
-    static let rangeDays = 30
 
     /// Headline rows, in window order. Labels are the card's copy, not `UsageWindow.title`.
     static let windowLabels: [(window: UsageWindow, label: String)] = [
@@ -28,16 +25,9 @@ enum OpenCodeGoUsageDetail {
         }
 
         mutating func add(requests: Int = 0, tokens: Int = 0, costMicroCents: Int = 0) {
-            self.requests = Self.saturatingAdd(self.requests, requests)
-            self.tokens = Self.saturatingAdd(self.tokens, tokens)
-            self.costMicroCents = Self.saturatingAdd(self.costMicroCents, costMicroCents)
-        }
-
-        /// Saturating add: a malformed or hostile response must degrade, never trap — the builder
-        /// promises not to crash on remote data.
-        private static func saturatingAdd(_ lhs: Int, _ rhs: Int) -> Int {
-            let (sum, overflow) = lhs.addingReportingOverflow(rhs)
-            return overflow ? (rhs > 0 ? Int.max : Int.min) : sum
+            self.requests = UsageDetailSupport.saturatingAdd(self.requests, requests)
+            self.tokens = UsageDetailSupport.saturatingAdd(self.tokens, tokens)
+            self.costMicroCents = UsageDetailSupport.saturatingAdd(self.costMicroCents, costMicroCents)
         }
     }
 
@@ -49,8 +39,8 @@ enum OpenCodeGoUsageDetail {
         var detail = UsageDetail()
         detail.headline = headline(from: usages)
 
-        let calendar = utcCalendar()
-        let dayRange = dayList(today: today, calendar: calendar)
+        let calendar = UsageDetailSupport.utcCalendar()
+        let dayRange = UsageDetailSupport.trailingDayList(today: today, calendar: calendar)
         if let rows = root["usageByDay"] as? [[String: Any]], !dayRange.isEmpty {
             let byDay = dayTotals(from: rows, allowed: Set(dayRange), calendar: calendar)
             detail.groups = groups(dayRange: dayRange, byDay: byDay)
@@ -118,7 +108,7 @@ enum OpenCodeGoUsageDetail {
         let points = dayRange.map { date in
             DetailSeriesPoint(date: date, value: OpenCodeGoUsageParser.dollars(byDay[date]?.costMicroCents ?? 0))
         }
-        let formatter = axisDateFormatter(calendar: calendar)
+        let formatter = UsageDetailSupport.axisDateFormatter(calendar: calendar)
         return DetailSeries(
             title: "Cost · last 30 days",
             points: points,
@@ -224,8 +214,11 @@ enum OpenCodeGoUsageDetail {
         calendar: Calendar
     ) -> [Date: Totals] {
         var byDay: [Date: Totals] = [:]
+        // One formatter for the whole loop: a bad response can carry tens of thousands of rows.
+        let formatter = UsageDetailSupport.dateFormatter(calendar: calendar)
         for row in rows {
-            guard let date = date(fromDay: row["date"], calendar: calendar), allowed.contains(date) else {
+            guard let date = UsageDetailSupport.date(fromDay: row["date"] as? String, formatter: formatter),
+                  allowed.contains(date) else {
                 continue
             }
             var totals = byDay[date] ?? Totals()
@@ -237,55 +230,6 @@ enum OpenCodeGoUsageDetail {
             byDay[date] = totals
         }
         return byDay
-    }
-
-    /// `[today - 29, today]`, one entry per UTC day.
-    private static func dayList(today: Date, calendar: Calendar) -> [Date] {
-        let last = calendar.startOfDay(for: today)
-        guard let first = calendar.date(byAdding: .day, value: -(rangeDays - 1), to: last) else {
-            return []
-        }
-
-        var days: [Date] = []
-        var cursor = first
-        while cursor <= last {
-            days.append(cursor)
-            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else {
-                break
-            }
-            cursor = next
-        }
-        return days
-    }
-
-    /// Parses the first 10 characters, so `"2026-09-25T00:00:00Z"` works too.
-    private static func date(fromDay value: Any?, calendar: Calendar) -> Date? {
-        guard let text = value as? String, text.count >= 10 else {
-            return nil
-        }
-        return dateFormatter(calendar: calendar).date(from: String(text.prefix(10)))
-    }
-
-    private static func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
-        return calendar
-    }
-
-    private static func dateFormatter(calendar: Calendar) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = dayFormat
-        return formatter
-    }
-
-    private static func axisDateFormatter(calendar: Calendar) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = axisDateFormat
-        return formatter
     }
 
     private static func intValue(_ value: Any?) -> Int? {

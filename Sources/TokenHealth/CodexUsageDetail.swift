@@ -6,10 +6,6 @@ import Foundation
 /// Never throws: a missing response or a missing field only removes the matching section, and a
 /// detail with nothing to draw is nil so the popover falls back to its error line.
 enum CodexUsageDetail {
-    static let dayFormat = "yyyy-MM-dd"
-    static let axisDateFormat = "M/d"
-    static let rangeDays = 30
-
     static func make(
         usage: CodexAccountUsageResponse?,
         usages: [TokenUsage],
@@ -21,8 +17,8 @@ enum CodexUsageDetail {
         // `nil` means the usage read failed or an old backend omits it: no window to draw.
         // An empty array means "no usage in these 30 days" and draws zero rows.
         if let buckets = usage?.dailyUsageBuckets {
-            let calendar = utcCalendar()
-            let dayRange = dayList(today: today, calendar: calendar)
+            let calendar = UsageDetailSupport.utcCalendar()
+            let dayRange = UsageDetailSupport.trailingDayList(today: today, calendar: calendar)
             if !dayRange.isEmpty {
                 let byDay = dayTotals(from: buckets, allowed: Set(dayRange), calendar: calendar)
                 detail.groups = groups(dayRange: dayRange, byDay: byDay)
@@ -62,9 +58,9 @@ enum CodexUsageDetail {
         var last30 = 0
         for (index, date) in dayRange.enumerated() {
             let tokens = byDay[date] ?? 0
-            last30 = saturatingAdd(last30, tokens)
+            last30 = UsageDetailSupport.saturatingAdd(last30, tokens)
             if index >= dayRange.count - 7 {
-                last7 = saturatingAdd(last7, tokens)
+                last7 = UsageDetailSupport.saturatingAdd(last7, tokens)
             }
         }
 
@@ -83,7 +79,7 @@ enum CodexUsageDetail {
         let points = dayRange.map { date in
             DetailSeriesPoint(date: date, value: Double(byDay[date] ?? 0))
         }
-        let formatter = axisDateFormatter(calendar: calendar)
+        let formatter = UsageDetailSupport.axisDateFormatter(calendar: calendar)
         return DetailSeries(
             title: "Tokens · last 30 days",
             points: points,
@@ -101,73 +97,19 @@ enum CodexUsageDetail {
         calendar: Calendar
     ) -> [Date: Int] {
         var byDay: [Date: Int] = [:]
+        // One formatter for the whole loop: a bad response can carry tens of thousands of buckets.
+        let formatter = UsageDetailSupport.dateFormatter(calendar: calendar)
         for bucket in buckets {
             // A bucket missing its date or its tokens — or carrying a negative count, which is bad
             // data rather than a small day — is dropped, not counted as zero.
             guard let tokens = bucket.tokens, tokens >= 0,
-                  let date = date(fromDay: bucket.startDate, calendar: calendar),
+                  let date = UsageDetailSupport.date(fromDay: bucket.startDate, formatter: formatter),
                   allowed.contains(date) else {
                 continue
             }
-            byDay[date] = saturatingAdd(byDay[date] ?? 0, Int(clamping: tokens))
+            byDay[date] = UsageDetailSupport.saturatingAdd(byDay[date] ?? 0, Int(clamping: tokens))
         }
         return byDay
-    }
-
-    /// A malformed or hostile bucket must degrade, never trap — the builder promises not to crash
-    /// on data it did not produce.
-    private static func saturatingAdd(_ lhs: Int, _ rhs: Int) -> Int {
-        let (sum, overflow) = lhs.addingReportingOverflow(rhs)
-        return overflow ? (rhs > 0 ? Int.max : Int.min) : sum
-    }
-
-    /// `[today - 29, today]`, one entry per UTC day.
-    private static func dayList(today: Date, calendar: Calendar) -> [Date] {
-        let last = calendar.startOfDay(for: today)
-        guard let first = calendar.date(byAdding: .day, value: -(rangeDays - 1), to: last) else {
-            return []
-        }
-
-        var days: [Date] = []
-        var cursor = first
-        while cursor <= last {
-            days.append(cursor)
-            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else {
-                break
-            }
-            cursor = next
-        }
-        return days
-    }
-
-    /// Parses the first 10 characters, so `"2026-09-25T00:00:00Z"` works too.
-    private static func date(fromDay value: String?, calendar: Calendar) -> Date? {
-        guard let value, value.count >= 10 else {
-            return nil
-        }
-        return dateFormatter(calendar: calendar).date(from: String(value.prefix(10)))
-    }
-
-    private static func utcCalendar() -> Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
-        return calendar
-    }
-
-    private static func dateFormatter(calendar: Calendar) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = dayFormat
-        return formatter
-    }
-
-    private static func axisDateFormatter(calendar: Calendar) -> DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = axisDateFormat
-        return formatter
     }
 
     // MARK: - breakdown
