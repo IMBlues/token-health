@@ -42,6 +42,7 @@ struct CodexUsageDetailTests {
 
         #expect(detail.headline.map(\.label) == ["5h", "Week"])
         #expect(detail.headline.map(\.value) == ["12%", "58%"])
+        #expect(detail.headline.map(\.ratio) == [0.12, 0.58], "额度行要带比例，浮层才画得出条")
         // 用量响应缺席时不该凭空造出别的区块。
         #expect(detail.groups.isEmpty)
         #expect(detail.series == nil)

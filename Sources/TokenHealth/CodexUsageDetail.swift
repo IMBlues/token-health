@@ -43,7 +43,11 @@ enum CodexUsageDetail {
             guard seen.insert(label).inserted else {
                 return nil
             }
-            return DetailStat(label: label, value: UsageAmountFormatter.exactAmountText(usage))
+            return DetailStat(
+                label: label,
+                value: UsageAmountFormatter.exactAmountText(usage),
+                ratio: usage.ratio
+            )
         }
     }
 

@@ -54,6 +54,7 @@ struct DeepSeekUsageDetailTests {
 
         #expect(detail.headline.map(\.label) == ["CNY", "USD"])
         #expect(detail.headline.map(\.value) == ["1,284.60", "3.00"], "币种在 label 上，值里不重复")
+        #expect(detail.headline.allSatisfy { $0.ratio == nil }, "余额没有「用了几成」，浮层不该给它画条")
     }
 
     @Test

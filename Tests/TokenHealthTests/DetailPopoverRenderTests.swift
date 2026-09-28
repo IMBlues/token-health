@@ -96,6 +96,23 @@ struct DetailPopoverRenderTests {
         )
     }
 
+    @Test
+    func rendersQuotaBars() throws {
+        let bars = try render(UsageDetail(headline: [
+            DetailStat(label: "5h", value: "100%", ratio: 1),
+            DetailStat(label: "Week", value: "75%", ratio: 0.75),
+            // 极小比例走最小可见宽度那条分支，同样不该崩。
+            DetailStat(label: "Month", value: "0.1%", ratio: 0.001)
+        ]))
+        let plain = try render(UsageDetail(headline: [
+            DetailStat(label: "5h", value: "100%"),
+            DetailStat(label: "Week", value: "75%"),
+            DetailStat(label: "Month", value: "0.1%")
+        ]))
+
+        #expect(bars.height > plain.height, "有比例的额度行比纯文字多出一条")
+    }
+
     private func render(
         _ detail: UsageDetail?,
         statusMessage: String? = nil,

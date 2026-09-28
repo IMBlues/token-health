@@ -65,7 +65,7 @@ enum OpenCodeGoUsageDetail {
                   let value = usage.displayValue, !value.isEmpty else {
                 return nil
             }
-            return DetailStat(label: label, value: value)
+            return DetailStat(label: label, value: value, ratio: usage.ratio)
         }
     }
 

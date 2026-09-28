@@ -65,6 +65,7 @@ struct OpenCodeGoUsageDetailTests {
 
         #expect(detail.headline.map(\.label) == ["5 hours", "Week", "Month"])
         #expect(detail.headline.map(\.value) == ["$0.32 / $12.00", "$0.95 / $30.00", "$2.22 / $60.00"])
+        #expect(detail.headline.map(\.ratio) == usages.map(\.ratio), "额度行要带比例，浮层才画得出条")
     }
 
     @Test
