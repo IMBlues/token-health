@@ -282,3 +282,47 @@ struct KeychainStoreTests {
         #expect(message.contains("Always Allow"))
     }
 }
+
+/// `security` CLI 输出的解析。实机证据：vault（含 UTF-8）被 CLI 以十六进制输出，
+/// 而普通 ASCII 凭据按明文输出，两者都要还原成原始字节。
+struct SecurityToolOutputTests {
+    @Test
+    func decodesPlainJSONOutput() throws {
+        let json = Data(#"{"providerSecrets":{},"legacyMigrationComplete":true}"#.utf8)
+        var output = json
+        output.append(0x0a)
+        #expect(SecurityToolKeychainBacking.decodePasswordOutput(output) == json)
+    }
+
+    @Test
+    func decodesHexOutput() throws {
+        let json = Data(#"{"providerSecrets":{"a":"汉字"}}"#.utf8)
+        let hex = json.map { String(format: "%02x", $0) }.joined()
+        var output = Data()
+        output.append(contentsOf: hex.utf8)
+        output.append(0x0a)
+        #expect(SecurityToolKeychainBacking.decodePasswordOutput(output) == json)
+    }
+
+    @Test
+    func keepsPlainStringCredentialsAsIs() throws {
+        // 旧格式的字符串凭据（迁移用）是明文 token，不该被误当十六进制解开。
+        let token = Data("sk-not-hex-123".utf8)
+        var output = token
+        output.append(0x0a)
+        #expect(SecurityToolKeychainBacking.decodePasswordOutput(output) == token)
+    }
+
+    @Test
+    func handlesEmptyOutput() {
+        #expect(SecurityToolKeychainBacking.decodePasswordOutput(Data()) == Data())
+        #expect(SecurityToolKeychainBacking.decodePasswordOutput(Data([0x0a])) == Data())
+    }
+
+    @Test
+    func mapsKnownExitCodes() {
+        #expect(SecurityToolKeychainBacking.status(fromExitCode: 0) == errSecSuccess)
+        #expect(SecurityToolKeychainBacking.status(fromExitCode: 44) == errSecItemNotFound)
+        #expect(SecurityToolKeychainBacking.status(fromExitCode: 1) == errSecInternalComponent)
+    }
+}

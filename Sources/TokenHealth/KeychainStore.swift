@@ -103,7 +103,7 @@ final class KeychainStore: SecretStoring, @unchecked Sendable {
     /// 读失败之后不再自动重试：每次重试都会把系统授权框再弹一遍，只能等用户明确要求。
     private var retryBlocked = false
 
-    init(backing: any KeychainBacking = SecItemKeychainBacking()) {
+    init(backing: any KeychainBacking = SecurityToolKeychainBacking()) {
         self.backing = backing
     }
 
