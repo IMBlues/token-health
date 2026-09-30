@@ -11,6 +11,9 @@ struct DetailPopoverView: View {
     let onOpenSettings: () -> Void
     let onQuit: () -> Void
 
+    /// 柱状图单根柱子的宽度上限。30 根时本来就只有 ~9pt，这个上限只在点位很少时才起作用。
+    private static let maximumBarWidth: CGFloat = 16
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
@@ -215,7 +218,9 @@ struct DetailPopoverView: View {
         GeometryReader { proxy in
             let spacing: CGFloat = 1
             let count = max(series.points.count, 1)
-            let barWidth = max(1, (proxy.size.width - spacing * CGFloat(count - 1)) / CGFloat(count))
+            // 柱子有上限宽度：点位少的时候（比如一个才开始的窗口只剩一天），按剩余宽度均分的
+            // 那根「柱子」会把整幅铺成一条通栏色块，读起来像图坏了。
+            let barWidth = min(Self.maximumBarWidth, max(1, (proxy.size.width - spacing * CGFloat(count - 1)) / CGFloat(count)))
             let heights = DetailSeriesChart.heights(
                 points: series.points,
                 maxHeight: proxy.size.height,

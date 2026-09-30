@@ -12,12 +12,13 @@ enum CursorUsageDetail {
     /// `cursor-grok-4.6-high` / `grok-4.7-high`; the card is about the pool, so both spellings
     /// count and the row names stay exactly as Cursor wrote them.
     static let grokModelNeedle = "grok"
-    /// How far the daily-spend request reaches back before the window starts. The rolling 7-day
-    /// row needs those days in the first week of a billing cycle, where the window itself is
-    /// shorter than a week.
-    static let sevenDayBackfillDays = 6
-    /// The fallback window when the billing cycle is unknown.
-    static let fallbackRangeDays = 30
+    /// How many days the rolling window covers, and the shortest window the dated sections are
+    /// ever cut with. A billing cycle younger than this falls back to the rolling window:
+    /// cutting to a day-old cycle draws a single full-width bar under a `9/30 … 9/30` axis,
+    /// which reads as a broken chart rather than as a cycle that just started.
+    static let minimumRangeDays = 30
+    /// The `Today` row's neighbours: `[today - 6, today]`.
+    static let trailingWeekDays = 7
 
     /// The window every dated section is cut with, and the range the daily-spend request asks
     /// for. Both come from one value so the request and the sections can never disagree.
@@ -26,16 +27,16 @@ enum CursorUsageDetail {
         var start: Date
         /// Last day of the window, UTC midnight. Never past today.
         var end: Date
-        /// The billing cycle's last instant, or nil when the window fell back to 30 days.
-        var cycleEnd: Date?
-        /// What to ask the backend for: the window plus the 7-day backfill, ending at `today`
-        /// (an instant, not a midnight — the request is a timestamp range).
+        /// True when the window is the billing cycle itself, false when it is the rolling one —
+        /// either because the cycle is unknown or because it is younger than `minimumRangeDays`.
+        var isCycle: Bool
+        /// What to ask the backend for: the window, ending at `today` (an instant, not a
+        /// midnight — the request is a timestamp range).
         var fetchStart: Date
         var fetchEnd: Date
         /// One entry per UTC day of `start ... end`.
         var days: [Date]
 
-        var isCycle: Bool { cycleEnd != nil }
         var groupTitle: String { isCycle ? "Billing cycle" : "30 days" }
         var seriesTitle: String { isCycle ? "Tokens · billing cycle" : "Tokens · last 30 days" }
         var seriesEmptyText: String { isCycle ? "No usage in this billing cycle" : "No usage in the last 30 days" }
@@ -51,37 +52,33 @@ enum CursorUsageDetail {
         calendar: Calendar
     ) -> Window {
         let todayStart = calendar.startOfDay(for: today)
-        let fallbackStart = calendar.date(
+        let rollingStart = calendar.date(
             byAdding: .day,
-            value: -(fallbackRangeDays - 1),
+            value: -(minimumRangeDays - 1),
             to: todayStart
         ) ?? todayStart
 
-        var start = fallbackStart
+        var start = rollingStart
         var end = todayStart
-        var resolvedCycleEnd: Date?
+        var isCycle = false
         if let cycleStart, let cycleEnd {
-            let cycleEndStart = calendar.startOfDay(for: cycleEnd)
             let cycleStartStart = calendar.startOfDay(for: cycleStart)
-            // A cycle whose end precedes its start is bad data, not a one-day cycle: it falls
-            // back to the 30-day window instead of producing an empty day list.
-            if cycleEndStart >= cycleStartStart {
+            let cycleEndStart = calendar.startOfDay(for: cycleEnd)
+            // A cycle whose end precedes its start is bad data, not a one-day cycle; a cycle
+            // younger than the rolling window keeps the rolling window instead of shrinking
+            // to it.
+            if cycleEndStart >= cycleStartStart, cycleStartStart <= rollingStart {
                 start = cycleStartStart
                 end = min(cycleEndStart, todayStart)
-                resolvedCycleEnd = end
+                isCycle = true
             }
         }
 
-        let backfillStart = calendar.date(
-            byAdding: .day,
-            value: -sevenDayBackfillDays,
-            to: todayStart
-        ) ?? todayStart
         return Window(
             start: start,
             end: end,
-            cycleEnd: resolvedCycleEnd,
-            fetchStart: min(start, backfillStart),
+            isCycle: isCycle,
+            fetchStart: start,
             fetchEnd: max(end, today),
             days: UsageDetailSupport.dayList(from: start, through: end, calendar: calendar)
         )
@@ -143,7 +140,7 @@ enum CursorUsageDetail {
         let todayStart = calendar.startOfDay(for: today)
         let trailingWeek = calendar.date(
             byAdding: .day,
-            value: -(sevenDayBackfillDays),
+            value: -(trailingWeekDays - 1),
             to: todayStart
         ) ?? todayStart
         let weekDays = UsageDetailSupport.dayList(from: trailingWeek, through: todayStart, calendar: calendar)
