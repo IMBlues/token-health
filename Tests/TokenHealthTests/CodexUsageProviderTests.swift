@@ -185,6 +185,23 @@ struct CodexUsageProviderTests {
     }
 
     @Test
+    func theResolverKnowsBothChatGPTLayouts() {
+        let paths = CodexExecutableResolver
+            .candidates(homeDirectory: URL(fileURLWithPath: "/Users/example"))
+            .map(\.path)
+
+        // 2026-09-30 的 ChatGPT.app 更新（26.928）把 codex 挪进了 codex-cli/CodexCLI.app/。
+        // 只认旧路径的话，卡片会报「装官方 App 并登录」，而 App 其实装着呢 —— 这次就是这么坏的。
+        // 紧挨着的 codex-cli/bin/codex 是未签名的启动脚本，不走它。
+        #expect(paths.contains("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"))
+        #expect(paths.contains("/Users/example/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"))
+        // 旧布局（更早的 ChatGPT.app 与 Codex.app）仍然要找。
+        #expect(paths.contains("/Applications/ChatGPT.app/Contents/Resources/codex"))
+        #expect(paths.contains("/Applications/Codex.app/Contents/Resources/codex"))
+        #expect(paths.contains("/Users/example/Applications/Codex.app/Contents/Resources/codex"))
+    }
+
+    @Test
     func testRateLimitMappingKeepsMainAndNamedQuotaBuckets() throws {
         let fiveHourReset: Int64 = 1_783_665_814
         let weekReset: Int64 = 1_784_252_614

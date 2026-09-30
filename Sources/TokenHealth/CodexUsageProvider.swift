@@ -260,10 +260,20 @@ enum CodexExecutableResolver {
         return nil
     }
 
-    private static func candidates(homeDirectory: URL) -> [URL] {
+    /// Internal rather than private so a test can pin both layouts: the path is hardcoded, and
+    /// when OpenAI moves the bundled CLI again the provider silently reports "install the app"
+    /// while the app is installed.
+    static func candidates(homeDirectory: URL) -> [URL] {
+        // The 2026-09-30 ChatGPT.app update (26.928) moved the bundled CLI from
+        // `Contents/Resources/codex` to `codex-cli/CodexCLI.app/Contents/MacOS/codex`. The
+        // `codex-cli/bin/codex` beside it is a shell launcher that execs that same binary, but it
+        // is an unsigned script — the verifier would (and should) reject it. The old path stays
+        // for older builds of both apps.
         [
-            URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),
+            URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
             URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex"),
+            URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"),
+            homeDirectory.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
             homeDirectory.appendingPathComponent("Applications/ChatGPT.app/Contents/Resources/codex"),
             homeDirectory.appendingPathComponent("Applications/Codex.app/Contents/Resources/codex")
         ]
