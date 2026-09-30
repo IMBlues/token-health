@@ -36,6 +36,7 @@ struct CodexUsageDetailTests {
     func headlineMirrorsThePinnedMenuBarMetrics() throws {
         let detail = try #require(CodexUsageDetail.make(
             usage: nil,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -63,7 +64,7 @@ struct CodexUsageDetailTests {
             TokenUsage(window: .week, label: "1h", used: 70, limit: 100, unit: "%")
         ]
 
-        let detail = try #require(CodexUsageDetail.make(usage: nil, usages: usages, today: today))
+        let detail = try #require(CodexUsageDetail.make(usage: nil, resetCredits: nil, usages: usages, today: today))
 
         #expect(detail.headline.map(\.label) == ["1h", "5h", "Week"])
         #expect(detail.headline.map(\.value) == ["40%", "12%", "58%"])
@@ -75,6 +76,7 @@ struct CodexUsageDetailTests {
 
         let detail = try #require(CodexUsageDetail.make(
             usage: response,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -91,6 +93,7 @@ struct CodexUsageDetailTests {
             let response = try usageResponse("{ \"summary\": { \"longestRunningTurnSec\": \(seconds) } }")
             let detail = try #require(CodexUsageDetail.make(
                 usage: response,
+                resetCredits: nil,
                 usages: quotaUsages(),
                 today: today
             ))
@@ -104,6 +107,7 @@ struct CodexUsageDetailTests {
         """)
         let badDetail = try #require(CodexUsageDetail.make(
             usage: bad,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -119,6 +123,7 @@ struct CodexUsageDetailTests {
 
         let detail = try #require(CodexUsageDetail.make(
             usage: response,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -128,7 +133,7 @@ struct CodexUsageDetailTests {
         #expect(detail.groups.isEmpty)
 
         // 额度与用量都填不出来 → nil（浮层退回错误行）。
-        #expect(CodexUsageDetail.make(usage: nil, usages: [], today: today) == nil)
+        #expect(CodexUsageDetail.make(usage: nil, resetCredits: nil, usages: [], today: today) == nil)
     }
 
     /// 稀疏 buckets：今天两条（求和）、7 天窗口边界 9/19 一条、窗口内更早的 9/18 一条、
@@ -152,6 +157,7 @@ struct CodexUsageDetailTests {
 
         let detail = try #require(CodexUsageDetail.make(
             usage: response,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -169,6 +175,7 @@ struct CodexUsageDetailTests {
 
         let detail = try #require(CodexUsageDetail.make(
             usage: response,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -190,6 +197,7 @@ struct CodexUsageDetailTests {
         let empty = try usageResponse("{ \(fullSummary), \"dailyUsageBuckets\": [] }")
         let emptyDetail = try #require(CodexUsageDetail.make(
             usage: empty,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -201,6 +209,7 @@ struct CodexUsageDetailTests {
         let missing = try usageResponse("{ \(fullSummary) }")
         let missingDetail = try #require(CodexUsageDetail.make(
             usage: missing,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -222,6 +231,7 @@ struct CodexUsageDetailTests {
 
         let detail = try #require(CodexUsageDetail.make(
             usage: response,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -243,6 +253,7 @@ struct CodexUsageDetailTests {
 
         let detail = try #require(CodexUsageDetail.make(
             usage: response,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
@@ -266,6 +277,7 @@ struct CodexUsageDetailTests {
         let response = try usageResponse("{ \(sparseBuckets) }")
         let detail = try #require(CodexUsageDetail.make(
             usage: response,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: afternoon
         ))
@@ -293,6 +305,7 @@ struct CodexUsageDetailTests {
             ))!
             let detail = try #require(CodexUsageDetail.make(
                 usage: response,
+                resetCredits: nil,
                 usages: quotaUsages(),
                 today: anchor
             ))
@@ -324,10 +337,121 @@ struct CodexUsageDetailTests {
 
         let detail = try #require(CodexUsageDetail.make(
             usage: response,
+            resetCredits: nil,
             usages: quotaUsages(),
             today: today
         ))
 
         #expect(detail.groups.map { $0.values[0].value } == ["1.2M", "1.2M", "1.2M"])
+    }
+
+    // MARK: - 重置卡
+
+    private func resetCredits(_ json: String) throws -> CodexResetCreditsSummary {
+        try JSONDecoder().decode(CodexResetCreditsSummary.self, from: Data(json.utf8))
+    }
+
+    /// 与构建器同一口径：`M/d`、本地时区 —— 到期日是用户的墙钟时间，用 UTC 显示会差一天。
+    private func localDay(_ epoch: Int) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(epoch)))
+    }
+
+    @Test
+    func resetCardsBecomeATableOrderedByExpiry() throws {
+        let credits = try resetCredits(#"""
+        {"availableCount": 3, "credits": [
+          {"title": "No expiry card", "expiresAt": null},
+          {"title": "Later card", "expiresAt": 1793293436},
+          {"title": "Sooner card", "expiresAt": 1792000000}]}
+        """#)
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: nil,
+            resetCredits: credits,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        let table = try #require(detail.table)
+        #expect(table.title == "Reset cards")
+        #expect(table.columns == ["Card", "Expires"])
+        // 先到期的在前，不过期的最后 —— 期限最紧的最该先被看见。
+        #expect(table.rows.map(\.name) == ["Sooner card", "Later card", "No expiry card"])
+        #expect(table.rows.map(\.cells) == [[localDay(1_792_000_000)], [localDay(1_793_293_436)], ["Never"]])
+        #expect(table.footnote == nil)
+    }
+
+    @Test
+    func resetCardsFallBackToTheCountRowWhenDetailsAreMissing() throws {
+        // 后端只给数量：画一行「N available」，到期日不知道就画破折号。
+        let credits = try resetCredits(#"{"availableCount": 2}"#)
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: nil,
+            resetCredits: credits,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        let table = try #require(detail.table)
+        #expect(table.rows.map(\.name) == ["2 available"])
+        #expect(table.rows.map(\.cells) == [["—"]])
+    }
+
+    @Test
+    func noAvailableResetCardsDrawsNoTable() throws {
+        for json in [#"{"availableCount": 0, "credits": []}"#, #"{"availableCount": 0}"#] {
+            let detail = try #require(CodexUsageDetail.make(
+                usage: nil,
+                resetCredits: try resetCredits(json),
+                usages: quotaUsages(),
+                today: today
+            ))
+            #expect(detail.table == nil, "一张都没有就不画这一段：\(json)")
+        }
+    }
+
+    @Test
+    func resetCardsTruncateWithAFootnote() throws {
+        let cards = (1...8)
+            .map { #"{"title":"Card \#($0)","expiresAt":\#(1_790_000_000 + $0 * 86_400)}"# }
+            .joined(separator: ",")
+        let credits = try resetCredits(#"{"availableCount":8,"credits":[\#(cards)]}"#)
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: nil,
+            resetCredits: credits,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        let table = try #require(detail.table)
+        #expect(table.rows.count == 6)
+        #expect(table.rows.first?.name == "Card 1")
+        #expect(table.footnote == "+2 more cards")
+    }
+
+    @Test
+    func resetCardNameFallsBackFromTitleToDescription() throws {
+        let credits = try resetCredits(#"""
+        {"availableCount": 3, "credits": [
+          {"title": "   ", "description": "A mentioned reset"},
+          {"description": "Description only"},
+          {}]}
+        """#)
+
+        let detail = try #require(CodexUsageDetail.make(
+            usage: nil,
+            resetCredits: credits,
+            usages: quotaUsages(),
+            today: today
+        ))
+
+        // 标题只有空白 → 用描述；两个都没有 → 兜底文案。三张都没写 expiresAt → 全「Never」。
+        #expect(detail.table?.rows.map(\.name) == ["A mentioned reset", "Description only", "Reset"])
+        #expect(detail.table?.rows.map(\.cells) == [["Never"], ["Never"], ["Never"]])
     }
 }

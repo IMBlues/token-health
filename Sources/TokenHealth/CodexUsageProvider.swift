@@ -70,7 +70,12 @@ struct CodexUsageProvider: UsageProvider {
             providerTitle: config.providerKind.title,
             planName: mapped.planName,
             usages: mapped.usages,
-            detail: CodexUsageDetail.make(usage: bundle.accountUsage, usages: mapped.usages, today: today),
+            detail: CodexUsageDetail.make(
+                usage: bundle.accountUsage,
+                resetCredits: bundle.rateLimits.rateLimitResetCredits,
+                usages: mapped.usages,
+                today: today
+            ),
             state: .ready,
             statusMessage: mapped.statusMessage,
             updatedAt: fetchedAt
@@ -625,6 +630,56 @@ struct CodexAccountUsageDay: Decodable, Sendable {
 struct CodexRateLimitsResponse: Decodable, Sendable {
     let rateLimits: CodexRateLimitSnapshot?
     let rateLimitsByLimitId: [String: CodexRateLimitSnapshot]?
+    let rateLimitResetCredits: CodexResetCreditsSummary?
+}
+
+/// The reset credits the account can spend to clear a rate limit. `availableCount` is the
+/// authoritative number; the detail rows are only sent when the backend provides them (and may
+/// be capped, so the array can be shorter than the count).
+struct CodexResetCreditsSummary: Decodable, Sendable {
+    let availableCount: Int64?
+    let credits: [CodexResetCredit]?
+
+    private enum CodingKeys: String, CodingKey {
+        case availableCount
+        case credits
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            availableCount = nil
+            credits = nil
+            return
+        }
+        availableCount = container.decodeFlexibleInt64IfPresent(forKey: .availableCount)
+        credits = try? container.decodeIfPresent([CodexResetCredit].self, forKey: .credits)
+    }
+}
+
+/// One reset card. Every field is optional so a single unusable entry cannot fail the array.
+/// `status` is deliberately not decoded: this array only ever carries the available cards.
+struct CodexResetCredit: Decodable, Sendable {
+    let title: String?
+    let description: String?
+    let expiresAt: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case description
+        case expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            title = nil
+            description = nil
+            expiresAt = nil
+            return
+        }
+        title = try? container.decodeIfPresent(String.self, forKey: .title)
+        description = try? container.decodeIfPresent(String.self, forKey: .description)
+        expiresAt = container.decodeFlexibleInt64IfPresent(forKey: .expiresAt)
+    }
 }
 
 struct CodexRateLimitSnapshot: Decodable, Sendable {

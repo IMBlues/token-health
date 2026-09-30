@@ -6,8 +6,11 @@ import Foundation
 /// Never throws: a missing response or a missing field only removes the matching section, and a
 /// detail with nothing to draw is nil so the popover falls back to its error line.
 enum CodexUsageDetail {
+    static let resetRowLimit = 6
+
     static func make(
         usage: CodexAccountUsageResponse?,
+        resetCredits: CodexResetCreditsSummary?,
         usages: [TokenUsage],
         today: Date
     ) -> UsageDetail? {
@@ -26,6 +29,7 @@ enum CodexUsageDetail {
             }
         }
         detail.breakdown = breakdown(usage?.summary)
+        detail.table = resetCardTable(resetCredits)
 
         return detail.isEmpty ? nil : detail
     }
@@ -158,5 +162,79 @@ enum CodexUsageDetail {
         }
         let minutes = (seconds % 3600) / 60
         return minutes == 0 ? "\(seconds / 3600)h" : "\(seconds / 3600)h \(minutes)m"
+    }
+
+    // MARK: - reset cards
+
+    /// The reset cards the account can spend to clear a rate limit. A card's deadline is a
+    /// wall-clock moment for the person reading it, so it formats in the local time zone — not
+    /// the UTC the day buckets are cut on. Cards are drawn soonest-first because the one closest
+    /// to expiring is the one worth remembering.
+    private static func resetCardTable(_ credits: CodexResetCreditsSummary?) -> DetailTable? {
+        guard let credits else {
+            return nil
+        }
+
+        if let cards = credits.credits, !cards.isEmpty {
+            let sorted = cards.sorted { lhs, rhs in
+                switch (lhs.expiresAt, rhs.expiresAt) {
+                case let (left?, right?):
+                    left < right
+                case (nil, _?):
+                    false
+                case (_?, nil):
+                    true
+                case (nil, nil):
+                    false
+                }
+            }
+            let shown = sorted.prefix(resetRowLimit)
+            // The count is authoritative: the backend may cap the detail array, so the footnote
+            // has to be measured against `availableCount` rather than the array we got.
+            let total = credits.availableCount ?? Int64(sorted.count)
+            let hidden = total - Int64(shown.count)
+            return DetailTable(
+                title: "Reset cards",
+                columns: ["Card", "Expires"],
+                rows: shown.map { card in
+                    DetailTableRow(name: resetCardName(card), cells: [expiryText(card.expiresAt)])
+                },
+                footnote: hidden > 0 ? "+\(hidden) more cards" : nil
+            )
+        }
+
+        // The backend reported a count without details: still worth a row, but there is no
+        // expiry to show.
+        if let count = credits.availableCount, count > 0 {
+            return DetailTable(
+                title: "Reset cards",
+                columns: ["Card", "Expires"],
+                rows: [DetailTableRow(name: "\(count) available", cells: ["—"])],
+                footnote: nil
+            )
+        }
+
+        return nil
+    }
+
+    private static func resetCardName(_ card: CodexResetCredit) -> String {
+        for candidate in [card.title, card.description] {
+            let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return "Reset"
+    }
+
+    /// `M/d` in the local time zone; `Never` for a card the backend says does not expire.
+    private static func expiryText(_ expiresAt: Int64?) -> String {
+        guard let expiresAt else {
+            return "Never"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(expiresAt)))
     }
 }

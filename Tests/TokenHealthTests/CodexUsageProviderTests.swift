@@ -154,6 +154,37 @@ struct CodexUsageProviderTests {
     }
 
     @Test
+    func decodesResetCreditsAndToleratesTheDegradedShapes() throws {
+        let full = try CodexTestSupport.decodeRateLimits(#"""
+        {"rateLimits":{},"rateLimitResetCredits":{"availableCount":1,"credits":[
+          {"id":"RateLimitResetCredit_1","resetType":"codexRateLimits","status":"available",
+           "grantedAt":1790701436,"expiresAt":1793293436,
+           "title":"Full reset (Weekly + 5 hr)","description":"Thanks for using Codex!"}]}}
+        """#)
+
+        #expect(full.rateLimitResetCredits?.availableCount == 1)
+        #expect(full.rateLimitResetCredits?.credits?.first?.title == "Full reset (Weekly + 5 hr)")
+        #expect(full.rateLimitResetCredits?.credits?.first?.expiresAt == 1793293436)
+
+        // 后端只给数量：明细数组为 null，数量写成字符串也认。
+        let countOnly = try CodexTestSupport.decodeRateLimits(
+            #"{"rateLimits":{},"rateLimitResetCredits":{"availableCount":"2"}}"#
+        )
+        #expect(countOnly.rateLimitResetCredits?.availableCount == 2)
+        #expect(countOnly.rateLimitResetCredits?.credits == nil)
+
+        // 整段缺席是正常的：老后端 / 没有卡。
+        let absent = try CodexTestSupport.decodeRateLimits(#"{"rateLimits":{}}"#)
+        #expect(absent.rateLimitResetCredits == nil)
+
+        // expiresAt 为 null = 这张卡不过期。
+        let noExpiry = try CodexTestSupport.decodeRateLimits(
+            #"{"rateLimits":{},"rateLimitResetCredits":{"availableCount":1,"credits":[{"expiresAt":null}]}}"#
+        )
+        #expect(noExpiry.rateLimitResetCredits?.credits?.first?.expiresAt == nil)
+    }
+
+    @Test
     func testRateLimitMappingKeepsMainAndNamedQuotaBuckets() throws {
         let fiveHourReset: Int64 = 1_783_665_814
         let weekReset: Int64 = 1_784_252_614
@@ -175,7 +206,7 @@ struct CodexUsageProviderTests {
         )
 
         let mapped = CodexRateLimitsMapper.map(
-            CodexRateLimitsResponse(rateLimits: main, rateLimitsByLimitId: ["codex": main, "codex_spark": spark])
+            CodexRateLimitsResponse(rateLimits: main, rateLimitsByLimitId: ["codex": main, "codex_spark": spark], rateLimitResetCredits: nil)
         )
 
         #expect(mapped.planName == "Pro")
@@ -273,7 +304,7 @@ struct CodexUsageProviderTests {
         )
 
         let mapped = CodexRateLimitsMapper.map(
-            CodexRateLimitsResponse(rateLimits: limits, rateLimitsByLimitId: nil)
+            CodexRateLimitsResponse(rateLimits: limits, rateLimitsByLimitId: nil, rateLimitResetCredits: nil)
         )
 
         #expect(mapped.planName == nil)
@@ -338,7 +369,7 @@ struct CodexUsageProviderTests {
         )
 
         let mapped = CodexRateLimitsMapper.map(
-            CodexRateLimitsResponse(rateLimits: nil, rateLimitsByLimitId: ["codex_spark": spark])
+            CodexRateLimitsResponse(rateLimits: nil, rateLimitsByLimitId: ["codex_spark": spark], rateLimitResetCredits: nil)
         )
 
         #expect(mapped.usages.count == 1)
@@ -528,6 +559,27 @@ struct CodexUsageProviderTests {
         #expect(detail.groups.map { $0.values[0].value } == ["2M", "2M", "2M"])
         #expect(detail.series?.points.count == 30)
         #expect(detail.breakdown.map(\.label) == ["Lifetime", "Peak day", "Streak", "Longest turn"])
+    }
+
+    @Test
+    func theSnapshotSeamCarriesTheResetCards() throws {
+        // 重置卡在**额度**那半（rateLimits）里，不是用量那半 —— 接缝必须把它传给构建器，
+        // 否则「浮层里看不到卡」这种静默丢失没人会发现。
+        let quota = try CodexTestSupport.decodeRateLimits(#"""
+        {"rateLimits":{"limitId":"codex","primary":{"usedPercent":12,"windowDurationMins":300},"planType":"plus"},
+         "rateLimitResetCredits":{"availableCount":1,"credits":[
+           {"title":"Full reset (Weekly + 5 hr)","expiresAt":1793293436}]}}
+        """#)
+
+        let snapshot = CodexUsageProvider().snapshot(
+            config: codexConfig(),
+            bundle: CodexQuotaBundle(rateLimits: quota, accountUsage: nil),
+            fetchedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            today: fetchDay
+        )
+
+        let table = try #require(snapshot.detail?.table)
+        #expect(table.rows.map(\.name) == ["Full reset (Weekly + 5 hr)"])
     }
 
     @Test
