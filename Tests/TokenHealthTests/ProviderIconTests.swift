@@ -52,4 +52,25 @@ struct ProviderIconTests {
             #expect(opaquePixelCount(image) > 8, "\(kind) drew (almost) nothing")
         }
     }
+
+    /// 菜单栏每一轮重绘都会重新取一次 logo。要是每次都 `NSImage(contentsOf:)`，
+    /// 就是每秒几十次读盘解 PDF —— 同一个 kind 只该读一次，之后拿同一张。
+    @Test
+    func aBundledLogoIsLoadedFromDiskOnlyOnce() throws {
+        let first = try #require(ProviderIcon.bundledLogo(for: .cursor))
+        let second = try #require(ProviderIcon.bundledLogo(for: .cursor))
+
+        #expect(first === second)
+    }
+
+    /// 缓存的是原始 logo，不是上完色的成品：成品会把某个时刻的深浅色定死在图里，
+    /// 菜单栏换色之后就再也反不回色了。
+    @Test
+    func theCacheDoesNotFreezeTheTint() {
+        let white = ProviderIcon.image(for: .cursor, size: 16, tint: .white)
+        let black = ProviderIcon.image(for: .cursor, size: 16, tint: .black)
+
+        #expect(brightPixelCount(white) > 0, "the white logo did not stay white")
+        #expect(brightPixelCount(black) == 0, "the black logo came back white")
+    }
 }
