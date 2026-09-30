@@ -28,7 +28,7 @@ Token Health 读取官方用量，压成几张清爽的小卡片。不开代理�
 | Provider | 你能看到 |
 | --- | --- |
 | **Codex** | 短周期、周额度、模型额度桶、重置倒计时 |
-| **Cursor** | 月度 Auto + Composer、API、Grokbot 用量 |
+| **Cursor** | 月度 Auto + Composer、API、Grokbot 用量，钉住后有 Grok bot 按模型明细 |
 | **Kimi Code** | 5 小时、周额度 |
 | **Zhipu Coding** | 5 小时、周额度、MCP 月额度、token/tool 明细 |
 | **DeepSeek** | 余额、今日费用、token 与请求明细 |
@@ -75,6 +75,8 @@ bash scripts/build-dmg.sh
 
 Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后请求 Cursor 用量接口。接口提供独立数值时显示 Auto + Composer、API、Grokbot；如果 Cursor 把 Grokbot 合并进 Auto，会明确显示 **Grokbot (included in Auto)**，不会无声消失。
 
+钉住后的详情浮层再往下讲一层：本计费周期的 token 汇总与每日趋势、花费拆分（包含 / 赠送 / 合计 / 重置日），以及 **Grok bot 的按模型用量表**。按天数据取不到时，浮层只少这几段，额度照常。
+
 ### OpenCode Go
 
 支持 API key 或内置控制台登录，展示 Go 订阅的 5 小时（$12）、周（$30）、月（$60）额度。
@@ -117,6 +119,13 @@ token 汇总、最近 30 天的每日 token 趋势，以及 `Lifetime` / `Peak d
 `7 days` / `30 days` 的请求数、token 与花费、最近 30 天的每日花费趋势、`Input` / `Output` /
 `Cache read` / `Cache write` 构成，以及 `By model · last 30 days` 的按模型拆分。
 数据在刷新时一并取回：API key 账号直接问控制台接口，控制台登录的账号走已导入的网页会话。
+
+钉住的 Cursor 项也是同一套浮层：Auto + Composer / API / Grokbot 三条额度（与菜单栏同一份口径）、
+`Today` / `7 days` / `Billing cycle` 的 token 汇总、本计费周期的每日 token 趋势、
+`Included` / `Bonus` / `Total` / `Resets` 花费行，以及 `Grok bot · this cycle` 的按模型用量表 ——
+Grok bot 自己用了多少就摆在这里（`grok-bot-default` 一类与 Grok 系模型分别列出，接口报得出就展示）。
+数据在刷新时取回：额度与花费来自用量汇总，按天与按模型的那些行来自仪表盘的按天接口；
+按天那份取不到时只少这几段，额度和菜单栏数字照常。
 
 浮层里的额度行下面画着一条已用比例的进度条，颜色与菜单栏、下拉卡片用的是同一套阈值；
 DeepSeek 的余额行保持纯文字 —— 余额报的是剩余、额度报的是已用，两种口径不硬凑成一种画法。
