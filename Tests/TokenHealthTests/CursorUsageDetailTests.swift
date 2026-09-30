@@ -202,22 +202,73 @@ struct CursorUsageDetailTests {
 
     // MARK: - window
 
+    /// 回归：本机 2026-09-30 07:13 刚滚进新计费周期，窗口一度被切成 `[9/30, 9/30]` ——
+    /// 一天的柱状图是一整条通栏色块，轴两端还都写着 9/30。
     @Test
-    func theFetchWindowBackfillsOneWeekForACycleThatJustStarted() {
+    func aCycleYoungerThanTheWindowKeepsTheRollingWindow() {
         let calendar = UsageDetailSupport.utcCalendar()
         let window = CursorUsageDetail.window(
-            cycleStart: Self.date(year: 2026, month: 9, day: 28),
-            cycleEnd: Self.date(year: 2026, month: 10, day: 28),
+            cycleStart: Self.date(year: 2026, month: 9, day: 30, hour: 7, minute: 13, second: 20),
+            cycleEnd: Self.date(year: 2026, month: 10, day: 30, hour: 7, minute: 13, second: 20),
+            today: Self.date(year: 2026, month: 9, day: 30, hour: 15),
+            calendar: calendar
+        )
+
+        #expect(window.days.count == 30, "窗口至少 30 天，不能缩成一天")
+        #expect(window.start == Self.date(year: 2026, month: 9, day: 1))
+        #expect(window.end == Self.date(year: 2026, month: 9, day: 30))
+        #expect(window.groupTitle == "30 days", "窗口不是周期，标题要如实")
+        #expect(!window.isCycle)
+        #expect(window.fetchStart == window.start, "窗口本身就有 30 天，取数不用再往前多要")
+    }
+
+    /// 用户的抱怨原样固化：新周期第一天打开浮层，图上必须有上一个周期的数据，
+    /// 而不是一根通栏色块。
+    @Test
+    func aFreshCycleStillDrawsAMonthOfHistory() throws {
+        let spend = try dailySpend(
+            """
+            { "dailySpend": [
+              { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 12)))", "category": "cursor-grok-4.6-high", "totalTokens": "12000000" },
+              { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-bot-default", "totalTokens": "603770" }
+            ] }
+            """
+        )
+        let detail = try #require(make(
+            cycleStart: Self.date(year: 2026, month: 9, day: 30, hour: 7, minute: 13, second: 20),
+            cycleEnd: Self.date(year: 2026, month: 10, day: 30, hour: 7, minute: 13, second: 20),
+            dailySpend: spend,
+            today: Self.date(year: 2026, month: 9, day: 30, hour: 15)
+        ))
+
+        #expect(detail.groups.map(\.title) == ["Today", "7 days", "30 days"])
+        #expect(detail.series?.points.count == 30)
+        #expect(detail.series?.points.count { $0.value > 0 } == 2, "9/12 与 9/30 两天有量")
+        #expect(
+            detail.series?.points.first { $0.date == Self.date(year: 2026, month: 9, day: 12) }?.value == 12_000_000,
+            "上一个周期的用量仍然在图上"
+        )
+        #expect(detail.series?.axisStart == "9/1")
+        #expect(detail.series?.axisEnd == "9/30")
+        #expect(detail.table?.title == "Grok bot · last 30 days")
+        #expect(detail.table?.rows.map(\.name) == ["cursor-grok-4.6-high", "grok-bot-default"])
+    }
+
+    /// 同一个账号、同一天，但周期已经跑了 30 天以上时仍然按周期画（既有行为）。
+    @Test
+    func aCycleOlderThanTheWindowIsTheWindow() {
+        let calendar = UsageDetailSupport.utcCalendar()
+        let window = CursorUsageDetail.window(
+            cycleStart: cycleStart,
+            cycleEnd: cycleEnd,
             today: today,
             calendar: calendar
         )
 
-        #expect(window.days.count == 3, "周期 9/28 起，窗口就只有 9/28…9/30")
-        #expect(window.end == today)
-        // 「7 天」行要的是滚动 7 天：取数必须往前多要 6 天，否则那一行只有 3 天的量。
-        #expect(window.fetchStart == Self.date(year: 2026, month: 9, day: 24))
-        #expect(window.fetchEnd >= window.end)
         #expect(window.isCycle)
+        #expect(window.start == Self.date(year: 2026, month: 8, day: 30))
+        #expect(window.days.count == 32, "8/30…9/30 共 32 天")
+        #expect(window.groupTitle == "Billing cycle")
     }
 
     @Test
@@ -231,7 +282,7 @@ struct CursorUsageDetailTests {
         )
 
         #expect(window.end == today, "周期末日是 9/30 07:13，窗口末日只能到 9/30 —— 未来没有数据")
-        #expect(window.fetchStart == Self.date(year: 2026, month: 8, day: 30), "周期比回填窗更长时不往前多要")
+        #expect(window.fetchStart == Self.date(year: 2026, month: 8, day: 30))
     }
 
     /// 下午锚点：所有窗口都按 UTC 自然日取整，若把锚点原样当成某天的起点，当天那一行会整个错位。
