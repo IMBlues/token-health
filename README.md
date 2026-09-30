@@ -75,7 +75,7 @@ bash scripts/build-dmg.sh
 
 Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后请求 Cursor 用量接口。接口提供独立数值时显示 Auto + Composer、API、Grokbot；如果 Cursor 把 Grokbot 合并进 Auto，会明确显示 **Grokbot (included in Auto)**，不会无声消失。
 
-钉住后的详情浮层再往下讲一层：本计费周期的 token 汇总与每日趋势、花费拆分（包含 / 赠送 / 合计 / 重置日），以及 **Grok bot 的按模型用量表**。按天数据取不到时，浮层只少这几段，额度照常。
+钉住后的详情浮层再往下讲一层：本计费周期的 token 汇总与每日趋势、花费拆分（包含 / 赠送 / 合计 / 重置日），以及 **Grok bot 的按模型用量表**。窗口至少 30 天 —— 周期刚滚动、头几天还没满 30 天时按最近 30 天画，不会缩成一根柱子。按天数据取不到时，浮层只少这几段，额度照常。
 
 ### OpenCode Go
 
@@ -121,7 +121,7 @@ token 汇总、最近 30 天的每日 token 趋势，以及 `Lifetime` / `Peak d
 数据在刷新时一并取回：API key 账号直接问控制台接口，控制台登录的账号走已导入的网页会话。
 
 钉住的 Cursor 项也是同一套浮层：Auto + Composer / API / Grokbot 三条额度（与菜单栏同一份口径）、
-`Today` / `7 days` / `Billing cycle` 的 token 汇总、本计费周期的每日 token 趋势、
+`Today` / `7 days` / `Billing cycle` 的 token 汇总、每日 token 趋势（窗口是计费周期，至少 30 天）、
 `Included` / `Bonus` / `Total` / `Resets` 花费行，以及 `Grok bot · this cycle` 的按模型用量表 ——
 Grok bot 自己用了多少就摆在这里（`grok-bot-default` 一类与 Grok 系模型分别列出，接口报得出就展示）。
 数据在刷新时取回：额度与花费来自用量汇总，按天与按模型的那些行来自仪表盘的按天接口；

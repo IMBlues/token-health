@@ -74,7 +74,7 @@ The top of the menu shows how long ago the last refresh happened (`2/2 updated �
 
 Token Health reads the access token from Cursor's local `state.vscdb` (read-only), then calls Cursor's usage endpoint. When the endpoint reports them separately, Auto + Composer, API, and Grokbot each get their own number; if Cursor folds Grokbot into Auto, it says **Grokbot (included in Auto)** outright instead of quietly dropping it.
 
-The detail popover goes one level deeper: token totals and a by-day trend for the current billing cycle, the spend split (included / bonus / total, plus the reset day), and a **per-model Grok bot table**. If the daily read fails, only those sections are missing — the quota still shows.
+The detail popover goes one level deeper: token totals and a by-day trend for the current billing cycle, the spend split (included / bonus / total, plus the reset day), and a **per-model Grok bot table**. The window is never shorter than 30 days — in the first days of a cycle it draws the last 30 days instead of collapsing into a single bar. If the daily read fails, only those sections are missing — the quota still shows.
 
 ### OpenCode Go
 
@@ -112,7 +112,7 @@ It all comes from the local Codex login's `app-server` session — one extra que
 A pinned OpenCode Go item opens the same popover: the 5-hour / weekly / monthly quota (the same numbers the menu bar draws), request / token / cost totals for `Today` / `7 days` / `30 days`, a by-day cost trend for the last 30 days, the `Input` / `Output` / `Cache read` / `Cache write` breakdown, and a `By model · last 30 days` split.
 It all comes back with the refresh: API-key accounts ask the console endpoints directly, console-login accounts use the imported web session.
 
-A pinned Cursor item opens the same popover: the Auto + Composer / API / Grokbot quotas (the same numbers the menu bar draws), token totals for `Today` / `7 days` / `Billing cycle`, a by-day token trend for the billing cycle, an `Included` / `Bonus` / `Total` / `Resets` spend line, and a `Grok bot · this cycle` per-model table that spells out how much Grok bot itself used (`grok-bot-default` and friends alongside the Grok models, whenever the API reports them).
+A pinned Cursor item opens the same popover: the Auto + Composer / API / Grokbot quotas (the same numbers the menu bar draws), token totals for `Today` / `7 days` / `Billing cycle`, a by-day token trend (the window is the billing cycle, at least 30 days), an `Included` / `Bonus` / `Total` / `Resets` spend line, and a `Grok bot · this cycle` per-model table that spells out how much Grok bot itself used (`grok-bot-default` and friends alongside the Grok models, whenever the API reports them).
 It all comes back with the refresh: quota and spend from the usage summary, the per-day and per-model rows from the dashboard's daily read — if that read fails, only those sections are missing and the quota still shows.
 
 Quota rows in the popover draw a used-fraction bar tinted with the same thresholds as the menu bar and the dropdown cards; DeepSeek's balance rows stay text-only — balances report what's left, quota windows report what's spent, and the two are not forced into one drawing.

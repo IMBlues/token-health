@@ -8,7 +8,7 @@
 
 钉住项的详情浮层（`UsageDetail` + `DetailPopoverView`）已有 DeepSeek、OpenCode Go、Codex 三个填充方。
 本次让 **Cursor** 也产出详情卡片：点钉住的 Cursor 项弹浮层，展示三条额度池的百分比（与菜单栏同源）、
-今天 / 7 天 / 本计费周期的 token 汇总、周期内每日 token 趋势、周期花费明细（Included / Bonus / Total），
+今天 / 7 天 / 本计费周期的 token 汇总、每日 token 趋势（至少覆盖最近 30 天）、周期花费明细（Included / Bonus / Total），
 以及**按模型的 Grok bot 用量表**。
 
 数据全部来自 **Cursor 官方接口**（用的是 app 已经在读的同一个本地 access token），不新增登录流程、
@@ -17,7 +17,7 @@
 **目标**
 
 - 点钉住的 Cursor 项 → 浮层展示：Auto + Composer / API / Grokbot 三条额度（带额度条）、
-  今天 / 7 天 / 本周期的 tokens、周期内每日 tokens 趋势、花费拆分、Grok bot 按模型用量表。
+  今天 / 7 天 / 本周期的 tokens、每日 tokens 趋势（至少 30 天）、花费拆分、Grok bot 按模型用量表。
 - 与既有三个详情同一路数：`DetailPopoverView` 与 `UsageDetail` 零改动，数据来自新取回的响应。
 - 额度是必需项、其余是可选区块：新增的两条取数**报错或解不出**不得影响额度与菜单栏数字。
 
@@ -95,7 +95,7 @@ Connect 协议一元调用，报文体（字段名 camelCase / snake_case 都收
 3. **`category` 由 `groupBy` 决定**：`0` = 模型名（本次用这个）、`2` = 花费类型（`included`）、
    `3` = `user` / `automation`。默认（不传 `groupBy`）即 0，实现里显式传 0。
 4. **范围可以超出当前计费周期**：实测请求 8/1–9/30 时返回了 8/3 起的数据；
-   完全落在未来的范围返回 `{}`（`dailySpend` 键缺席）。因此「7 天」窗口在周期刚开始时也拿得到数据。
+   完全落在未来的范围返回 `{}`（`dailySpend` 键缺席）；往前多要几天同样拿得到数据 —— 新周期第一天的浮层要靠它画出上一个周期的历史。
 5. **`dailySpend` 缺席 = 没数据**（`{}`），不是空数组。两种都当「没有按天数据」处理，但**只有缺席**才不画区块，
    空数组会画成三行 0（与 Codex 的 `dailyUsageBuckets` 同一条口径）。
 6. **`grok-bot-default` / `grok-bot-automation` 是真实的分类**：本机一个周期内
@@ -116,9 +116,13 @@ Connect 协议一元调用，报文体（字段名 camelCase / snake_case 都收
 请求范围由周期决定（`today` 由调用方传入）：
 
 ```
-windowStart = cycleStart ?? today - 29 天   // UTC
-windowEnd   = cycleEnd   ?? today
-periodStart = min(windowStart, today - 6 天)   // 「7 天」行在周期刚开始时也要有数
+cycle 可用且 cycleStart <= today - 29 天：
+    windowStart = cycleStart          // UTC，取整到自然日
+    windowEnd   = min(cycleEnd, today)
+否则（周期未知，或周期不足 30 天）：
+    windowStart = today - 29 天
+    windowEnd   = today
+periodStart = windowStart
 periodEnd   = max(windowEnd, today)
 ```
 
@@ -207,13 +211,14 @@ enum CursorUsageDetail {
 不抛错；四个区块都填不出来就返回 nil（浮层退回错误行）。**时间锚点显式注入**：
 「今天」与所有窗口按传入 `today` 的 UTC 自然日推导，构建器内部不取 `Date()`。
 
-窗口：
+窗口**至少 30 天**。计费周期本身就是窗口，但只有它已经跑了 30 天以上才算数：周期刚滚动时按周期切，
+窗口只剩一两天，图上是一根通栏色块、轴的两端还都是同一天（2026-09-30 07:13 本机滚进新周期时真实发生）。
 
 | 名字 | 定义 |
 | --- | --- |
 | 今天 | `today` 当天（UTC） |
 | 7 天 | `[today-6, today]`（UTC，滚动） |
-| **本周期** | `cycle == nil` 时退化为 `[today-29, today]`，行标题也相应变成 `30 days` |
+| **本周期** | 周期未知、或周期开头晚于 `today-29`（不足 30 天）时，退化为 `[today-29, today]`，行标题也相应变成 `30 days` |
 
 ### 5.1 headline（额度，与菜单栏同源）
 
@@ -237,10 +242,12 @@ enum CursorUsageDetail {
 
 ### 5.3 series（每日 tokens）
 
+柱状图单根柱子有宽度上限（16pt，`DetailPopoverView` 一侧）：点位很少时按剩余宽度均分会让一根柱子铺满整幅。
+
 - 覆盖 `[windowStart, windowEnd]`（UTC）逐日一点，缺的日期补 0，同一天多条求和。
-- `title` = `Tokens · billing cycle`（周期未知时 `Tokens · last 30 days`）
+- `title` = `Tokens · billing cycle`（退化窗口时 `Tokens · last 30 days`）
 - `axisStart` / `axisEnd` = 起止日 `M/d`
-- `emptyText` = `No usage in this billing cycle`（周期未知时 `No usage in the last 30 days`）
+- `emptyText` = `No usage in this billing cycle`（退化窗口时 `No usage in the last 30 days`）
 
 ### 5.4 breakdown（花费 + 重置日）
 
@@ -261,8 +268,8 @@ enum CursorUsageDetail {
 
 一行一个 grok 模型，数据来自按天数据里 **category 含 `grok`（不区分大小写）** 的那些行：
 
-- 时间范围：**本周期**（周期未知时退化为 30 天）内的行，与 §5.2 的第三行同窗口。
-- `title` = `Grok bot · this cycle`（周期未知时 `Grok bot · last 30 days`）
+- 时间范围：与 §5.2 的第三行同一个窗口（本周期，或退化后的最近 30 天）。
+- `title` = `Grok bot · this cycle`（退化窗口时 `Grok bot · last 30 days`）
 - `columns` = `["Model", "Tokens"]`；`name` = category 原文（`cursor-grok-4.6-high` 这类显示原文，
   不美化 —— 名字是 Cursor 的，改写了就对不上它自己的面板）。
 - 排序：tokens 降序，其次名字升序（稳定、可断言）。
@@ -296,6 +303,7 @@ enum CursorUsageDetail {
 | 按天数据为空数组 | 三行全 0、趋势图走 `emptyText`、无表 |
 | 某行 `day` 解析失败 / `totalTokens` 缺失或为负 / `category` 空 | 该行忽略 |
 | `billingCycleStart/End` 缺失或解析失败 | 窗口退化为最近 30 天；`Resets` 不占位；行/图/表标题用退化文案 |
+| 计费周期不足 30 天（刚滚动） | 同上退化为最近 30 天；`Resets` 仍按真实周期末日画 |
 | `plan.breakdown` 缺席 | 三项金额都不占位，`Resets` 照画 |
 | 额度窗口为空（`usages.isEmpty`） | 与今天一致 `invalidResponse` / `.unavailable`，不产详情 |
 | 刷新失败但有旧 detail | 沿用 `AppState.storeSnapshot` 的「非 ready 且无新 detail 时保留上次 detail」 |
@@ -306,8 +314,8 @@ enum CursorUsageDetail {
 
 | 测试 | 覆盖 |
 | --- | --- |
-| `CursorUsageDetailTests`（新） | headline 顺序与文案（`Auto + Composer` / `API` / `Grokbot`）、比例透传；三行汇总（补 0、同日求和、周期外不计入、空数组、nil 不画）；趋势 30 点与轴文案、退化窗口；breakdown 四项与各自缺失时的降级、分→元换算（`2000` → `$20.00`）、负数不占位；Grok bot 表的筛选（大小写、`grok-bot-*` 与 `cursor-grok-*` 都在内、`Other` 不在内）、tokens 降序、6 行截断与脚注、无 grok 行时不画表；`today` 注入固定时刻 + 一条下午锚点用例；饱和加法不许 trap |
-| `CursorUsageProviderTests`（扩） | mapper 多解周期两个字段（有 / 无 / 解不出）；`snapshot(config:mapped:dailySpend:fetchedAt:today:)` 纯函数层：带按天数据 → `ready` 且区块齐全；`dailySpend` 为 nil → 只剩 headline + breakdown；无额度窗口 → `unavailable` 且无 detail；请求范围计算（周期内 / 周期刚开始要往前多取 6 天 / 周期未知退化 30 天） |
+| `CursorUsageDetailTests`（新） | headline 顺序与文案（`Auto + Composer` / `API` / `Grokbot`）、比例透传；三行汇总（补 0、同日求和、周期外不计入、空数组、nil 不画）；趋势 30 点与轴文案、退化窗口、**周期不足 30 天时回落到滚动 30 天且历史仍在图上**；breakdown 四项与各自缺失时的降级、分→元换算（`2000` → `$20.00`）、负数不占位；Grok bot 表的筛选（大小写、`grok-bot-*` 与 `cursor-grok-*` 都在内、`Other` 不在内）、tokens 降序、6 行截断与脚注、无 grok 行时不画表；`today` 注入固定时刻 + 一条下午锚点用例；饱和加法不许 trap |
+| `CursorUsageProviderTests`（扩） | mapper 多解周期两个字段（有 / 无 / 解不出）；`snapshot(config:mapped:dailySpend:fetchedAt:today:)` 纯函数层：带按天数据 → `ready` 且区块齐全；`dailySpend` 为 nil → 只剩 headline + breakdown；无额度窗口 → `unavailable` 且无 detail；请求范围计算（周期内 / 周期不足 30 天回落滚动窗口 / 周期未知退化 30 天） |
 | `CursorDailySpendDecodingTests`（并入上一条文件） | 字符串 / 数字两种 `day` 与 `totalTokens`；`dailySpend` 缺席与 `{}`；坏行忽略 |
 | `ProviderDetailCapabilityTests`（扩） | `.cursor` 在两种 authMode 下都为真；`everyOtherProviderIsUnsupported` 的例外集合加上 `.cursor` |
 | 既有测试 | 全绿（`CursorTestSupport` 若需新 helper 一并加） |
@@ -322,6 +330,7 @@ enum CursorUsageDetail {
   宁可不显示（与 `MenuBarMetrics.deepSeekMetrics` 里「宁可显示原币种，也不要给出一个悄悄漏掉了某个钱包的合计」同一条原则）。
 - **`Other` 这一分类不归入 Grok bot**：它按定义是「没归到具体模型的量」，无法归属，所以 Grok bot 表的
   合计会略小于真实值。表里不写合计行，避免把不完整的数当成完整的。
+- **窗口下限是 30 天**：周期不足 30 天时按滚动 30 天画，宁可让「本周期」那一行暂时消失（那几天它跟 Today 是同一个数），也不要一根通栏色块；额度百分比本来就说清了「本周期才刚开始」。
 - **多一次请求**：每次刷新 1 → 2 次（多出来的约 6 KB / 30 天）。最短刷新间隔 30 秒，量级可以接受；
   不加缓存 —— 既有 Cursor 路径本来就没有缓存，为一条可选请求引入缓存会是本次唯一的额外状态。
 - **`used` / `limit` / `remaining` 不解码**：浮层不展示它们（三条池的百分比已经表达了同一件事）。
@@ -335,6 +344,8 @@ enum CursorUsageDetail {
 3. 手动：点钉住的 Cursor 项 → 浮层出现 `Auto + Composer` / `API` / `Grokbot` 三条带条的百分比、
    Today / 7 days / Billing cycle 的 tokens、周期内每日 token 柱状图、
    `Included` / `Bonus` / `Total` / `Resets` 四项、`Grok bot · this cycle` 表。
+   周期不足 30 天时：窗口回落成最近 30 天，行标题 `30 days`、图标题 `Tokens · last 30 days`、
+   表标题 `Grok bot · last 30 days`，图上能看到上一个周期的柱子。
 4. 手动：headline 的百分比与菜单栏项 tooltip 逐字一致。
 5. 手动：Grok bot 表的模型名与 Cursor 自己面板上的模型名逐字一致（不改写名字）。
 6. 回归：钉住的 DeepSeek / OpenCode Go / Codex 浮层不变。
