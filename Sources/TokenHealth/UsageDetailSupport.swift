@@ -1,7 +1,7 @@
 import Foundation
 
-/// The date and aggregation helpers the three detail builders share
-/// (`DeepSeekUsageDetail`, `OpenCodeGoUsageDetail`, `CodexUsageDetail`).
+/// The date and aggregation helpers the detail builders share
+/// (`DeepSeekUsageDetail`, `OpenCodeGoUsageDetail`, `CodexUsageDetail`, `CursorUsageDetail`).
 ///
 /// Every window here is cut on UTC days. The backends report per-day keys as UTC dates and the
 /// production path anchors on the current instant, so a local calendar would slide the whole
@@ -63,10 +63,15 @@ enum UsageDetailSupport {
     }
 
     /// `first ... last`, both ends included, one entry per day; empty when `last` precedes `first`.
-    private static func dayList(from first: Date, through last: Date, calendar: Calendar) -> [Date] {
+    ///
+    /// Both ends are snapped to `startOfDay` first: the Cursor billing cycle arrives with a time
+    /// of day, and an un-snapped start would key the window's first day at 07:13 while the
+    /// per-day data keys it at midnight — the day would silently drop out of the list.
+    static func dayList(from first: Date, through last: Date, calendar: Calendar) -> [Date] {
         var days: [Date] = []
-        var cursor = first
-        while cursor <= last {
+        var cursor = calendar.startOfDay(for: first)
+        let end = calendar.startOfDay(for: last)
+        while cursor <= end {
             days.append(cursor)
             guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else {
                 break

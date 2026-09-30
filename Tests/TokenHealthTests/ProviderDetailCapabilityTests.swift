@@ -34,8 +34,16 @@ struct ProviderDetailCapabilityTests {
     }
 
     @Test
+    func cursorProducesDetailInEitherMode() {
+        // 与 Codex 同理：Cursor 走 `usesLocalLogin`，authMode 被固定成 `.api`。
+        #expect(ProviderFactory.producesUsageDetail(for: config(.cursor, auth: .api)))
+        #expect(ProviderFactory.producesUsageDetail(for: config(.cursor, auth: .browserLogin)))
+    }
+
+    @Test
     func everyOtherProviderIsUnsupported() {
-        for kind in ProviderKind.allCases where kind != .deepSeek && kind != .openCodeGo && kind != .codex {
+        for kind in ProviderKind.allCases
+        where kind != .deepSeek && kind != .openCodeGo && kind != .codex && kind != .cursor {
             for auth in AuthMode.allCases {
                 #expect(
                     !ProviderFactory.producesUsageDetail(for: config(kind, auth: auth)),
