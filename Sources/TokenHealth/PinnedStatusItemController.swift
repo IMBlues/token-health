@@ -8,7 +8,7 @@ import SwiftUI
 /// 支持详情的 Provider 点下去弹浮层（余额、按天趋势、按模型拆分…），
 /// 不支持的就是原来的 Unpin / Settings / Quit 小菜单。
 @MainActor
-final class PinnedStatusItemController: NSObject {
+final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
     /// 详情超过这个岁数就在打开时顺手拉一次。
     static let detailStaleness: TimeInterval = 5 * 60
 
@@ -20,6 +20,16 @@ final class PinnedStatusItemController: NSObject {
     private var appearanceObservation: NSKeyValueObservation?
     private var buttonAppearanceObservations: [UUID: NSKeyValueObservation] = [:]
     private var pendingRedraw: DispatchWorkItem?
+    /// 每个状态项上一次写出去的那一帧。重绘一秒能来好几趟，内容没变就不该再写。
+    private var appliedPresentations = AppliedValueCache<StatusItemPresentation>()
+    /// 每个详情浮层上一次推进去的快照；赋一次 `rootView` 就是让整棵树从头求值一遍。
+    private var pushedDetails = AppliedValueCache<PushedDetail>()
+
+    /// 详情浮层内容的全部输入。两者都没动过，就没有重赋 `rootView` 的理由。
+    private struct PushedDetail: Equatable {
+        var config: ServiceConfig
+        var snapshot: ProviderUsageSnapshot?
+    }
 
     /// 状态项在 NSApplication 启动完成前创建会被系统丢掉，所以首次重绘挂在启动通知上。
     private var hasLaunched = false
@@ -115,44 +125,70 @@ final class PinnedStatusItemController: NSObject {
         let displayMetrics = metrics.isEmpty ? [MenuBarMetrics.placeholder] : metrics
         let item = statusItem(for: config.id)
         // 菜单栏自己的外观优先：它决定葫芦（模板图）画成什么颜色，账号 logo 得跟它一致。
-        let iconColor = Self.iconColor(for: item.button?.effectiveAppearance ?? NSApp.effectiveAppearance)
-        let layout = MenuBarItemLayout.make(
+        let appearance = item.button?.effectiveAppearance ?? NSApp.effectiveAppearance
+        let presentation = StatusItemPresentation(
+            providerKind: config.providerKind,
             metrics: displayMetrics,
-            hasIcon: true,
-            amountWidth: MenuBarItemRenderer.amountWidth(for: displayMetrics)
-        )
-
-        let image = MenuBarItemRenderer.image(
-            layout: layout,
-            kind: config.providerKind,
-            metrics: displayMetrics,
-            iconColor: iconColor,
+            logoIsWhite: Self.usesWhiteLogo(for: appearance),
             scale: item.button?.window?.screen?.backingScaleFactor
                 ?? NSScreen.main?.backingScaleFactor
-                ?? 2
+                ?? 2,
+            tooltip: MenuBarMetrics.tooltipText(
+                serviceName: config.displayName,
+                metrics: metrics,
+                statusMessage: snapshot?.statusMessage
+            ),
+            interaction: ProviderFactory.producesUsageDetail(for: config)
+                ? .detailPopover
+                : .menu(displayName: config.displayName)
+        )
+
+        // 内容没变就一个字节都别写回状态项。写回会让 AppKit 为它复制一张按钮位图、
+        // 重设按钮外观，而按钮外观的变化又经 KVO 回到 scheduleRedraw —— 每次都写
+        // 就是一个自己喂自己的环，没人碰菜单栏它也会一直烧 CPU。
+        if appliedPresentations.shouldApply(presentation, for: config.id) {
+            apply(presentation, to: item, for: config, appearance: appearance)
+        }
+
+        refreshOpenPopover(for: config)
+    }
+
+    /// 把一帧真正写进状态项。只有 `updateStatusItem` 判定这一帧是新的才会走到这里。
+    private func apply(
+        _ presentation: StatusItemPresentation,
+        to item: NSStatusItem,
+        for config: ServiceConfig,
+        appearance: NSAppearance
+    ) {
+        let layout = MenuBarItemLayout.make(
+            metrics: presentation.metrics,
+            hasIcon: true,
+            amountWidth: MenuBarItemRenderer.amountWidth(for: presentation.metrics)
+        )
+        let image = MenuBarItemRenderer.image(
+            layout: layout,
+            kind: presentation.providerKind,
+            metrics: presentation.metrics,
+            iconColor: Self.iconColor(for: appearance),
+            scale: presentation.scale
         )
 
         item.length = image.size.width + MenuBarItemLayout.statusItemPadding
         item.button?.image = image
-        item.button?.toolTip = MenuBarMetrics.tooltipText(
-            serviceName: config.displayName,
-            metrics: metrics,
-            statusMessage: snapshot?.statusMessage
-        )
+        item.button?.toolTip = presentation.tooltip
 
         // 两个方向都必须**显式赋值**：menu 非空时按钮点击根本不会触发 action，
         // 只在需要时跳过赋值会留下过期的菜单（比如账号从登录模式改成了 API 模式）。
-        if ProviderFactory.producesUsageDetail(for: config) {
+        switch presentation.interaction {
+        case .detailPopover:
             item.menu = nil
             item.button?.target = self
             item.button?.action = #selector(showDetail(_:))
-        } else {
+        case .menu:
             item.button?.target = nil
             item.button?.action = nil
             item.menu = makeMenu(for: config)
         }
-
-        refreshOpenPopover(for: config)
     }
 
     private func statusItem(for id: UUID) -> NSStatusItem {
@@ -177,6 +213,7 @@ final class PinnedStatusItemController: NSObject {
     private func removeStatusItem(for id: UUID) {
         closePopover(for: id)
         buttonAppearanceObservations.removeValue(forKey: id)?.invalidate()
+        appliedPresentations.forget(id)
         guard let item = statusItems.removeValue(forKey: id) else {
             return
         }
@@ -193,7 +230,13 @@ final class PinnedStatusItemController: NSObject {
     /// 账号 logo 想跟它一致就只能按同一处外观自己解析；整张图又必须保留竖条的颜色，
     /// 所以不能直接用模板图。
     static func iconColor(for appearance: NSAppearance) -> NSColor {
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .white : .black
+        usesWhiteLogo(for: appearance) ? .white : .black
+    }
+
+    /// `iconColor(for:)` 的全部信息其实就是这一个布尔值。重绘判据要比较「logo 颜色变没变」，
+    /// 比较一个布尔值就够了，也让判据不必碰 `NSColor`。
+    static func usesWhiteLogo(for appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
     }
 
     // MARK: - 详情浮层
@@ -210,6 +253,8 @@ final class PinnedStatusItemController: NSObject {
         let host = NSHostingController(rootView: makeDetailView(for: config))
         let popover = NSPopover()
         popover.behavior = .transient
+        // 没人接 `popoverDidClose` 的话，用户点别处关掉的浮层在这边仍算「开着」。
+        popover.delegate = self
         popover.contentViewController = host
         detailHosts[id] = host
         popovers[id] = popover
@@ -255,18 +300,42 @@ final class PinnedStatusItemController: NSObject {
         )
     }
 
-    /// 浮层开着时数据刷新完成 → 重新赋 `rootView`，内容就地更新，浮层不关闭。
+    /// 浮层开着时数据刷新完成 → 换掉 `rootView`，内容就地更新，浮层不关闭。
+    ///
+    /// 但只有内容真的变了才换：赋一次 `rootView` 就是让整棵 SwiftUI 树从头求值一遍，
+    /// 而重绘一秒能来好几趟。
     private func refreshOpenPopover(for config: ServiceConfig) {
         guard ProviderFactory.producesUsageDetail(for: config),
               let host = detailHosts[config.id] else {
             return
         }
+        let pushed = PushedDetail(config: config, snapshot: appState.snapshots[config.id])
+        guard pushedDetails.shouldApply(pushed, for: config.id) else {
+            return
+        }
         host.rootView = makeDetailView(for: config)
     }
 
+    /// `.transient` 的浮层被点别处、或是按 Esc 关掉时不会走 `closePopover`。没人接这一下，
+    /// 已经关掉的浮层在这边就一直算开着的：每次重绘都往里塞一份新的 `rootView`，
+    /// 于是隐藏窗口里的整棵 SwiftUI 树跟着一遍遍重算。
+    func popoverDidClose(_ notification: Notification) {
+        guard let popover = notification.object as? NSPopover,
+              let id = popovers.first(where: { $0.value === popover })?.key else {
+            return
+        }
+        forgetDetail(for: id)
+    }
+
     private func closePopover(for id: UUID) {
-        popovers.removeValue(forKey: id)?.close()
+        popovers[id]?.close()
+        forgetDetail(for: id)
+    }
+
+    private func forgetDetail(for id: UUID) {
+        popovers.removeValue(forKey: id)
         detailHosts.removeValue(forKey: id)
+        pushedDetails.forget(id)
     }
 
     // MARK: - 菜单

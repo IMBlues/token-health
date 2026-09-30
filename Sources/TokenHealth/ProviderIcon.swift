@@ -2,7 +2,12 @@ import AppKit
 
 /// Provider 的图标来源：能拿到官方 logo 就用 logo，否则退回 SF Symbol。
 /// 设置侧边栏与菜单栏项共用这一处，避免两边各有一份「谁长什么样」。
+@MainActor
 enum ProviderIcon {
+    /// 每个 kind 的原始 logo。菜单栏每一轮重绘都会来取一次，不缓存就等于每秒几十次
+    /// 读盘加解 PDF —— 而这正是菜单栏项在没人动它的时候还在烧 CPU 的原因之一。
+    private static var logos: [ProviderKind: NSImage] = [:]
+
     /// 内嵌资源名。nil 表示这个 Provider 没有品牌 logo。
     static func assetName(for kind: ProviderKind) -> String? {
         switch kind {
@@ -53,10 +58,15 @@ enum ProviderIcon {
     }
 
     static func bundledLogo(for kind: ProviderKind) -> NSImage? {
+        if let cached = logos[kind] {
+            return cached
+        }
         guard let url = bundledLogoURL(for: kind) else {
             return nil
         }
-        return NSImage(contentsOf: url)
+        let image = NSImage(contentsOf: url)
+        logos[kind] = image
+        return image
     }
 
     private static func symbolImage(for kind: ProviderKind, size: CGFloat) -> NSImage {

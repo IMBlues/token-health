@@ -9,6 +9,48 @@ import AppKit
 /// `NSImage(drawingHandler:)`，在真正绘制之前它没有任何位图表示。
 @MainActor
 func opaquePixelCount(_ image: NSImage) -> Int {
+    guard let rep = rasterized(image), let data = rep.bitmapData else {
+        return 0
+    }
+    let alphaIndex = rep.samplesPerPixel - 1
+    let stride = rep.samplesPerPixel
+    var count = 0
+    for y in 0..<rep.pixelsHigh {
+        for x in 0..<rep.pixelsWide where data[y * rep.bytesPerRow + x * stride + alphaIndex] > 0 {
+            count += 1
+        }
+    }
+    return count
+}
+
+/// 数出比较亮的不透明像素。`opaquePixelCount` 分不出同一张 logo 上的是白漆还是黑漆
+/// —— 两种颜色都会落满同一个形状 —— 而「菜单栏换色后 logo 还换不换得回来」
+/// 恰恰只能这么看。
+@MainActor
+func brightPixelCount(_ image: NSImage) -> Int {
+    guard let rep = rasterized(image), let data = rep.bitmapData else {
+        return 0
+    }
+    let alphaIndex = rep.samplesPerPixel - 1
+    let stride = rep.samplesPerPixel
+    var count = 0
+    for y in 0..<rep.pixelsHigh {
+        for x in 0..<rep.pixelsWide {
+            let base = y * rep.bytesPerRow + x * stride
+            guard data[base + alphaIndex] > 0 else {
+                continue
+            }
+            let luminance = (Double(data[base]) + Double(data[base + 1]) + Double(data[base + 2])) / 3
+            if luminance > 127 {
+                count += 1
+            }
+        }
+    }
+    return count
+}
+
+@MainActor
+private func rasterized(_ image: NSImage) -> NSBitmapImageRep? {
     let width = Int(image.size.width * 2)
     let height = Int(image.size.height * 2)
     guard width > 0, height > 0,
@@ -25,7 +67,7 @@ func opaquePixelCount(_ image: NSImage) -> Int {
               bitsPerPixel: 0
           ),
           let context = NSGraphicsContext(bitmapImageRep: rep) else {
-        return 0
+        return nil
     }
 
     NSGraphicsContext.saveGraphicsState()
@@ -38,16 +80,5 @@ func opaquePixelCount(_ image: NSImage) -> Int {
     )
     NSGraphicsContext.restoreGraphicsState()
 
-    guard let data = rep.bitmapData else {
-        return 0
-    }
-    let alphaIndex = rep.samplesPerPixel - 1
-    let stride = rep.samplesPerPixel
-    var count = 0
-    for y in 0..<rep.pixelsHigh {
-        for x in 0..<rep.pixelsWide where data[y * rep.bytesPerRow + x * stride + alphaIndex] > 0 {
-            count += 1
-        }
-    }
-    return count
+    return rep
 }
