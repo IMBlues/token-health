@@ -3,6 +3,9 @@ import Foundation
 struct WebSessionFetchContext {
     let year: Int
     let month: Int
+    /// by_api_key 那类需要显式窗口的脚本用，unix 秒。其余 provider 的脚本不读它们。
+    let start: Int
+    let end: Int
 }
 
 /// All six providers' usage scripts return the same envelope shape.
@@ -143,12 +146,17 @@ extension WebSessionFetchContext {
     /// The current year and month in UTC. Providers whose scripts take no period still have to pass
     /// something to `fetchUsage(context:)`; this keeps the value meaningful if a script ever starts
     /// interpolating one.
+    ///
+    /// `start` / `end` 顺带算出本月窗口：只有 DeepSeek 的脚本读它们，其余 provider 拿到的是一个
+    /// 语义自洽的值而不是占位的 0。算不出时留 0 —— 那条调用方本来就是可选请求，失败了不影响刷新。
     static func currentUTC(now: Date = Date()) -> WebSessionFetchContext {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let calendar = UsageDetailSupport.utcCalendar()
+        let window = UsageDetailSupport.monthToDateWindow(now: now, calendar: calendar)
         return WebSessionFetchContext(
             year: calendar.component(.year, from: now),
-            month: calendar.component(.month, from: now)
+            month: calendar.component(.month, from: now),
+            start: window?.start ?? 0,
+            end: window?.end ?? 0
         )
     }
 }

@@ -87,7 +87,7 @@ struct OpenCodeGoWebSessionScriptTests {
         context.evaluateScript(Self.prelude)
         context.evaluateScript("globalThis.__responses = \(tableJSON);")
 
-        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9))
+        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9, start: 0, end: 0))
         let value = context.evaluateScript(script)
         if let exception = context.exception {
             throw HarnessError.javaScriptException(String(describing: exception))

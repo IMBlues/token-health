@@ -78,7 +78,7 @@ struct CursorUsageDetailTests {
         // 没有按天数据时不该凭空造出别的区块。
         #expect(detail?.groups.isEmpty == true)
         #expect(detail?.series == nil)
-        #expect(detail?.table == nil)
+        #expect(detail?.tables.isEmpty == true)
         // 只有花费行的那次调用里，breakdown 仍然要画。
         #expect(detail?.breakdown.map(\.label) == ["Included", "Bonus", "Total", "Resets"])
     }
@@ -144,7 +144,7 @@ struct CursorUsageDetailTests {
         let emptyDetail = try #require(make(cycleStart: cycleStart, cycleEnd: cycleEnd, dailySpend: empty))
         #expect(emptyDetail.groups.map { $0.values.first?.value } == ["0", "0", "0"], "空数组是「这些天没用量」，照画 0")
         #expect(emptyDetail.series?.points.count == 32)
-        #expect(emptyDetail.table == nil)
+        #expect(emptyDetail.tables.isEmpty)
 
         // `{}` —— 接口失败或没有按天数据 —— 整段不画，不是画成 0。
         let absent = try dailySpend("{}")
@@ -250,8 +250,8 @@ struct CursorUsageDetailTests {
         )
         #expect(detail.series?.axisStart == "9/1")
         #expect(detail.series?.axisEnd == "9/30")
-        #expect(detail.table?.title == "Grok bot · last 30 days")
-        #expect(detail.table?.rows.map(\.name) == ["cursor-grok-4.6-high", "grok-bot-default"])
+        #expect(detail.tables.first?.title == "Grok bot · last 30 days")
+        #expect(detail.tables.first?.rows.map(\.name) == ["cursor-grok-4.6-high", "grok-bot-default"])
     }
 
     /// 同一个账号、同一天，但周期已经跑了 30 天以上时仍然按周期画（既有行为）。
@@ -361,7 +361,7 @@ struct CursorUsageDetailTests {
         )
 
         let detail = try #require(make(cycleStart: cycleStart, cycleEnd: cycleEnd, dailySpend: spend))
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
 
         #expect(table.title == "Grok bot · this cycle")
         #expect(table.columns == ["Model", "Tokens"])
@@ -384,7 +384,7 @@ struct CursorUsageDetailTests {
             dailySpend: try dailySpend("{ \"dailySpend\": [\(rows)] }")
         ))
 
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
         #expect(table.rows.count == 6)
         #expect(table.rows.first?.name == "grok-9")
         #expect(table.footnote == "+3 more models")
@@ -402,7 +402,7 @@ struct CursorUsageDetailTests {
 
         let detail = try #require(make(cycleStart: cycleStart, cycleEnd: cycleEnd, dailySpend: spend))
 
-        #expect(detail.table == nil)
+        #expect(detail.tables.isEmpty)
         #expect(detail.groups.last?.values.first?.value == "1K", "非 grok 的量仍算在汇总里")
     }
 
@@ -442,7 +442,7 @@ struct CursorUsageDetailTests {
         let detail = try #require(make(cycleStart: cycleStart, cycleEnd: cycleEnd, dailySpend: spend))
 
         #expect(detail.groups.first?.values.first?.value.isEmpty == false, "饱和而不是 trap")
-        #expect(detail.table?.rows.isEmpty == false)
+        #expect(detail.tables.first?.rows.isEmpty == false)
     }
 
     // MARK: - decoding
@@ -497,7 +497,7 @@ struct CursorUsageDetailTests {
         #expect(detail.series?.points.isEmpty == false)
         #expect(detail.breakdown.contains { $0.label == "Resets" })
         #expect(
-            detail.table?.rows.isEmpty == false,
+            detail.tables.first?.rows.isEmpty == false,
             "本机账号周期内有 Grok bot 用量；空表说明按天数据没接上"
         )
     }

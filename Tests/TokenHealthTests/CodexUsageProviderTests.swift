@@ -595,7 +595,7 @@ struct CodexUsageProviderTests {
             today: fetchDay
         )
 
-        let table = try #require(snapshot.detail?.table)
+        let table = try #require(snapshot.detail?.tables.first)
         #expect(table.rows.map(\.name) == ["Full reset (Weekly + 5 hr)"])
     }
 

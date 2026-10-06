@@ -111,6 +111,6 @@ struct OpenCodeGoDetailWiringTests {
         #expect(detail.groups.isEmpty)
         #expect(detail.series == nil)
         #expect(detail.breakdown.isEmpty)
-        #expect(detail.table == nil)
+        #expect(detail.tables.isEmpty)
     }
 }

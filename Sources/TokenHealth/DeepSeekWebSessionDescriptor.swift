@@ -83,6 +83,9 @@ struct DeepSeekWebSessionDescriptor: WebSessionDescriptor {
           const summary = request('/api/v0/users/get_user_summary');
           const amount = request('/api/v0/usage/amount?month=\(context.month)&year=\(context.year)');
           const cost = request('/api/v0/usage/cost?month=\(context.month)&year=\(context.year)');
+          // 可选：这两条失败只让浮层少一张表，不进 firstFailure，也不影响其余区块。
+          const byKeyAmount = request('/api/v0/usage/by_api_key/amount?start=\(context.start)&end=\(context.end)&tz=0');
+          const byKeyCost = request('/api/v0/usage/by_api_key/cost?start=\(context.start)&end=\(context.end)&tz=0');
           const firstFailure = [summary, amount, cost].find(item => !item.ok);
           return JSON.stringify({
             ok: !firstFailure,
@@ -91,7 +94,9 @@ struct DeepSeekWebSessionDescriptor: WebSessionDescriptor {
             hasAccessToken: Boolean(token),
             summary: summary.json,
             amount: amount.json,
-            cost: cost.json
+            cost: cost.json,
+            byKeyAmount: byKeyAmount.ok ? byKeyAmount.json : null,
+            byKeyCost: byKeyCost.ok ? byKeyCost.json : null
           });
         })();
         """

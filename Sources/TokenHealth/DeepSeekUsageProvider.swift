@@ -2,6 +2,11 @@ import Foundation
 
 struct DeepSeekUsageProvider: UsageProvider {
     private static let providerTitle = "DeepSeek"
+    /// 可选请求（by_api_key 那两条）的超时。
+    ///
+    /// 比必需的 20 秒短得多：这两条只是给浮层多一张表，一个挂起的端点不该把整次刷新
+    /// 拖到 20 秒 —— 最短刷新间隔也才 30 秒。
+    private static let optionalTimeout: TimeInterval = 5
     private let publicBalanceEndpoint = "https://api.deepseek.com/user/balance"
 
     func fetchUsage(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
@@ -20,7 +25,8 @@ struct DeepSeekUsageProvider: UsageProvider {
         config: ServiceConfig,
         session: DeepSeekWebSessionCredential
     ) async -> ProviderUsageSnapshot {
-        let period = DeepSeekUsagePeriod.currentUTC()
+        let now = Date()
+        let period = DeepSeekUsagePeriod.currentUTC(now: now)
         do {
             let bundleData: Data
             do {
@@ -30,7 +36,7 @@ struct DeepSeekUsageProvider: UsageProvider {
                     WebSessionLog.debugLog("forced web fallback", providerTitle: Self.providerTitle)
                     throw WebSessionError.requestFailed(providerTitle: Self.providerTitle, message: "forced fallback")
                 }
-                bundleData = try await fetchUsageBundle(session: session, period: period)
+                bundleData = try await fetchUsageBundle(session: session, period: period, now: now)
             } catch {
                 WebSessionLog.debugLog(
                     "native request failed: \(error.localizedDescription); falling back to own session",
@@ -40,7 +46,12 @@ struct DeepSeekUsageProvider: UsageProvider {
                     throw WebSessionError.unsupportedProvider
                 }
                 bundleData = try await controller.fetchUsage(
-                    context: WebSessionFetchContext(year: period.year, month: period.month)
+                    context: WebSessionFetchContext(
+                        year: period.year,
+                        month: period.month,
+                        start: Self.window(now: now)?.start ?? 0,
+                        end: Self.window(now: now)?.end ?? 0
+                    )
                 )
             }
 
@@ -129,7 +140,13 @@ struct DeepSeekUsageProvider: UsageProvider {
         }
     }
 
-    private func fetchUsageBundle(session: DeepSeekWebSessionCredential, period: DeepSeekUsagePeriod) async throws -> Data {
+    private func fetchUsageBundle(
+        session: DeepSeekWebSessionCredential,
+        period: DeepSeekUsagePeriod,
+        now: Date
+    ) async throws -> Data {
+        let window = Self.window(now: now)
+
         async let summary = fetchPlatformData(session: session, path: "/api/v0/users/get_user_summary", query: [:])
         async let amount = fetchPlatformData(
             session: session,
@@ -141,18 +158,74 @@ struct DeepSeekUsageProvider: UsageProvider {
             path: "/api/v0/usage/cost",
             query: ["month": "\(period.month)", "year": "\(period.year)"]
         )
-
-        return try bundle(
-            summary: try await summary,
-            amount: try await amount,
-            cost: try await cost
+        // 这两条是可选：端点随时可能变，失败不该拖垮余额与汇总。
+        async let byKeyAmount = fetchByKeyData(
+            session: session,
+            path: "/api/v0/usage/by_api_key/amount",
+            window: window
         )
+        async let byKeyCost = fetchByKeyData(
+            session: session,
+            path: "/api/v0/usage/by_api_key/cost",
+            window: window
+        )
+
+        return try await bundle(
+            summary: summary,
+            amount: amount,
+            cost: cost,
+            byKeyAmount: byKeyAmount,
+            byKeyCost: byKeyCost
+        )
+    }
+
+    /// by_api_key 的取数：窗口缺失直接放弃，其余错误（非 2xx、超时、连接失败）一律吞掉。
+    private func fetchByKeyData(
+        session: DeepSeekWebSessionCredential,
+        path: String,
+        window: (start: Int, end: Int)?
+    ) async -> Data? {
+        guard let window else {
+            return nil
+        }
+        return await fetchPlatformDataOptional(
+            session: session,
+            path: path,
+            query: ["start": "\(window.start)", "end": "\(window.end)", "tz": "0"]
+        )
+    }
+
+    private func fetchPlatformDataOptional(
+        session: DeepSeekWebSessionCredential,
+        path: String,
+        query: [String: String]
+    ) async -> Data? {
+        do {
+            return try await fetchPlatformData(
+                session: session,
+                path: path,
+                query: query,
+                timeout: Self.optionalTimeout
+            )
+        } catch {
+            WebSessionLog.debugLog(
+                "optional request failed, path=\(path): \(error.localizedDescription)",
+                providerTitle: Self.providerTitle
+            )
+            return nil
+        }
+    }
+
+    /// 本月至今日的 unix 秒窗口。算不出时返回 nil，两个可选请求就跳过。
+    private static func window(now: Date) -> (start: Int, end: Int)? {
+        UsageDetailSupport.monthToDateWindow(now: now, calendar: UsageDetailSupport.utcCalendar())
     }
 
     private func fetchPlatformData(
         session: DeepSeekWebSessionCredential,
         path: String,
-        query: [String: String]
+        query: [String: String],
+        timeout: TimeInterval = 20
     ) async throws -> Data {
         var components = URLComponents()
         components.scheme = "https"
@@ -167,7 +240,7 @@ struct DeepSeekUsageProvider: UsageProvider {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 20
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("zh-CN,zh;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         applySessionAuthentication(session, to: &request)
@@ -183,12 +256,22 @@ struct DeepSeekUsageProvider: UsageProvider {
         return data
     }
 
-    private func bundle(summary: Data, amount: Data, cost: Data) throws -> Data {
-        let object: [String: Any] = [
+    private func bundle(
+        summary: Data,
+        amount: Data,
+        cost: Data,
+        byKeyAmount: Data?,
+        byKeyCost: Data?
+    ) throws -> Data {
+        var object: [String: Any] = [
             "summary": try jsonObject(from: summary),
             "amount": try jsonObject(from: amount),
             "cost": try jsonObject(from: cost)
         ]
+        // 解不出的可选响应按 null 处理，与「请求失败」同一条路 —— 不该让一张可选表
+        // 把整次刷新拖进 web-session 回落。
+        object["byKeyAmount"] = byKeyAmount.flatMap { try? jsonObject(from: $0) } ?? NSNull()
+        object["byKeyCost"] = byKeyCost.flatMap { try? jsonObject(from: $0) } ?? NSNull()
         return try JSONSerialization.data(withJSONObject: object)
     }
 
