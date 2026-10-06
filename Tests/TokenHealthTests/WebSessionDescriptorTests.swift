@@ -84,6 +84,33 @@ struct WebSessionDescriptorTests {
     }
 
     @Test
+    func usageScriptRequestsTheByKeyEndpointsOverTheWindow() {
+        // 2026-09-01 与 2026-09-25 的 UTC 零点。
+        let context = WebSessionFetchContext(year: 2026, month: 9, start: 1_788_220_800, end: 1_790_294_400)
+        let script = descriptor.usageFetchScript(context: context)
+
+        #expect(script.contains("/api/v0/usage/by_api_key/amount?start=1788220800&end=1790294400&tz=0"))
+        #expect(script.contains("/api/v0/usage/by_api_key/cost?start=1788220800&end=1790294400&tz=0"))
+    }
+
+    /// 两条 by_api_key 是可选请求：失败不许把整次取数判成失败。
+    @Test
+    func usageScriptKeepsTheOptionalRequestsOutOfTheFailureCheck() {
+        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9, start: 0, end: 0))
+
+        #expect(script.contains("[summary, amount, cost].find(item => !item.ok)"))
+        #expect(!script.contains("[summary, amount, cost, byKeyAmount, byKeyCost].find"))
+    }
+
+    @Test
+    func usageScriptReportsNullWhenAByKeyRequestFails() {
+        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9, start: 0, end: 0))
+
+        #expect(script.contains("byKeyAmount: byKeyAmount.ok ? byKeyAmount.json : null"))
+        #expect(script.contains("byKeyCost: byKeyCost.ok ? byKeyCost.json : null"))
+    }
+
+    @Test
     func buildsTheCurrentUTCMonth() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
