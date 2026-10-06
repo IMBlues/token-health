@@ -302,4 +302,229 @@ struct DeepSeekUsageDetailTests {
     func returnsNilForAMalformedBundle() {
         #expect(DeepSeekUsageDetail.make(bundle: Data("not json".utf8), balances: [], today: period) == nil)
     }
+
+    // MARK: - by_api_key
+
+    private let calendar = UsageDetailSupport.utcCalendar()
+
+    /// bucket 的 `time` 是 UTC 日零点的 unix 秒。**别在测试里硬编码时间戳** ——
+    /// 年份写错会让 bucket 落到月外，用例就悄悄变成在测「越界丢弃」了。
+    private func midnight(_ day: String) -> Int {
+        let date = UsageDetailSupport.dateFormatter(calendar: calendar).date(from: day)
+        return Int((date ?? Date(timeIntervalSince1970: 0)).timeIntervalSince1970)
+    }
+
+    /// 带 by_api_key 两份响应的 bundle。两个参数传 nil 时写成 JSON null，与真实响应失败时的形状一致。
+    private func keyBundle(
+        byKeyAmount: String?,
+        byKeyCost: String?,
+        amountDays: String = "[]"
+    ) -> Data {
+        let keyAmountJSON = byKeyAmount ?? "null"
+        let keyCostJSON = byKeyCost ?? "null"
+        let json = """
+        {"summary":{},"amount":{"data":{"biz_data":{"days":\(amountDays)}}},
+         "byKeyAmount":\(keyAmountJSON),"byKeyCost":\(keyCostJSON)}
+        """
+        return Data(json.utf8)
+    }
+
+    /// amount 侧的一条 series：一把 key、一个模型、若干 bucket。
+    private func keySeries(
+        _ name: String,
+        tracking: String,
+        model: String,
+        buckets: [(time: Int, requests: Int, output: Int, hit: Int, miss: Int)]
+    ) -> String {
+        let entries = buckets.map { bucket in
+            """
+            {"time":\(bucket.time),"usage":{"REQUEST":"\(bucket.requests)","RESPONSE_TOKEN":"\(bucket.output)",
+             "PROMPT_CACHE_HIT_TOKEN":"\(bucket.hit)","PROMPT_CACHE_MISS_TOKEN":"\(bucket.miss)"}}
+            """
+        }
+        return """
+        {"api_key":{"name":"\(name)","tracking_id":"\(tracking)"},"model":"\(model)","buckets":[\(entries.joined(separator: ","))]}
+        """
+    }
+
+    @Test
+    func buildsAnAPIKeyTableBelowTheModelTable() throws {
+        let amount = """
+        {"data":{"biz_data":{"series":[
+          \(keySeries("prod", tracking: "sk-prod", model: "deepseek-chat",
+                      buckets: [(midnight("2026-09-10"), 5, 5_000, 0, 0)])),
+          \(keySeries("staging", tracking: "sk-stage", model: "deepseek-chat",
+                      buckets: [(midnight("2026-09-10"), 1, 100, 0, 0)]))
+        ]}}}
+        """
+        let detail = try #require(
+            DeepSeekUsageDetail.make(
+                bundle: keyBundle(byKeyAmount: amount, byKeyCost: nil,
+                                  amountDays: "[\(day("2026-09-10", model: "deepseek-chat", requests: 6, output: 5_100, hit: 0, miss: 0))]"),
+                balances: [],
+                today: period
+            )
+        )
+
+        #expect(detail.tables.count == 2)
+        #expect(detail.tables.map(\.title) == ["By model · this month", "By API key · this month"])
+        let key = try #require(detail.tables.last)
+        #expect(key.columns == ["API key", "Requests", "Tokens", "Cost"])
+        #expect(key.rows.map(\.name) == ["prod", "staging"], "tokens 降序")
+        #expect(key.rows[0].cells == ["5", "5K", "—"])
+    }
+
+    /// 同一把 key 跨多个模型要合成一行。
+    @Test
+    func mergesOneKeyAcrossModels() throws {
+        let amount = """
+        {"data":{"biz_data":{"series":[
+          \(keySeries("prod", tracking: "sk-prod", model: "deepseek-chat",
+                      buckets: [(midnight("2026-09-10"), 2, 200, 0, 0)])),
+          \(keySeries("prod", tracking: "sk-prod", model: "deepseek-reasoner",
+                      buckets: [(midnight("2026-09-10"), 3, 300, 0, 0)]))
+        ]}}}
+        """
+        let detail = try #require(
+            DeepSeekUsageDetail.make(
+                bundle: keyBundle(byKeyAmount: amount, byKeyCost: nil),
+                balances: [],
+                today: period
+            )
+        )
+
+        let key = try #require(detail.tables.first { $0.title == "By API key · this month" })
+        #expect(key.rows.count == 1)
+        #expect(key.rows[0].cells == ["5", "500", "—"])
+    }
+
+    /// amount 侧是对象、cost 侧是裸字符串 —— 两侧必须落到同一行。
+    @Test
+    func matchesTheObjectFormOnTheAmountSideWithTheBareStringOnTheCostSide() throws {
+        let amount = """
+        {"data":{"biz_data":{"series":[
+          \(keySeries("prod", tracking: "sk-prod", model: "deepseek-chat",
+                      buckets: [(midnight("2026-09-10"), 2, 200, 0, 0)]))
+        ]}}}
+        """
+        let seconds = midnight("2026-09-10")
+        let cost = """
+        {"data":{"biz_data":{"data":[{"currency":"CNY","series":[
+          {"api_key":"sk-prod","model":"deepseek-chat","buckets":[{"time":\(seconds),"cost":"0.20"}]}
+        ]}]}}}
+        """
+        let detail = try #require(
+            DeepSeekUsageDetail.make(
+                bundle: keyBundle(byKeyAmount: amount, byKeyCost: cost),
+                balances: [],
+                today: period
+            )
+        )
+
+        let key = try #require(detail.tables.first { $0.title == "By API key · this month" })
+        #expect(key.rows.count == 1, "两侧的身份推断必须一致，否则会裂成两行")
+        #expect(key.rows[0].cells == ["2", "200", "0.20 CNY"])
+    }
+
+    @Test
+    func renamesAPIKeysThatShareADisplayName() throws {
+        let amount = """
+        {"data":{"biz_data":{"series":[
+          \(keySeries("prod", tracking: "sk-aaaa1111", model: "m", buckets: [(midnight("2026-09-10"), 1, 500, 0, 0)])),
+          \(keySeries("prod", tracking: "sk-bbbb2222", model: "m", buckets: [(midnight("2026-09-10"), 1, 300, 0, 0)]))
+        ]}}}
+        """
+        let detail = try #require(
+            DeepSeekUsageDetail.make(
+                bundle: keyBundle(byKeyAmount: amount, byKeyCost: nil),
+                balances: [],
+                today: period
+            )
+        )
+
+        let key = try #require(detail.tables.first { $0.title == "By API key · this month" })
+        #expect(key.rows.map(\.name) == ["prod · sk-aaaa1", "prod · sk-bbbb2"])
+        #expect(Set(key.rows.map(\.name)).count == 2, "同表内名字必须唯一：DetailTableRow.id 取的是 name")
+    }
+
+    @Test
+    func mergesKeysWithoutAnyIdentityIntoOneRow() throws {
+        let seconds = midnight("2026-09-10")
+        let amount = """
+        {"data":{"biz_data":{"series":[
+          {"model":"m","buckets":[{"time":\(seconds),"usage":{"RESPONSE_TOKEN":"100"}}]},
+          {"api_key":null,"model":"m","buckets":[{"time":\(seconds),"usage":{"RESPONSE_TOKEN":"50"}}]}
+        ]}}}
+        """
+        let detail = try #require(
+            DeepSeekUsageDetail.make(
+                bundle: keyBundle(byKeyAmount: amount, byKeyCost: nil),
+                balances: [],
+                today: period
+            )
+        )
+
+        let key = try #require(detail.tables.first { $0.title == "By API key · this month" })
+        #expect(key.rows.map(\.name) == ["Unknown key"])
+        #expect(key.rows[0].cells == ["0", "150", "—"])
+    }
+
+    @Test
+    func dropsBucketsOutsideTheMonth() throws {
+        // 8/31 与 9/25 都在窗口外（窗口是 9/1–9/24）。
+        let amount = """
+        {"data":{"biz_data":{"series":[
+          \(keySeries("prod", tracking: "sk-prod", model: "m",
+                      buckets: [(midnight("2026-08-31"), 1, 900, 0, 0), (midnight("2026-09-25"), 1, 900, 0, 0),
+                                (midnight("2026-09-10"), 1, 100, 0, 0)]))
+        ]}}}
+        """
+        let detail = try #require(
+            DeepSeekUsageDetail.make(
+                bundle: keyBundle(byKeyAmount: amount, byKeyCost: nil),
+                balances: [],
+                today: period
+            )
+        )
+
+        let key = try #require(detail.tables.first { $0.title == "By API key · this month" })
+        #expect(key.rows[0].cells[1] == "100", "只有月内的那个 bucket 算数")
+    }
+
+    @Test
+    func truncatesTheKeyTableWithItsOwnFootnote() throws {
+        let series = (1...8).map { index in
+            keySeries("key-\(index)", tracking: "sk-\(index)", model: "m",
+                      buckets: [(midnight("2026-09-10"), 1, index * 100, 0, 0)])
+        }
+        let amount = "{\"data\":{\"biz_data\":{\"series\":[\(series.joined(separator: ","))]}}}"
+        let detail = try #require(
+            DeepSeekUsageDetail.make(
+                bundle: keyBundle(byKeyAmount: amount, byKeyCost: nil),
+                balances: [],
+                today: period
+            )
+        )
+
+        let key = try #require(detail.tables.first { $0.title == "By API key · this month" })
+        #expect(key.rows.count == 6)
+        #expect(key.footnote == "+2 more API keys")
+        #expect(key.rows.first?.name == "key-8")
+    }
+
+    /// `by_api_key` 缺席时只画模型表。这里必须给 amount 一天真实数据，
+    /// 否则模型表也是空的，`tables` 会整个是 `[]`，用例就测不出「少了一张」。
+    @Test
+    func omitsTheKeyTableWhenTheEndpointFailed() throws {
+        let detail = try #require(
+            DeepSeekUsageDetail.make(
+                bundle: keyBundle(byKeyAmount: nil, byKeyCost: nil,
+                                  amountDays: "[\(day("2026-09-10", model: "m", requests: 1, output: 10, hit: 0, miss: 0))]"),
+                balances: [],
+                today: period
+            )
+        )
+
+        #expect(detail.tables.map(\.title) == ["By model · this month"])
+    }
 }
