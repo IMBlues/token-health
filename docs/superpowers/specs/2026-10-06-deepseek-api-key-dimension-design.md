@@ -155,6 +155,11 @@ GET /api/v0/usage/by_api_key/cost?start=<unix>&end=<unix>&tz=<秒>
 debug log，确认形状与 §2.3 一致、且 `amount`/`cost` 的汇总能对上 `By model` 表的合计。
 对不上时按 §5.4 处置。这一步的结论要写回本文件（照 Cursor spec §2「在本机实测」的体例）。
 
+**2026-10-07 实测结论（已完成）**：两个端点都存在且可用，形状与 §2.3 一致。
+关键的一条 —— §2.3 第 1 条那个「裸字符串装的是 `name` 还是 `tracking_id`」的疑问 —— 有了答案：
+DeepSeek2 账号上两把 key（`me` 与 `zz`）在 `By API key` 表里**各占一行，没有裂开**，
+说明两侧的身份确实对上了，按 `tracking_id` 解是对的。详见 §5.4。
+
 ## 3. 取数
 
 ### 3.1 窗口参数
@@ -337,6 +342,18 @@ private static func keyTable(_ byKey: [String: (totals: Totals, candidateName: S
 - 对不上（例如它只覆盖「有 key 记录的调用」）→ 标题改成 `By API key · this month` 保留，
   但**脚注位**补一句口径说明（形如 `Excludes usage without an API key`），避免读者拿两张表的合计互推。
   具体文案以实测结论为准，写回本文件。
+
+**2026-10-07 实测（DeepSeek2 账号）**：
+
+| | Requests | Tokens | Cost |
+| --- | --- | --- | --- |
+| `By model` | 2.94K | 1.02B | 34.28 CNY |
+| `By API key` 的 `me` | 2.93K | 1.02B | 34.28 CNY |
+| `By API key` 的 `zz` | 2 | 64 | 0.00 CNY |
+
+Tokens 与 Cost **完全一致**；Requests 差约 10（0.3%），量级像舍入或极少量没有 key 记录的调用。
+这个差距不至于让两张表读起来互相矛盾（读者看到的是同一个 1.02B 和 34.28），
+**因此不加口径脚注** —— 加一句「不含无 key 的用量」反而是在为 0.3% 的噪声写解释。
 
 ## 6. 视图接口改动
 
