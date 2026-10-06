@@ -1530,12 +1530,20 @@ The balance, totals, trend and by-model split come from the response already fet
 
 - [ ] **Step 3: 升版本号**
 
-`AppSupport/Info.plist:16` 的 `1.0.6` 改成 `1.0.7`。
+`AppSupport/Info.plist` 里**两个**键都要动 —— 历次发布都是同时升的（1.0.5→1.0.6 那次也是 27→28）：
+
+- `CFBundleShortVersionString`：`1.0.6` → `1.0.7`
+- `CFBundleVersion`：`28` → `29`
+
+只升短版本号会让 LaunchServices / 图标缓存按 identifier+build 认不出这是新版本。
 
 - [ ] **Step 4: 验证文档之外没漏**
 
 Run: `grep -rn "1\.0\.6" README.md README.en.md AppSupport/Info.plist`
 Expected: 无输出
+
+Run: `plutil -extract CFBundleVersion raw AppSupport/Info.plist`
+Expected: `29`
 
 - [ ] **Step 5: Commit**
 
@@ -1585,9 +1593,15 @@ Expected: 出现 `optional request failed, path=/api/v0/usage/by_api_key/amount�
 
 点钉住的 DeepSeek 项 → 浮层里应出现 `By model · this month` 与 `By API key · this month` 两张表。
 
-- [ ] **Step 4: 核对口径**
+- [ ] **Step 4: 核对行数与口径**
 
-把 `By API key` 表的 Requests / Tokens 两列相加，与 `This month` 那一行对比：
+**先数行（这一步不能省）**：`By API key` 表里应当**一把 key 一行**。若看到某个 key 出现两行、
+其中一行 Requests / Tokens 全是 `0` 而只有 Cost 有值，就说明 cost 侧的裸字符串装的是 `name`
+而不是 `tracking_id`（spec §2.3 第 1 条）—— 这种情况下总额仍然对得上，只有数行才看得出来。
+处置：把 `DeepSeekPayload.apiKeyIdentity(from:)` 的裸字符串分支改成按 `name` 解，补一条测试，
+并把结论写回 spec §2.3。
+
+**再对总额**：把 `By API key` 表的 Requests / Tokens 两列相加，与 `This month` 那一行对比：
 
 - **对得上** → 无需改动。
 - **对不上** → 按 spec §5.4，给 key 表的 `footnote` 补一句口径说明（`Excludes usage without an API key` 之类），

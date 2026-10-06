@@ -2,6 +2,11 @@ import Foundation
 
 struct DeepSeekUsageProvider: UsageProvider {
     private static let providerTitle = "DeepSeek"
+    /// 可选请求（by_api_key 那两条）的超时。
+    ///
+    /// 比必需的 20 秒短得多：这两条只是给浮层多一张表，一个挂起的端点不该把整次刷新
+    /// 拖到 20 秒 —— 最短刷新间隔也才 30 秒。
+    private static let optionalTimeout: TimeInterval = 5
     private let publicBalanceEndpoint = "https://api.deepseek.com/user/balance"
 
     func fetchUsage(config: ServiceConfig, secrets: ProviderSecrets) async -> ProviderUsageSnapshot {
@@ -196,7 +201,12 @@ struct DeepSeekUsageProvider: UsageProvider {
         query: [String: String]
     ) async -> Data? {
         do {
-            return try await fetchPlatformData(session: session, path: path, query: query)
+            return try await fetchPlatformData(
+                session: session,
+                path: path,
+                query: query,
+                timeout: Self.optionalTimeout
+            )
         } catch {
             WebSessionLog.debugLog(
                 "optional request failed, path=\(path): \(error.localizedDescription)",
@@ -214,7 +224,8 @@ struct DeepSeekUsageProvider: UsageProvider {
     private func fetchPlatformData(
         session: DeepSeekWebSessionCredential,
         path: String,
-        query: [String: String]
+        query: [String: String],
+        timeout: TimeInterval = 20
     ) async throws -> Data {
         var components = URLComponents()
         components.scheme = "https"
@@ -229,7 +240,7 @@ struct DeepSeekUsageProvider: UsageProvider {
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 20
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("zh-CN,zh;q=0.9,en;q=0.8", forHTTPHeaderField: "Accept-Language")
         applySessionAuthentication(session, to: &request)

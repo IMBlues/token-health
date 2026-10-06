@@ -111,7 +111,7 @@ GET /api/v0/usage/by_api_key/cost?start=<unix>&end=<unix>&tz=<秒>
           "currency": "CNY",
           "series": [
             {
-              "api_key": "prod",
+              "api_key": "sk-…8f2a",
               "model": "deepseek-chat",
               "buckets": [ { "time": 1790208000, "cost": "1.2843" } ]
             }
@@ -127,6 +127,11 @@ GET /api/v0/usage/by_api_key/cost?start=<unix>&end=<unix>&tz=<秒>
 
 1. **`api_key` 有两种形态**：对象 `{name, tracking_id}`，或**裸字符串**（见上面 cost 的例子）。
    两种都要认。`name` 是用户给 key 起的名字，`tracking_id` 是密钥前缀。
+   **裸字符串按 `tracking_id` 解**（CodexBar 的 `ByAPIKeyIdentity` 就是这么解它的），
+   这是两侧身份能对上、一把 key 不裂成两行的前提。
+   **实测第一件要确认的就是这件事**：如果 cost 侧的裸字符串装的是 `name` 而不是 `tracking_id`，
+   而两把 key 的 `name` 与 `tracking_id` 又对不上，同一把 key 会静默裂成两行 —— 一行有 token 没有花费，
+   一行有花费没有 token（§11 验收 1 的行数核对专门盯它）。
 2. **bucket 里的标量可能是字符串、数字或 `null`**（proto3 省略 0 时会缺席）。一律走宽松解码，取不到算 0。
 3. **amount 的 `usage` 是字典** `{TYPE: 值}`；而 `DeepSeekPayload.intAmount(in:type:)` 处理的是
    数组形态 `[{type, amount}]`（现有 `amount?month` 端点用的那个）。两者形状不同，要各走一条。
@@ -434,11 +439,13 @@ var tables: [DetailTable] = []
 ## 11. 验收
 
 1. **实测先行**：本机登录会话打一次 `by_api_key/amount` 与 `by_api_key/cost`（本月窗口），
-   原始 JSON 落 debug log，确认 §2.3 的形状；核对汇总能否与 `By model` 表的合计对齐。
+   原始 JSON 落 debug log，确认 §2.3 的形状；**先数行**（一把 key 是否只有一行，见 §2.3 第 1 条），
+   **再对总额**（`By API key` 两列之和能否与 `This month` 对齐）。
    结论（含被拒时的请求头调整）写回本文件 §2.3 / §2.4 / §5.4。
 2. `bash scripts/test.sh` 全绿。
 3. `bash scripts/build-app.sh` 通过，装到 `/Applications/Token Health.app`，用
-   `plutil -extract CFBundleShortVersionString raw` 核对是 **1.0.7**。
+   `plutil -extract CFBundleShortVersionString raw` 核对是 **1.0.7**，
+   `plutil -extract CFBundleVersion raw` 核对是 **29**（两个键一起升，与历次发布一致）。
 4. 手动：点钉住的 DeepSeek 项 → 浮层在 `By model · this month` 下面出现 `By API key · this month`，
    列与排序正确，行数与自己的平台用量页对得上。
 5. 手动：把 `by_api_key` 请求打断（断网 / 改路径）→ key 表消失，其余区块与菜单栏数字完全不变。
