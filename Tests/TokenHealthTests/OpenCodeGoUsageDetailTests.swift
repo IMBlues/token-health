@@ -116,7 +116,7 @@ struct OpenCodeGoUsageDetailTests {
     @Test
     func tableMergesModelsDropsEmptyRowsAndSortsByCost() throws {
         let detail = try #require(OpenCodeGoUsageDetail.make(bundle: bundle(), usages: usages, today: today))
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
 
         #expect(table.title == "By model · last 30 days")
         #expect(table.columns == ["Model", "Requests", "Tokens", "Cost"])
@@ -136,7 +136,7 @@ struct OpenCodeGoUsageDetailTests {
         }
         let models = "{\"items\":[\(items.joined(separator: ","))]}"
         let detail = try #require(OpenCodeGoUsageDetail.make(bundle: bundle(models: models), usages: usages, today: today))
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
 
         #expect(table.rows.count == 6)
         #expect(table.rows.first?.name == "model-0")
@@ -153,7 +153,7 @@ struct OpenCodeGoUsageDetailTests {
         #expect(detail.groups.isEmpty)
         #expect(detail.series == nil)
         #expect(detail.breakdown.isEmpty)
-        #expect(detail.table == nil)
+        #expect(detail.tables.isEmpty)
     }
 
     @Test
@@ -165,7 +165,7 @@ struct OpenCodeGoUsageDetailTests {
         #expect(detail.groups[2].values.map(\.value) == ["0", "0", "$0.00"])
         #expect(detail.series?.points.allSatisfy { $0.value == 0 } == true)
         #expect(detail.breakdown.map(\.value) == ["0", "0", "0", "0"])
-        #expect(detail.table == nil)
+        #expect(detail.tables.isEmpty)
     }
 
     @Test
@@ -194,7 +194,7 @@ struct OpenCodeGoUsageDetailTests {
         // Same formatted outputs as the numeric fixtures.
         #expect(detail.groups[0].values.map(\.value) == ["13", "1.3M", "$0.42"])
         #expect(detail.breakdown.map(\.value) == ["44M", "9M", "33M", "2M"])
-        #expect(detail.table?.rows.first?.cells == ["402", "41.2M", "$8.19"])
+        #expect(detail.tables.first?.rows.first?.cells == ["402", "41.2M", "$8.19"])
     }
 
     @Test
@@ -206,7 +206,7 @@ struct OpenCodeGoUsageDetailTests {
         #expect(detail.groups.isEmpty)
         #expect(detail.series == nil)
         #expect(detail.breakdown.isEmpty)
-        #expect(detail.table == nil)
+        #expect(detail.tables.isEmpty)
     }
 
     @Test
@@ -237,7 +237,7 @@ struct OpenCodeGoUsageDetailTests {
         let models = "{\"items\":[\(items.joined(separator: ","))]}"
         let detail = try #require(OpenCodeGoUsageDetail.make(bundle: bundle(models: models), usages: usages, today: today))
 
-        #expect(detail.table?.rows.map(\.name) == ["alpha", "zeta"])
+        #expect(detail.tables.first?.rows.map(\.name) == ["alpha", "zeta"])
     }
 
     @Test
@@ -308,7 +308,7 @@ struct OpenCodeGoUsageDetailTests {
         #expect(detail.groups[0].values.map(\.value) == [saturated, "0", "$0.00"])
         #expect(detail.series?.points.last?.value == 0)
         #expect(detail.breakdown.map(\.value) == [saturated, saturated, "0", saturated])
-        #expect(detail.table?.rows.first?.cells == ["0", saturated, "$0.00"])
+        #expect(detail.tables.first?.rows.first?.cells == ["0", saturated, "$0.00"])
     }
 
     @Test
@@ -322,7 +322,7 @@ struct OpenCodeGoUsageDetailTests {
         let detail = try #require(OpenCodeGoUsageDetail.make(bundle: bundle(models: models), usages: usages, today: today))
 
         // Both rows trim to one "kimi" row: 2 + 3 requests, 2K tokens, $0.03.
-        #expect(detail.table?.rows.map(\.name) == ["kimi"])
-        #expect(detail.table?.rows.first?.cells == ["5", "2K", "$0.03"])
+        #expect(detail.tables.first?.rows.map(\.name) == ["kimi"])
+        #expect(detail.tables.first?.rows.first?.cells == ["5", "2K", "$0.03"])
     }
 }

@@ -151,41 +151,47 @@ struct DetailPopoverView: View {
             }
         }
 
-        if let table = detail.table {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(table.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                // 用 Grid 而不是手拼 HStack：同一列在所有行里会按最宽的那个单元格对齐。
-                // 用固定的 minWidth 各撑各的，表头与数值就会错开。
-                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
-                    GridRow {
-                        Text(table.columns.first ?? "")
+        ForEach(detail.tables) { table in
+            tableSection(table)
+        }
+    }
+
+    /// 一张表格区块。抽出来是因为浮层现在可以有多张（DeepSeek 的 By model 与 By API key）。
+    @ViewBuilder
+    private func tableSection(_ table: DetailTable) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(table.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            // 用 Grid 而不是手拼 HStack：同一列在所有行里会按最宽的那个单元格对齐。
+            // 用固定的 minWidth 各撑各的，表头与数值就会错开。
+            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
+                GridRow {
+                    Text(table.columns.first ?? "")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    ForEach(Array(table.columns.dropFirst().enumerated()), id: \.offset) { _, column in
+                        Text(column)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                        ForEach(Array(table.columns.dropFirst().enumerated()), id: \.offset) { _, column in
-                            Text(column)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
                     }
-                    ForEach(table.rows) { row in
-                        GridRow {
-                            Text(row.name)
-                                .font(.caption)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            ForEach(Array(row.cells.enumerated()), id: \.offset) { _, cell in
-                                Text(cell)
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
-                            }
+                }
+                ForEach(table.rows) { row in
+                    GridRow {
+                        Text(row.name)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        ForEach(Array(row.cells.enumerated()), id: \.offset) { _, cell in
+                            Text(cell)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-                if let footnote = table.footnote {
-                    Text(footnote).font(.caption2).foregroundStyle(.tertiary)
-                }
+            }
+            if let footnote = table.footnote {
+                Text(footnote).font(.caption2).foregroundStyle(.tertiary)
             }
         }
     }

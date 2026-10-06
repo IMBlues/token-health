@@ -51,7 +51,7 @@ enum OpenCodeGoUsageDetail {
         }
         if let models = root["usageModels"] as? [String: Any],
            let items = models["items"] as? [[String: Any]] {
-            detail.table = table(items)
+            detail.tables = [table(items)].compactMap { $0 }
         }
 
         return detail.isEmpty ? nil : detail

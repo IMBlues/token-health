@@ -54,7 +54,7 @@ enum DeepSeekUsageDetail {
         detail.groups = groups(today: today, daysInRange: daysInRange, byDay: byDay, calendar: calendar)
         detail.series = series(today: today, daysInRange: daysInRange, byDay: byDay, calendar: calendar)
         detail.breakdown = breakdown(byDay)
-        detail.table = table(byModel)
+        detail.tables = [table(byModel)].compactMap { $0 }
         return detail
     }
 

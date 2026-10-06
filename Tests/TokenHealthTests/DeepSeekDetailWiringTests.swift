@@ -86,6 +86,6 @@ struct DeepSeekDetailWiringTests {
             detail.series?.points.allSatisfy { $0.value == 0 } == true,
             "全零的月份交给视图去说 No usage this month"
         )
-        #expect(detail.table == nil, "没有模型就不画表")
+        #expect(detail.tables.isEmpty, "没有模型就不画表")
     }
 }

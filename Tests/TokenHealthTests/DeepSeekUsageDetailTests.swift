@@ -194,7 +194,7 @@ struct DeepSeekUsageDetailTests {
             DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: nil), balances: [], today: period)
         )
 
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
         #expect(table.title == "By model · this month")
         #expect(table.columns == ["Model", "Requests", "Tokens", "Cost"])
         #expect(table.rows.map(\.name) == ["big", "small"])
@@ -212,7 +212,7 @@ struct DeepSeekUsageDetailTests {
             DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: cost), balances: [], today: period)
         )
 
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
         #expect(table.rows.count == 2)
         let legacy = try #require(table.rows.first { $0.name == "legacy" })
         #expect(legacy.cells[1] == "0", "只在 cost 里出现的模型仍然成行")
@@ -229,7 +229,7 @@ struct DeepSeekUsageDetailTests {
             DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: cost), balances: [], today: period)
         )
 
-        #expect(detail.table?.rows.map(\.name) == ["real"])
+        #expect(detail.tables.first?.rows.map(\.name) == ["real"])
     }
 
     @Test
@@ -243,7 +243,7 @@ struct DeepSeekUsageDetailTests {
             DeepSeekUsageDetail.make(bundle: bundle(amountDays: amount, costDays: nil), balances: [], today: period)
         )
 
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
         #expect(table.rows.map(\.name) == ["Unknown model"])
         #expect(table.rows[0].cells[1] == "150")
     }
@@ -261,7 +261,7 @@ struct DeepSeekUsageDetailTests {
             )
         )
 
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
         #expect(table.rows.count == 6)
         #expect(table.footnote == "+2 more models")
         #expect(table.rows.first?.name == "model-8", "按 tokens 降序")
@@ -294,7 +294,7 @@ struct DeepSeekUsageDetailTests {
 
         #expect(detail.series?.points.count == 24)
         #expect(detail.series?.points.allSatisfy { $0.value == 0 } == true)
-        #expect(detail.table == nil, "没有模型就不画表")
+        #expect(detail.tables.isEmpty, "没有模型就不画表")
         #expect(detail.isEmpty == false, "趋势图还在，浮层不算空")
     }
 
