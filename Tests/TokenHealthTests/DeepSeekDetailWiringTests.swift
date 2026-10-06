@@ -88,4 +88,78 @@ struct DeepSeekDetailWiringTests {
         )
         #expect(detail.tables.isEmpty, "没有模型就不画表")
     }
+
+    /// bucket 的 `time` 是 UTC 日零点的 unix 秒。
+    private func midnight(_ day: String) -> Int {
+        let formatter = UsageDetailSupport.dateFormatter(calendar: UsageDetailSupport.utcCalendar())
+        return Int((formatter.date(from: day) ?? Date(timeIntervalSince1970: 0)).timeIntervalSince1970)
+    }
+
+    /// 带 by_api_key 两份响应的 bundle：模型表与 key 表都该出来。
+    /// 这是 raw string，插值要写 `\#(...)` 而不是 `\(...)`。
+    private var bundleWithAPIKeys: Data {
+        let seconds = midnight("2026-09-24")
+        return Data(#"""
+        {"summary":{"data":{"biz_data":{"normal_wallets":[{"currency":"CNY","balance":"1284.60"}]}}},
+         "amount":{"data":{"biz_data":{"days":[{"date":"2026-09-24","data":[
+           {"model":"deepseek-chat","usage":[
+             {"type":"REQUEST","amount":"4"},
+             {"type":"RESPONSE_TOKEN","amount":"40"},
+             {"type":"PROMPT_CACHE_HIT_TOKEN","amount":"80"},
+             {"type":"PROMPT_CACHE_MISS_TOKEN","amount":"20"}]}]}]}}},
+         "cost":{},
+         "byKeyAmount":{"data":{"biz_data":{"series":[
+           {"api_key":{"name":"prod","tracking_id":"sk-prod"},"model":"deepseek-chat",
+            "buckets":[{"time":\#(seconds),"usage":{
+              "REQUEST":"4","RESPONSE_TOKEN":"40",
+              "PROMPT_CACHE_HIT_TOKEN":"80","PROMPT_CACHE_MISS_TOKEN":"20"}}]}]}}},
+         "byKeyCost":{"data":{"biz_data":{"data":[{"currency":"CNY","series":[
+           {"api_key":"sk-prod","model":"deepseek-chat",
+            "buckets":[{"time":\#(seconds),"cost":"0.02"}]}]}]}}}}
+        """#.utf8)
+    }
+
+    @Test
+    func aBundleWithByKeyDataProducesTwoTables() throws {
+        let snapshot = DeepSeekUsageProvider().platformSnapshot(
+            config: config(auth: .browserLogin),
+            bundle: bundleWithAPIKeys,
+            period: period,
+            accountName: nil
+        )
+
+        let detail = try #require(snapshot.detail)
+        #expect(detail.tables.map(\.title) == ["By model · this month", "By API key · this month"])
+        let key = try #require(detail.tables.last)
+        #expect(key.rows.map(\.name) == ["prod"])
+        #expect(key.rows[0].cells == ["4", "140", "0.02 CNY"])
+    }
+
+    @Test
+    func aBundleWithoutByKeyDataProducesOneTable() throws {
+        let snapshot = DeepSeekUsageProvider().platformSnapshot(
+            config: config(auth: .browserLogin),
+            bundle: bundle,
+            period: period,
+            accountName: nil
+        )
+
+        let detail = try #require(snapshot.detail)
+        #expect(detail.tables.map(\.title) == ["By model · this month"])
+    }
+
+    @Test
+    func aNullByKeyPayloadIsTolerated() throws {
+        // 端点失败时 bundle 里就是 null，解析器和详情构建器都不该被它绊倒。
+        let json = #"{"summary":{},"amount":{},"cost":{},"byKeyAmount":null,"byKeyCost":null}"#
+        let snapshot = DeepSeekUsageProvider().platformSnapshot(
+            config: config(auth: .browserLogin),
+            bundle: Data(json.utf8),
+            period: period,
+            accountName: nil
+        )
+
+        #expect(snapshot.state == .ready)
+        #expect(snapshot.detail?.tables.isEmpty == true)
+    }
 }
