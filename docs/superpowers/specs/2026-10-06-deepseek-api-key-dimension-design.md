@@ -82,7 +82,7 @@ GET /api/v0/usage/by_api_key/cost?start=<unix>&end=<unix>&tz=<秒>
           "model": "deepseek-chat",
           "buckets": [
             {
-              "time": 1759276800,
+              "time": 1790208000,
               "usage": {
                 "REQUEST": "128",
                 "RESPONSE_TOKEN": "40211",
@@ -113,7 +113,7 @@ GET /api/v0/usage/by_api_key/cost?start=<unix>&end=<unix>&tz=<秒>
             {
               "api_key": "prod",
               "model": "deepseek-chat",
-              "buckets": [ { "time": 1759276800, "cost": "1.2843" } ]
+              "buckets": [ { "time": 1790208000, "cost": "1.2843" } ]
             }
           ]
         }
