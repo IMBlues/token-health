@@ -62,6 +62,21 @@ enum UsageDetailSupport {
         return dayList(from: first, through: today, calendar: calendar)
     }
 
+    /// `[本月 1 日 00:00, 明日 00:00)` 的 unix 秒窗口，上界排他（覆盖到今天整天）。
+    ///
+    /// 给 by_api_key 那两个只认 `start`/`end`/`tz` 的端点用。`end` 取明日而不是今天，
+    /// 是因为接口把 `end` 当排他上界 —— 传今天零点会把今天一整天切掉。
+    /// 算不出日期时返回 nil，调用方据此放弃这次可选请求。
+    static func monthToDateWindow(now: Date, calendar: Calendar) -> (start: Int, end: Int)? {
+        let today = calendar.startOfDay(for: now)
+        let components = calendar.dateComponents([.year, .month], from: today)
+        guard let first = calendar.date(from: DateComponents(year: components.year, month: components.month, day: 1)),
+              let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) else {
+            return nil
+        }
+        return (start: Int(first.timeIntervalSince1970), end: Int(tomorrow.timeIntervalSince1970))
+    }
+
     /// `first ... last`, both ends included, one entry per day; empty when `last` precedes `first`.
     ///
     /// Both ends are snapped to `startOfDay` first: the Cursor billing cycle arrives with a time
