@@ -103,8 +103,8 @@ Menu bar artwork is black and white only: the system draws the gourd and each pr
 DeepSeek has no quota ratio, so pinning one shows the balance figure directly (with no unit), and you can pick the display currency in settings (original / CNY / USD).
 The exchange rate is fetched once a day from ECB data, falling back to the last cached value if that fails. Conversion only affects that menu bar number; the card and settings always show the original value in its original currency.
 
-Clicking a pinned DeepSeek item opens a detail popover: balance, request count / tokens / spend for `Today` and `This month`, a by-day trend for the month, the token breakdown (`Output` / `Cache hit` / `Cache miss`), and a `By model · this month` split.
-Everything comes from the response already fetched at refresh time — no extra requests.
+Clicking a pinned DeepSeek item opens a detail popover: balance, request count / tokens / spend for `Today` and `This month`, a by-day trend for the month, the token breakdown (`Output` / `Cache hit` / `Cache miss`), and two splits — `By model · this month` and `By API key · this month`.
+The balance, totals, trend and by-model split come from the response already fetched at refresh time; the two by-key requests are optional — if they fail you lose the `By API key` table and nothing else.
 
 A pinned Codex item opens the same kind of popover: the 5-hour and weekly quota (the same numbers the menu bar draws), token totals for `Today` / `7 days` / `30 days`, a by-day token trend for the last 30 days, and `Lifetime` / `Peak day` / `Streak` / `Longest turn`.
 It all comes from the local Codex login's `app-server` session — one extra question on the same round trip, no re-login and no reading of `~/.codex/auth.json`.
