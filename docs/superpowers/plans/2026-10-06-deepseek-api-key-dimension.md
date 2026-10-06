@@ -1209,7 +1209,7 @@ git commit -m "Build the DeepSeek by-API-key table"
               "PROMPT_CACHE_HIT_TOKEN":"80","PROMPT_CACHE_MISS_TOKEN":"20"}}]}]}}},
          "byKeyCost":{"data":{"biz_data":{"data":[{"currency":"CNY","series":[
            {"api_key":"sk-prod","model":"deepseek-chat",
-            "buckets":[{"time":\#(seconds),"cost":"0.02"}]}]}]}}}
+            "buckets":[{"time":\#(seconds),"cost":"0.02"}]}]}]}}}}
         """#.utf8)
     }
 
@@ -1257,8 +1257,6 @@ git commit -m "Build the DeepSeek by-API-key table"
         #expect(snapshot.detail?.tables.isEmpty == true)
     }
 ```
-
-（`1758672000` 是 2026-09-24T00:00:00Z。）
 
 - [ ] **Step 2: 跑测试**
 
