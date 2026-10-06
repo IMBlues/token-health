@@ -93,8 +93,8 @@ final class MenuBarPanelController: NSObject, NSPopoverDelegate {
             return
         }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        // 位置由系统记住，用户也可以 ⌘ 拖拽调整。
-        item.autosaveName = "TokenHealthMain"
+        // 不给 autosaveName：带着它建出来的项会被系统摆到屏幕外（Accessibility 报出来的 x 是 -4150），
+        // 用户既看不到也拖不回来。让它走默认位置，用户再自己 ⌘ 拖。
         // 图标是模板图，系统按菜单栏外观着色，换壁纸/深浅色都不用重画。
         let icon = AppIcon.menuBarImage()
             ?? NSImage(systemSymbolName: "bolt.circle", accessibilityDescription: "Token Health")
