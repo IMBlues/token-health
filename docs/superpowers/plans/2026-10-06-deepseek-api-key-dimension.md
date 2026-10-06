@@ -881,8 +881,8 @@ git commit -m "Read the by-api-key usage envelope"
         let seconds = midnight("2026-09-10")
         let cost = """
         {"data":{"biz_data":{"data":[{"currency":"CNY","series":[
-          {"api_key":"sk-prod","model":"deepseek-chat","buckets":[{"time":\(seconds),"cost":"1.2843"}]}
-        ]}]}}
+          {"api_key":"sk-prod","model":"deepseek-chat","buckets":[{"time":\(seconds),"cost":"0.20"}]}
+        ]}]}}}
         """
         let detail = try #require(
             DeepSeekUsageDetail.make(
@@ -894,7 +894,7 @@ git commit -m "Read the by-api-key usage envelope"
 
         let key = try #require(detail.tables.first { $0.title == "By API key · this month" })
         #expect(key.rows.count == 1, "两侧的身份推断必须一致，否则会裂成两行")
-        #expect(key.rows[0].cells == ["2", "200", "1.2843 CNY"])
+        #expect(key.rows[0].cells == ["2", "200", "0.20 CNY"])
     }
 
     @Test
@@ -1017,14 +1017,15 @@ Expected: FAIL —— `detail.tables` 只有一张（`buildsAnAPIKeyTableBelowTh
         detail.groups = groups(today: today, daysInRange: daysInRange, byDay: byDay, calendar: calendar)
         detail.series = series(today: today, daysInRange: daysInRange, byDay: byDay, calendar: calendar)
         detail.breakdown = breakdown(byDay)
+        // by_api_key 的两份响应挂在 bundle 自己的键上，不是 bundle 顶层 —— 取子对象再走形状走查。
+        let byKey = keyTotals(
+            fromAmount: root["byKeyAmount"] as? [String: Any] ?? [:],
+            fromCost: root["byKeyCost"] as? [String: Any] ?? [:],
+            allowed: Set(daysInRange),
+            calendar: calendar
+        )
         detail.tables = [table(byModel), keyTable(byKey)].compactMap { $0 }
         return detail
-```
-
-并在 `detail.tables = ...` **之前**插入一行：
-
-```swift
-        let byKey = keyTotals(fromAmount: root, fromCost: root, allowed: Set(daysInRange), calendar: calendar)
 ```
 
 **3b.** 在 `// MARK: - table` 之后新增一节：
