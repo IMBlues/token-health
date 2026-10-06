@@ -20,7 +20,8 @@ struct DeepSeekUsageProvider: UsageProvider {
         config: ServiceConfig,
         session: DeepSeekWebSessionCredential
     ) async -> ProviderUsageSnapshot {
-        let period = DeepSeekUsagePeriod.currentUTC()
+        let now = Date()
+        let period = DeepSeekUsagePeriod.currentUTC(now: now)
         do {
             let bundleData: Data
             do {
@@ -40,7 +41,12 @@ struct DeepSeekUsageProvider: UsageProvider {
                     throw WebSessionError.unsupportedProvider
                 }
                 bundleData = try await controller.fetchUsage(
-                    context: WebSessionFetchContext(year: period.year, month: period.month)
+                    context: WebSessionFetchContext(
+                        year: period.year,
+                        month: period.month,
+                        start: Self.window(now: now)?.start ?? 0,
+                        end: Self.window(now: now)?.end ?? 0
+                    )
                 )
             }
 
@@ -147,6 +153,11 @@ struct DeepSeekUsageProvider: UsageProvider {
             amount: try await amount,
             cost: try await cost
         )
+    }
+
+    /// 本月至今日的 unix 秒窗口。算不出时返回 nil，两个可选请求就跳过。
+    private static func window(now: Date) -> (start: Int, end: Int)? {
+        UsageDetailSupport.monthToDateWindow(now: now, calendar: UsageDetailSupport.utcCalendar())
     }
 
     private func fetchPlatformData(

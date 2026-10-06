@@ -79,7 +79,7 @@ struct WebSessionDescriptorTests {
 
     @Test
     func usageScriptMentionsRequestedMonth() {
-        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9))
+        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9, start: 0, end: 0))
         #expect(script.contains("month=9&year=2026"))
     }
 
@@ -92,6 +92,10 @@ struct WebSessionDescriptorTests {
 
         #expect(context.year == calendar.component(.year, from: now))
         #expect(context.month == calendar.component(.month, from: now))
+
+        let window = UsageDetailSupport.monthToDateWindow(now: now, calendar: calendar)
+        #expect(context.start == window?.start)
+        #expect(context.end == window?.end)
     }
 
     @Test
