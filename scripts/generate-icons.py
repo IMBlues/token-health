@@ -5,13 +5,15 @@ The drawing lives in AppSupport/GourdBrand/gourd-transparent.png: a gourd tipped
 over, a ribbon knotted at its mouth, white liquid standing at a level. Nothing
 here draws it — this script frames it and paints the tile underneath.
 
-Three things come out of it:
+Four things come out of it:
   * AppSupport/TokenHealth.icns (+ the 1024 master) — the icon Finder and the DMG
     show, on a cool mid-grey tile so both the black line and the white liquid read.
   * Sources/.../TokenHealthMark.png — the gourd alone as a template image for the
     menu bar, where macOS tints it for light and dark bars by itself.
   * Sources/.../TokenHealthIcon{Light,Dark}.png — the same icon tinted for both
     appearances; the dark one is the light one with the ink reversed to white.
+  * docs/images/token-health-icon.png — the light icon downscaled for the README
+    header, so the picture there is regenerated rather than hand-cropped.
 
 Apple's grid: an 824 pt body centred on a 1024 canvas, with a continuous corner
 (a superellipse of exponent ~5.3, which fits Apple's corner path far better than
@@ -38,6 +40,7 @@ ICNS = SUPPORT / "TokenHealth.icns"
 MENU_MARK = RESOURCES / "TokenHealthMark.png"
 ICON_LIGHT = RESOURCES / "TokenHealthIconLight.png"
 ICON_DARK = RESOURCES / "TokenHealthIconDark.png"
+README_ICON = ROOT / "docs/images/token-health-icon.png"
 
 CANVAS = 1024
 BODY = 824           # Apple's icon grid: an 824x824 body, centred
@@ -45,6 +48,7 @@ SQUIRCLE_N = 5.3
 ART_FILL = 0.86      # how much of the tile the drawing takes up
 INK_CUTOFF = 110     # luma below this is ink, and gets reversed for the dark icon
 MENU_MARK_SIZE = 72  # 4x the 18 pt menu bar mark
+README_ICON_SIZE = 256  # 2x the 128 pt width the README draws it at, to stay crisp on retina
 
 # Cool grey, mid lightness: black line and white liquid both stay readable.
 TILE_LIGHT = ("#B9C0CA", "#98A2B0")
@@ -162,6 +166,7 @@ def write_iconset(source: Image.Image) -> None:
 def main() -> None:
     SUPPORT.mkdir(parents=True, exist_ok=True)
     RESOURCES.mkdir(parents=True, exist_ok=True)
+    README_ICON.parent.mkdir(parents=True, exist_ok=True)
 
     light = render_icon(dark=False)
     dark = render_icon(dark=True)
@@ -171,11 +176,13 @@ def main() -> None:
     write_iconset(light)
     subprocess.run(["iconutil", "-c", "icns", str(ICONSET), "-o", str(ICNS)], check=True)
     render_menu_mark().save(MENU_MARK)
+    light.resize((README_ICON_SIZE, README_ICON_SIZE), Image.Resampling.LANCZOS).save(README_ICON)
 
     print(ICNS)
     print(MENU_MARK)
     print(ICON_LIGHT)
     print(ICON_DARK)
+    print(README_ICON)
 
 
 if __name__ == "__main__":

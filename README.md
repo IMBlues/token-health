@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/token-health-icon.png" alt="Token Health icon" width="128">
+</p>
+
 # Token Health
 
 > **你的 AI 额度，抬眼就懂。**
@@ -28,7 +32,7 @@ Token Health 读取官方用量，压成几张清爽的小卡片。不开代理�
 | Provider | 你能看到 |
 | --- | --- |
 | **Codex** | 短周期、周额度、模型额度桶、重置倒计时 |
-| **Cursor** | 月度 Auto + Composer、API、Grokbot 用量，钉住后有 Grok bot 按模型明细 |
+| **Cursor** | 月度 Auto + Composer、API、Grokbot 用量（Grokbot 被并进 Auto 时会标明）；token 从本地 `state.vscdb` 只读读取，钉住后有按模型明细 |
 | **Kimi Code** | 5 小时、周额度 |
 | **Zhipu Coding** | 5 小时、周额度、MCP 月额度、token/tool 明细 |
 | **DeepSeek** | 余额、今日费用、token 与请求明细 |
@@ -39,6 +43,8 @@ Token Health 读取官方用量，压成几张清爽的小卡片。不开代理�
 | **Demo** | 用来试 UI 的安全假数据 |
 
 凭证留在 macOS Keychain。Provider 会话只读，并且只发往对应服务的官方接口。
+
+加号菜单里还能选 **OpenAI** 和 **Anthropic** —— 这两项没有内置适配器：API 模式要你自己填一个用量接口（行为等同 Generic HTTP），控制台登录尚未接通。
 
 ## 安装
 
@@ -61,6 +67,9 @@ open ".build/app/Token Health.app"
 
 # 构建可分发 DMG
 bash scripts/build-dmg.sh
+
+# 构建 DMG，替换 /Applications 里的 App 并重启（本机自用）
+bash scripts/install-release.sh
 ```
 
 本机构建使用 ad-hoc 签名，未经过 Apple 公证。
@@ -69,17 +78,26 @@ bash scripts/build-dmg.sh
 
 点齿轮添加 Provider，按提示登录，刷新即可。网页型服务从官方控制台导入会话；API 型服务在设置里填 key。
 
-菜单顶部会标出最近一次刷新距今多久（`2/2 updated · 3m ago`）。自动刷新默认 15 分钟一次，打开菜单不会触发刷新；间隔可在设置 → General → Refresh 里自定义，最短 30 秒。
+刷新默认 15 分钟一次，设置 → General → Refresh 可以改（最短 30 秒），打开菜单不会触发刷新。第一次读 Keychain 时 macOS 会弹授权框，被拒或超时后设置里会出现 **Retry Keychain Access**，点一下重新弹框就能当场恢复，不用重启。
 
-### Cursor
+### 钉住账号
 
-Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后请求 Cursor 用量接口。接口提供独立数值时显示 Auto + Composer、API、Grokbot；如果 Cursor 把 Grokbot 合并进 Auto，会明确显示 **Grokbot (included in Auto)**，不会无声消失。
+在设置里打开 **Menu Bar → Pin to menu bar**，或者点下拉面板里每张卡片右上角的图钉。每钉一个账号，菜单栏就多一个图标：Provider logo 加每个额度窗口一根细竖条，条越高用得越多，颜色随用量由绿转橙转红，悬停能看到具体百分比；再点一次即取消。图标按账号列表的顺序排列，数量不限，位置由系统排布，可以 ⌘ 拖拽调整。
 
-钉住后的详情浮层再往下讲一层：本计费周期的 token 汇总与每日趋势、花费拆分（包含 / 赠送 / 合计 / 重置日），以及 **Grok bot 的按模型用量表**。窗口至少 30 天 —— 周期刚滚动、头几天还没满 30 天时按最近 30 天画，不会缩成一根柱子。按天数据取不到时，浮层只少这几段，额度照常。
+那枚葫芦是全局入口（它读的是葫芦里的水位，也就是余量），和钉住的账号互不影响。菜单栏图形只用黑白两色，竖条的绿/橙/红是唯一保留的颜色。
 
-### OpenCode Go
+点钉住的项会弹详情浮层，比卡片再深一层。只有这四个有浮层：
 
-支持 API key 或内置控制台登录，展示 Go 订阅的 5 小时（$12）、周（$30）、月（$60）额度。
+| 钉住的账号 | 浮层里多出什么 |
+| --- | --- |
+| **Codex** | Token 汇总与每日趋势、`Lifetime` / `Peak day` / `Streak` / `Longest turn` |
+| **Cursor** | Token 汇总与每日趋势、花费拆分、Grok bot 按模型用量 |
+| **DeepSeek** | 余额与花费汇总、按天趋势、token 构成、按模型 / 按 key 拆分 |
+| **OpenCode Go** | 请求数 / token / 花费、每日花费趋势、输入输出构成、按模型拆分 |
+
+其余账号点开是一个小菜单（取消钉住 / 设置 / 退出）。浮层只做展示 —— 没有筛选、没有日期范围、不能下钻；数字超过 5 分钟会在打开时自动刷新一次，右上角也能手动刷新，取数失败就保留上一次的数字并标出错误。
+
+DeepSeek 没有额度比例，钉住时直接显示余额数字，设置里可以选原币种 / CNY / USD（汇率每天从 ECB 取一次，取不到就沿用缓存）。浮层里的额度行画一条已用比例进度条，颜色与菜单栏、卡片同一套阈值；只有 DeepSeek 的余额行是纯文字 —— 余额报剩余、额度报已用，两种口径不硬凑成一种画法。
 
 ### Generic HTTP
 
@@ -92,58 +110,36 @@ Token Health 从 Cursor 本地 `state.vscdb` 只读读取 access token，然后�
 }
 ```
 
-### 钉住账号
+### 用量上报
 
-在设置里打开 **Menu Bar → Pin to menu bar**，或者直接点下拉面板里每张卡片右上角的图钉 —— 两个入口等价。
-每钉一个账号，菜单栏就多一个图标：左边是该 Provider 的官方 logo，右边是每个额度窗口一根细竖条，
-条越高用得越多，颜色随用量从绿转橙转红，悬停可以看到各窗口的具体百分比。再点一次即取消钉住。
+设置侧栏的 **Integrations → Usage reporting** 把用量推给你自己的接口。打开 **Enabled**，勾上要上报的账号，填 **Endpoint**（只接受 `https://`）和 **Client ID**；**Bearer token**（存进 Keychain）与 **Pinned certificate SHA-256**（填了就只认这一张证书）可选。**Report now** 立刻推一次，每次整体刷新之后也会自动上报一次。
 
-图标按设置里账号列表的顺序排列，数量不设上限 —— 菜单栏位置由系统排布，可以 ⌘ 拖拽调整。
-那枚葫芦是全局入口（认的是葫芦里的水位，也就是余量），和钉住的账号互不影响。
+```json
+{
+  "client_id": "your-client-id",
+  "accounts": [
+    {
+      "provider": "codex",
+      "account_ref": "sha256:…",
+      "display_name": "Codex · Pro",
+      "plan": "Pro",
+      "status": "ok",
+      "windows": [
+        { "name": "5h", "used_percent": 42, "resets_at": "2026-10-08T12:00:00Z" },
+        { "name": "week", "used_percent": 18, "resets_at": "2026-10-13T00:00:00Z" }
+      ]
+    }
+  ]
+}
+```
 
-菜单栏里的图形只用黑白两色：系统按菜单栏的深浅把葫芦和各家 logo 一起画成黑或白，竖条的绿/橙/红是唯一保留的颜色。
-
-DeepSeek 没有额度比例，钉住时直接显示余额数字（不带单位），并可以在设置里选显示币种（原币种 / CNY / USD）。
-汇率每天从 ECB 数据源取一次，取不到就沿用上一次的缓存。换算只影响菜单栏那个数字，卡片与设置里始终显示原币种原值。
-
-点钉住的 DeepSeek 项会弹出详情浮层：余额、`Today` 与 `This month` 的请求数 / tokens / 花费、本月按天趋势、
-tokens 构成（`Output` / `Cache hit` / `Cache miss`），以及 `By model · this month` 与
-`By API key · this month` 两张拆分表。
-余额、汇总、趋势与按模型拆分来自刷新时已经取回的那次响应；两张表之外多打的两个按 key 请求是可选的 ——
-它们失败时只是少一张 `By API key` 表，其余数字与菜单栏照常。
-
-钉住的 Codex 项也是同一套浮层：5 小时与周额度（与菜单栏同一份口径）、`Today` / `7 days` / `30 days` 的
-token 汇总、最近 30 天的每日 token 趋势，以及 `Lifetime` / `Peak day` / `Streak` / `Longest turn`。
-数据来自本地 Codex 登录的那次 `app-server` 会话 —— 同一次往返里多问一条账号用量，不需要重新登录，
-也不读 `~/.codex/auth.json`。
-
-钉住的 OpenCode Go 项也是同一套浮层：5 小时 / 周 / 月额度（与菜单栏同一份口径）、`Today` /
-`7 days` / `30 days` 的请求数、token 与花费、最近 30 天的每日花费趋势、`Input` / `Output` /
-`Cache read` / `Cache write` 构成，以及 `By model · last 30 days` 的按模型拆分。
-数据在刷新时一并取回：API key 账号直接问控制台接口，控制台登录的账号走已导入的网页会话。
-
-钉住的 Cursor 项也是同一套浮层：Auto + Composer / API / Grokbot 三条额度（与菜单栏同一份口径）、
-`Today` / `7 days` / `Billing cycle` 的 token 汇总、每日 token 趋势（窗口是计费周期，至少 30 天）、
-`Included` / `Bonus` / `Total` / `Resets` 花费行，以及 `Grok bot · this cycle` 的按模型用量表 ——
-Grok bot 自己用了多少就摆在这里（`grok-bot-default` 一类与 Grok 系模型分别列出，接口报得出就展示）。
-数据在刷新时取回：额度与花费来自用量汇总，按天与按模型的那些行来自仪表盘的按天接口；
-按天那份取不到时只少这几段，额度和菜单栏数字照常。
-
-浮层里的额度行下面画着一条已用比例的进度条，颜色与菜单栏、下拉卡片用的是同一套阈值；
-DeepSeek 的余额行保持纯文字 —— 余额报的是剩余、额度报的是已用，两种口径不硬凑成一种画法。
-
-它只做展示 —— 没有筛选、没有日期范围、不能下钻。要看更细的分析请回厂商的控制台。
-详情里的数字超过 5 分钟会在打开时自动刷新一次，右上角也可以手动刷新；取数失败时保留上一次的数字并标出错误。
-
-DeepSeek 账号还可以在同一个分区里选显示币种（原币种 / CNY / USD）。汇率每天自动从 ECB 数据源取一次，
-取不到时沿用上一次的缓存；首次使用又拿不到汇率时会用内置默认值，并在设置里明确标出。
-换算只影响菜单栏那个数字，卡片与设置里始终显示原币种原值。
+`account_ref` 是账号名的 SHA-256，不会把账号名原样发出去。只报 `5h` 与 `week` 两种窗口，百分比按 0–100 截断。
 
 ## 隐私
 
 - 没有 Token Health 服务端，也没有云端同步。
 - 凭证保存在 macOS Keychain。
-- 请求只会发往你选择的 Provider，或你明确配置的 Generic HTTP / 上报接口。
+- 请求只会发往你选择的 Provider，以及你自己填的 Generic HTTP 接口和用量上报 endpoint。
 - 只展示用量，不绕过限制、不伪造付费权限、不代理模型请求。
 
 ## 开发
@@ -169,20 +165,9 @@ swift-testing 进程不是真正的 App bundle，同样的调用在测试里永�
 
 它会把构建产物复制一份、换成 `local.token-health.qa` 再跑，不会动到你自己的 WebKit 数据。
 
-这是一个小而原生的 SwiftUI 项目。入口从 `Sources/TokenHealth/StatusMenuView.swift`、`SettingsView.swift` 和各 Provider 实现开始。
-
-### 图标
-
-品牌图形只有一份底稿：`AppSupport/GourdBrand/gourd-transparent.png`（倾斜的葫芦、口上系着飘带、白色液体停在液面）。
-图标、菜单栏图形都由它生成：
-
-```bash
-python3 scripts/generate-icons.py
-```
-
-出来三样东西：`AppSupport/TokenHealth.icns`（Finder / DMG 用的图标，按 Apple 图标网格摆放）、
-`Sources/TokenHealth/Resources/TokenHealthMark.png`（菜单栏那枚，模板图，系统按菜单栏明暗自动着色）、
-以及 `TokenHealthIconLight/Dark.png`（App 图标的亮暗两版，暗版由亮版反色而来）。
+这是一个小而原生的 SwiftUI 项目。入口是 `Sources/TokenHealth/TokenHealthApp.swift`；菜单栏那两处
+（葫芦的下拉面板、钉住的账号项）由 `MenuBarPanelController.swift` 和 `PinnedStatusItemController.swift` 管理，
+设置界面在 `SettingsView.swift`，取数实现在 `Providers.swift` 与几个 `*UsageProvider.swift` 里。
 
 ## License
 
