@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/token-health-icon.png" alt="Token Health icon" width="128">
+</p>
+
 # Token Health
 
 > **Your AI quota, readable at a glance.**
@@ -27,7 +31,7 @@ Pin the accounts you check most to the menu bar, and you can see what's left wit
 | Provider | What you see |
 | --- | --- |
 | **Codex** | Short window, weekly quota, per-model buckets, reset countdown |
-| **Cursor** | Monthly Auto + Composer, API, and Grokbot usage, plus a per-model Grok bot breakdown once pinned |
+| **Cursor** | Monthly Auto + Composer, API, and Grokbot usage (marked when Grokbot is folded into Auto); the token is read from the local `state.vscdb` read-only, plus a per-model breakdown once pinned |
 | **Kimi Code** | 5-hour and weekly quota |
 | **Zhipu Coding** | 5-hour and weekly quota, monthly MCP quota, token/tool breakdown |
 | **DeepSeek** | Balance, today's cost, token and request breakdown |
@@ -38,6 +42,8 @@ Pin the accounts you check most to the menu bar, and you can see what's left wit
 | **Demo** | Safe fake data for trying out the UI |
 
 Credentials stay in the macOS Keychain. Provider sessions are read-only and are only ever sent to that service's official endpoint.
+
+The add-provider menu also lists **OpenAI** and **Anthropic** — neither has a built-in adapter yet: API mode takes a usage endpoint you supply yourself (it behaves like Generic HTTP), and console login isn't wired up.
 
 ## Install
 
@@ -60,6 +66,9 @@ open ".build/app/Token Health.app"
 
 # Build a distributable DMG
 bash scripts/build-dmg.sh
+
+# Build the DMG, replace the app in /Applications and relaunch (for your own machine)
+bash scripts/install-release.sh
 ```
 
 Local builds are ad-hoc signed and not notarized by Apple.
@@ -68,17 +77,26 @@ Local builds are ad-hoc signed and not notarized by Apple.
 
 Click the gear to add a provider, sign in as prompted, and refresh. Web-based services import a session from the official console; API-based ones take a key in settings.
 
-The top of the menu shows how long ago the last refresh happened (`2/2 updated · 3m ago`). Auto-refresh defaults to every 15 minutes, and opening the menu doesn't trigger a refresh; change the interval under Settings → General → Refresh, down to a minimum of 30 seconds.
+Auto-refresh defaults to every 15 minutes and can be changed under Settings → General → Refresh (30 seconds minimum); opening the menu doesn't trigger a refresh. The first Keychain read makes macOS put up a prompt, and if it gets denied or times out, settings grows a **Retry Keychain Access** button that brings it back — no restart needed.
 
-### Cursor
+### Pinning accounts
 
-Token Health reads the access token from Cursor's local `state.vscdb` (read-only), then calls Cursor's usage endpoint. When the endpoint reports them separately, Auto + Composer, API, and Grokbot each get their own number; if Cursor folds Grokbot into Auto, it says **Grokbot (included in Auto)** outright instead of quietly dropping it.
+Turn on **Menu Bar → Pin to menu bar** in settings, or click the pin in the top-right corner of any card in the dropdown. Each pinned account adds one icon to the menu bar: the provider's logo plus one thin bar per quota window, taller meaning more used, the color shifting from green through orange to red as usage climbs, and hovering shows the exact percentage. Click again to unpin. Icons follow the account order, with no limit on how many, and the system lays out the menu bar — ⌘-drag to rearrange.
 
-The detail popover goes one level deeper: token totals and a by-day trend for the current billing cycle, the spend split (included / bonus / total, plus the reset day), and a **per-model Grok bot table**. The window is never shorter than 30 days — in the first days of a cycle it draws the last 30 days instead of collapsing into a single bar. If the daily read fails, only those sections are missing — the quota still shows.
+The gourd is the global entry point (it reads the level inside the gourd, meaning what's left) and is independent of the pinned accounts. Menu bar artwork is black and white only; the bars' green/orange/red is the one color that stays.
 
-### OpenCode Go
+Clicking a pinned item opens a detail popover, one level deeper than the card. Only these four have one:
 
-Supports an API key or the built-in console login, and shows the Go subscription's 5-hour ($12), weekly ($30), and monthly ($60) quota.
+| Pinned account | What the popover adds |
+| --- | --- |
+| **Codex** | Token totals and a by-day trend, `Lifetime` / `Peak day` / `Streak` / `Longest turn` |
+| **Cursor** | Token totals and a by-day trend, the spend split, per-model Grok bot usage |
+| **DeepSeek** | Balance and spend totals, a by-day trend, the token breakdown, by-model / by-key splits |
+| **OpenCode Go** | Requests / tokens / cost, a by-day cost trend, the input/output breakdown, a by-model split |
+
+Every other account opens a small menu instead (unpin / settings / quit). The popover is display-only: no filtering, no date range, no drill-down. Numbers older than 5 minutes refresh once when you open it, there's a manual refresh in the top-right, and a failed fetch keeps the previous numbers and marks the error.
+
+DeepSeek has no quota ratio, so pinning one shows the balance figure directly, with the display currency (original / CNY / USD) picked in settings — the rate comes from the ECB once a day and falls back to the cache. Quota rows in the popover draw a used-fraction bar tinted with the same thresholds as the menu bar and the cards; DeepSeek's balance rows stay text-only, because balances report what's left and quota windows report what's spent.
 
 ### Generic HTTP
 
@@ -91,43 +109,36 @@ Just have your endpoint return a usage object shaped like this:
 }
 ```
 
-### Pinning accounts
+### Usage reporting
 
-Turn on **Menu Bar → Pin to menu bar** in settings, or click the pin in the top-right corner of any card in the dropdown — the two do the same thing.
-Each pinned account adds one icon to the menu bar: the provider's official logo on the left, one thin vertical bar per quota window on the right, taller meaning more used, with the color shifting from green through orange to red as usage climbs. Hover to see the exact percentage of each window. Click again to unpin.
+**Settings → Integrations → Usage reporting** pushes your usage to an endpoint you host. Turn on **Enabled**, tick the accounts to include, and fill in **Endpoint** (must be `https://`) and **Client ID**; **Bearer token** (stored in the Keychain) and **Pinned certificate SHA-256** (only that certificate is then accepted) are optional. **Report now** sends one immediately, and every full refresh reports once too.
 
-Icons follow the account order in settings, with no limit on how many — the system lays out the menu bar, and you can ⌘-drag to rearrange. The gourd is the global entry point (it reads the level inside the gourd, meaning what's left) and is independent of the pinned accounts.
+```json
+{
+  "client_id": "your-client-id",
+  "accounts": [
+    {
+      "provider": "codex",
+      "account_ref": "sha256:…",
+      "display_name": "Codex · Pro",
+      "plan": "Pro",
+      "status": "ok",
+      "windows": [
+        { "name": "5h", "used_percent": 42, "resets_at": "2026-10-08T12:00:00Z" },
+        { "name": "week", "used_percent": 18, "resets_at": "2026-10-13T00:00:00Z" }
+      ]
+    }
+  ]
+}
+```
 
-Menu bar artwork is black and white only: the system draws the gourd and each provider's logo in black or white to match the menu bar's appearance, and the bars' green/orange/red is the one color that stays.
-
-DeepSeek has no quota ratio, so pinning one shows the balance figure directly (with no unit), and you can pick the display currency in settings (original / CNY / USD).
-The exchange rate is fetched once a day from ECB data, falling back to the last cached value if that fails. Conversion only affects that menu bar number; the card and settings always show the original value in its original currency.
-
-Clicking a pinned DeepSeek item opens a detail popover: balance, request count / tokens / spend for `Today` and `This month`, a by-day trend for the month, the token breakdown (`Output` / `Cache hit` / `Cache miss`), and two splits — `By model · this month` and `By API key · this month`.
-The balance, totals, trend and by-model split come from the response already fetched at refresh time; the two by-key requests are optional — if they fail you lose the `By API key` table and nothing else.
-
-A pinned Codex item opens the same kind of popover: the 5-hour and weekly quota (the same numbers the menu bar draws), token totals for `Today` / `7 days` / `30 days`, a by-day token trend for the last 30 days, and `Lifetime` / `Peak day` / `Streak` / `Longest turn`.
-It all comes from the local Codex login's `app-server` session — one extra question on the same round trip, no re-login and no reading of `~/.codex/auth.json`.
-
-A pinned OpenCode Go item opens the same popover: the 5-hour / weekly / monthly quota (the same numbers the menu bar draws), request / token / cost totals for `Today` / `7 days` / `30 days`, a by-day cost trend for the last 30 days, the `Input` / `Output` / `Cache read` / `Cache write` breakdown, and a `By model · last 30 days` split.
-It all comes back with the refresh: API-key accounts ask the console endpoints directly, console-login accounts use the imported web session.
-
-A pinned Cursor item opens the same popover: the Auto + Composer / API / Grokbot quotas (the same numbers the menu bar draws), token totals for `Today` / `7 days` / `Billing cycle`, a by-day token trend (the window is the billing cycle, at least 30 days), an `Included` / `Bonus` / `Total` / `Resets` spend line, and a `Grok bot · this cycle` per-model table that spells out how much Grok bot itself used (`grok-bot-default` and friends alongside the Grok models, whenever the API reports them).
-It all comes back with the refresh: quota and spend from the usage summary, the per-day and per-model rows from the dashboard's daily read — if that read fails, only those sections are missing and the quota still shows.
-
-Quota rows in the popover draw a used-fraction bar tinted with the same thresholds as the menu bar and the dropdown cards; DeepSeek's balance rows stay text-only — balances report what's left, quota windows report what's spent, and the two are not forced into one drawing.
-
-It is display-only: no filtering, no date range, no drill-down. For deeper analysis, go back to the vendor's console.
-Numbers in the detail view older than 5 minutes refresh once automatically when you open it, and there's a manual refresh in the top-right; if a fetch fails, the previous numbers stay and the error is marked.
-
-DeepSeek accounts can also pick a display currency (original / CNY / USD) in the same section. The rate is fetched from ECB data once a day, falling back to the last cached value; on first use with no rate available it falls back to a built-in default, clearly marked in settings.
-Conversion only affects that menu bar number; the card and settings always show the original value in its original currency.
+`account_ref` is the SHA-256 of the account name, so the name itself never leaves the machine. Only the `5h` and `week` windows are reported, clamped to 0–100.
 
 ## Privacy
 
 - There is no Token Health server and no cloud sync.
 - Credentials are stored in the macOS Keychain.
-- Requests go only to the provider you chose, or to a Generic HTTP / reporting endpoint you configured yourself.
+- Requests go only to the provider you chose, and to the Generic HTTP endpoint and usage-reporting endpoint you filled in yourself.
 - It only displays usage: it doesn't bypass limits, fake paid entitlements, or proxy model requests.
 
 ## Development
@@ -154,20 +165,7 @@ and a crash is a 139.
 
 It copies the built app, swaps in the `local.token-health.qa` bundle id, and runs that, so your own WebKit data stays untouched.
 
-This is a small, native SwiftUI project. Start from `Sources/TokenHealth/StatusMenuView.swift`, `SettingsView.swift`, and the provider implementations.
-
-### Icons
-
-The brand artwork has exactly one master: `AppSupport/GourdBrand/gourd-transparent.png` (a tilted gourd, a ribbon tied at its neck, white liquid resting at the fill line).
-Every icon and menu bar mark is generated from it:
-
-```bash
-python3 scripts/generate-icons.py
-```
-
-That produces three things: `AppSupport/TokenHealth.icns` (the Finder / DMG icon, laid out on Apple's icon grid),
-`Sources/TokenHealth/Resources/TokenHealthMark.png` (the menu bar one, a template image the system tints to match the menu bar),
-and `TokenHealthIconLight/Dark.png` (light and dark versions of the app icon, the dark one inverted from the light one).
+This is a small, native SwiftUI project. The entry point is `Sources/TokenHealth/TokenHealthApp.swift`; the two menu bar surfaces (the gourd's dropdown panel and the pinned account items) are managed by `MenuBarPanelController.swift` and `PinnedStatusItemController.swift`, settings live in `SettingsView.swift`, and the fetching implementations are in `Providers.swift` and the handful of `*UsageProvider.swift` files.
 
 ## License
 
