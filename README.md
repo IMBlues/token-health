@@ -107,8 +107,10 @@ DeepSeek 没有额度比例，钉住时直接显示余额数字（不带单位�
 汇率每天从 ECB 数据源取一次，取不到就沿用上一次的缓存。换算只影响菜单栏那个数字，卡片与设置里始终显示原币种原值。
 
 点钉住的 DeepSeek 项会弹出详情浮层：余额、`Today` 与 `This month` 的请求数 / tokens / 花费、本月按天趋势、
-tokens 构成（`Output` / `Cache hit` / `Cache miss`），以及 `By model · this month` 的按模型拆分。
-数据全部来自刷新时已经取回的那次响应，不额外发请求。
+tokens 构成（`Output` / `Cache hit` / `Cache miss`），以及 `By model · this month` 与
+`By API key · this month` 两张拆分表。
+余额、汇总、趋势与按模型拆分来自刷新时已经取回的那次响应；两张表之外多打的两个按 key 请求是可选的 ——
+它们失败时只是少一张 `By API key` 表，其余数字与菜单栏照常。
 
 钉住的 Codex 项也是同一套浮层：5 小时与周额度（与菜单栏同一份口径）、`Today` / `7 days` / `30 days` 的
 token 汇总、最近 30 天的每日 token 趋势，以及 `Lifetime` / `Peak day` / `Streak` / `Longest turn`。

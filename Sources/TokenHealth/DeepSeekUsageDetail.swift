@@ -54,7 +54,14 @@ enum DeepSeekUsageDetail {
         detail.groups = groups(today: today, daysInRange: daysInRange, byDay: byDay, calendar: calendar)
         detail.series = series(today: today, daysInRange: daysInRange, byDay: byDay, calendar: calendar)
         detail.breakdown = breakdown(byDay)
-        detail.table = table(byModel)
+        // by_api_key 的两份响应挂在 bundle 自己的键上，不是 bundle 顶层 —— 取子对象再走形状走查。
+        let byKey = keyTotals(
+            fromAmount: root["byKeyAmount"] as? [String: Any] ?? [:],
+            fromCost: root["byKeyCost"] as? [String: Any] ?? [:],
+            allowed: Set(daysInRange),
+            calendar: calendar
+        )
+        detail.tables = [table(byModel), keyTable(byKey)].compactMap { $0 }
         return detail
     }
 
@@ -193,6 +200,128 @@ enum DeepSeekUsageDetail {
             },
             footnote: hidden > 0 ? "+\(hidden) more models" : nil
         )
+    }
+
+    // MARK: - key 表
+
+    /// 一把 key 的合计与它的候选展示名。
+    private typealias KeyTotals = (totals: Totals, candidateName: String)
+
+    /// 按 key 聚合。
+    ///
+    /// amount 侧给 `api_key` 对象、cost 侧给裸字符串，两边的 `keyID` 必须一致 ——
+    /// 所以聚合键一律取 `APIKeyIdentity.keyID`，展示名另存一份。
+    private static func keyTotals(
+        fromAmount root: [String: Any],
+        fromCost costRoot: [String: Any],
+        allowed: Set<Date>,
+        calendar: Calendar
+    ) -> [String: KeyTotals] {
+        var byKey: [String: KeyTotals] = [:]
+
+        for series in DeepSeekPayload.apiKeyAmountSeries(fromAmount: root) {
+            let key = identity(series.apiKey)
+            for bucket in series.buckets {
+                guard let time = DeepSeekPayload.time(inBucket: bucket),
+                      allowed.contains(calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(time)))) else {
+                    continue
+                }
+                var model = Totals()
+                let usage = bucket["usage"] as? [String: Any]
+                model.requests = DeepSeekPayload.intAmount(inUsageDict: usage, type: "REQUEST")
+                model.outputTokens = DeepSeekPayload.intAmount(inUsageDict: usage, type: "RESPONSE_TOKEN")
+                model.cacheHitTokens = DeepSeekPayload.intAmount(inUsageDict: usage, type: "PROMPT_CACHE_HIT_TOKEN")
+                model.cacheMissTokens = DeepSeekPayload.intAmount(inUsageDict: usage, type: "PROMPT_CACHE_MISS_TOKEN")
+
+                var entry = byKey[key.id] ?? (Totals(), key.name)
+                entry.totals.add(tokens: model)
+                byKey[key.id] = entry
+            }
+        }
+
+        for currency in DeepSeekPayload.apiKeyCostCurrencies(fromCost: costRoot) {
+            for series in currency.series {
+                let key = identity(series.apiKey)
+                for bucket in series.buckets {
+                    guard let time = DeepSeekPayload.time(inBucket: bucket),
+                          allowed.contains(calendar.startOfDay(for: Date(timeIntervalSince1970: TimeInterval(time)))) else {
+                        continue
+                    }
+                    var entry = byKey[key.id] ?? (Totals(), key.name)
+                    entry.totals.costByCurrency[currency.currency, default: Decimal(0)] += DeepSeekPayload.costAmount(inBucket: bucket)
+                    byKey[key.id] = entry
+                }
+            }
+        }
+
+        return byKey
+    }
+
+    /// 没有身份的行归到同一条 `Unknown key`。
+    private static func identity(_ identity: DeepSeekPayload.APIKeyIdentity?) -> (id: String, name: String) {
+        guard let identity else {
+            return ("unknown", unknownKeyName)
+        }
+        return (identity.keyID, identity.displayName)
+    }
+
+    private static let unknownKeyName = "Unknown key"
+
+    private static func keyTable(_ byKey: [String: KeyTotals]) -> DetailTable? {
+        let rows = byKey
+            .filter { $0.value.totals.hasAnything }
+            .sorted { lhs, rhs in
+                lhs.value.totals.tokens == rhs.value.totals.tokens
+                    ? lhs.value.candidateName < rhs.value.candidateName
+                    : lhs.value.totals.tokens > rhs.value.totals.tokens
+            }
+        guard !rows.isEmpty else {
+            return nil
+        }
+
+        let names = disambiguatedNames(rows)
+        let shown = rows.prefix(tableRowLimit)
+        let hidden = rows.count - shown.count
+        return DetailTable(
+            title: "By API key · this month",
+            columns: ["API key", "Requests", "Tokens", "Cost"],
+            rows: zip(shown, names).map { row, name in
+                DetailTableRow(
+                    name: name,
+                    cells: [
+                        UsageAmountFormatter.compactAmount(row.value.totals.requests),
+                        UsageAmountFormatter.compactAmount(row.value.totals.tokens),
+                        costText(row.value.totals.costByCurrency)
+                    ]
+                )
+            },
+            footnote: hidden > 0 ? "+\(hidden) more API keys" : nil
+        )
+    }
+
+    /// 展示名去重。
+    ///
+    /// `DetailTableRow.id` 取的是 `name`，同表内重名会让浮层的 `ForEach` 出错；而用户完全可能
+    /// 给两把 key 起同一个名字。冲突的行改用「名字 · id 前 8 位」；id 与名字相同（裸字符串形态，
+    /// 两种身份都来自同一个 tracking id）时退化成「名字 #序号」。
+    /// 去重跑在**截断前**的全部行上，否则被截掉的那行一走，剩下的重名反而逃过了改名。
+    private static func disambiguatedNames(_ rows: [(key: String, value: KeyTotals)]) -> [String] {
+        var counts: [String: Int] = [:]
+        for row in rows {
+            counts[row.value.candidateName, default: 0] += 1
+        }
+        var seen: [String: Int] = [:]
+        return rows.map { row in
+            let name = row.value.candidateName
+            guard counts[name, default: 0] > 1 else {
+                return name
+            }
+            seen[name, default: 0] += 1
+            guard row.key != name else {
+                return "\(name) #\(seen[name] ?? 1)"
+            }
+            return "\(name) · \(row.key.prefix(8))"
+        }
     }
 
     // MARK: - 聚合

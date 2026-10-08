@@ -269,7 +269,7 @@ struct CursorUsageProviderTests {
         #expect(snapshot.planName == "Pro")
         #expect(detail.headline.map(\.label) == ["Auto + Composer", "API", "Grokbot (included in Auto)"])
         #expect(detail.groups.last?.values.first?.value == "114.32M")
-        #expect(detail.table?.rows.map(\.name) == ["grok-bot-default"])
+        #expect(detail.tables.first?.rows.map(\.name) == ["grok-bot-default"])
         #expect(detail.breakdown.map(\.value) == ["$20.00", "$430.19", "$450.19", "9/30"])
     }
 
@@ -298,6 +298,6 @@ struct CursorUsageProviderTests {
         #expect(detail.headline.count == 2)
         #expect(detail.groups.isEmpty)
         #expect(detail.series == nil)
-        #expect(detail.table == nil)
+        #expect(detail.tables.isEmpty)
     }
 }

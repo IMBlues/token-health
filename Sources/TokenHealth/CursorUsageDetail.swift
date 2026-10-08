@@ -100,7 +100,7 @@ enum CursorUsageDetail {
         if let dailySpend, let byDay = dayTotals(from: dailySpend, calendar: calendar) {
             detail.groups = groups(window: window, byDay: byDay, today: today, calendar: calendar)
             detail.series = series(window: window, byDay: byDay, calendar: calendar)
-            detail.table = table(window: window, byDay: byDay)
+            detail.tables = [table(window: window, byDay: byDay)].compactMap { $0 }
         }
         detail.breakdown = breakdown(planBreakdown, cycleEnd: cycleEnd, calendar: calendar)
 

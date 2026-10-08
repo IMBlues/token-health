@@ -48,7 +48,7 @@ struct CodexUsageDetailTests {
         #expect(detail.groups.isEmpty)
         #expect(detail.series == nil)
         #expect(detail.breakdown.isEmpty)
-        #expect(detail.table == nil)
+        #expect(detail.tables.isEmpty)
     }
 
     @Test
@@ -375,7 +375,7 @@ struct CodexUsageDetailTests {
             today: today
         ))
 
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
         #expect(table.title == "Reset cards")
         #expect(table.columns == ["Card", "Expires"])
         // 先到期的在前，不过期的最后 —— 期限最紧的最该先被看见。
@@ -396,7 +396,7 @@ struct CodexUsageDetailTests {
             today: today
         ))
 
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
         #expect(table.rows.map(\.name) == ["2 available"])
         #expect(table.rows.map(\.cells) == [["—"]])
     }
@@ -410,7 +410,7 @@ struct CodexUsageDetailTests {
                 usages: quotaUsages(),
                 today: today
             ))
-            #expect(detail.table == nil, "一张都没有就不画这一段：\(json)")
+            #expect(detail.tables.isEmpty, "一张都没有就不画这一段：\(json)")
         }
     }
 
@@ -428,7 +428,7 @@ struct CodexUsageDetailTests {
             today: today
         ))
 
-        let table = try #require(detail.table)
+        let table = try #require(detail.tables.first)
         #expect(table.rows.count == 6)
         #expect(table.rows.first?.name == "Card 1")
         #expect(table.footnote == "+2 more cards")
@@ -451,7 +451,7 @@ struct CodexUsageDetailTests {
         ))
 
         // 标题只有空白 → 用描述；两个都没有 → 兜底文案。三张都没写 expiresAt → 全「Never」。
-        #expect(detail.table?.rows.map(\.name) == ["A mentioned reset", "Description only", "Reset"])
-        #expect(detail.table?.rows.map(\.cells) == [["Never"], ["Never"], ["Never"]])
+        #expect(detail.tables.first?.rows.map(\.name) == ["A mentioned reset", "Description only", "Reset"])
+        #expect(detail.tables.first?.rows.map(\.cells) == [["Never"], ["Never"], ["Never"]])
     }
 }

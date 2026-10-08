@@ -29,7 +29,7 @@ enum CodexUsageDetail {
             }
         }
         detail.breakdown = breakdown(usage?.summary)
-        detail.table = resetCardTable(resetCredits)
+        detail.tables = [resetCardTable(resetCredits)].compactMap { $0 }
 
         return detail.isEmpty ? nil : detail
     }

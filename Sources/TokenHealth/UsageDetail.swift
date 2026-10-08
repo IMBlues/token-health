@@ -9,11 +9,12 @@ struct UsageDetail: Equatable, Sendable {
     var groups: [DetailGroup] = []
     var series: DetailSeries? = nil
     var breakdown: [DetailStat] = []
-    var table: DetailTable? = nil
+    /// 可以有多个表格区块，渲染顺序就是数组顺序（DeepSeek 是 By model 在前、By API key 在后）。
+    var tables: [DetailTable] = []
 
     /// 一个区块都没有时，浮层没必要画数据区。
     var isEmpty: Bool {
-        headline.isEmpty && groups.isEmpty && breakdown.isEmpty && table == nil
+        headline.isEmpty && groups.isEmpty && breakdown.isEmpty && tables.isEmpty
     }
 }
 
@@ -50,11 +51,14 @@ struct DetailSeriesPoint: Equatable, Sendable, Identifiable {
     var id: Date { date }
 }
 
-struct DetailTable: Equatable, Sendable {
+struct DetailTable: Equatable, Sendable, Identifiable {
     var title: String
     var columns: [String]
     var rows: [DetailTableRow]
     var footnote: String?
+
+    /// 一张表在一个浮层里不会重名（`By model` / `By API key`），标题足以当身份。
+    var id: String { title }
 }
 
 struct DetailTableRow: Equatable, Sendable, Identifiable {

@@ -3,7 +3,19 @@ import SwiftUI
 
 struct StatusMenuView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.openSettings) private var openSettings
+
+    /// 打开设置窗口。
+    ///
+    /// 不用 SwiftUI 的 `openSettings` 环境值：它要靠 scene 树里的宿主，而主面板现在挂在
+    /// `NSHostingController` 里（见 `MenuBarPanelController`），不保证拿得到。走 responder
+    /// action 这条与 `PinnedStatusItemController` 打开设置的方式一致，两个入口行为相同。
+    static func openSettingsWindow() {
+        for selector in ["showSettingsWindow:", "showPreferencesWindow:"] {
+            if NSApp.sendAction(Selector(selector), to: nil, from: nil) {
+                break
+            }
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -31,7 +43,7 @@ struct StatusMenuView: View {
                 .help("Refresh")
 
                 Button {
-                    openSettings()
+                    Self.openSettingsWindow()
                     NSApp.activate(ignoringOtherApps: true)
                 } label: {
                     Image(systemName: "gearshape")
@@ -55,7 +67,7 @@ struct StatusMenuView: View {
             HStack {
                 Button("Add Provider") {
                     appState.settingsSelectedID = appState.addConfig()
-                    openSettings()
+                    Self.openSettingsWindow()
                     NSApp.activate(ignoringOtherApps: true)
                 }
 

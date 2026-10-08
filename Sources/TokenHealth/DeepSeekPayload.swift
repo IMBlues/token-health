@@ -38,6 +38,128 @@ enum DeepSeekPayload {
         }
     }
 
+    // MARK: - by_api_key 侧
+
+    /// 一把 API key 的身份。`name` 是用户给 key 起的名字，`trackingID` 是密钥前缀。
+    ///
+    /// 两个 id 的分工是硬约束：**聚合用 `keyID`，展示用 `displayName`**。
+    /// amount 侧给的是对象、cost 侧给的是裸字符串，两边必须推出同一个 `keyID`，
+    /// 否则同一把 key 会在表里裂成两行。
+    struct APIKeyIdentity: Equatable {
+        var name: String?
+        var trackingID: String?
+
+        var keyID: String {
+            if let trackingID, !trackingID.isEmpty {
+                return trackingID
+            }
+            if let name, !name.isEmpty {
+                return name
+            }
+            return "unknown"
+        }
+
+        var displayName: String {
+            if let name, !name.isEmpty {
+                return name
+            }
+            if let trackingID, !trackingID.isEmpty {
+                return trackingID
+            }
+            return "Unknown key"
+        }
+    }
+
+    struct APIKeyAmountSeries {
+        var apiKey: APIKeyIdentity?
+        var model: String?
+        var buckets: [[String: Any]]
+    }
+
+    struct APIKeyCostSeries {
+        var apiKey: APIKeyIdentity?
+        var model: String?
+        var buckets: [[String: Any]]
+    }
+
+    struct APIKeyCostCurrency {
+        var currency: String
+        var series: [APIKeyCostSeries]
+    }
+
+    /// 走到 `data.biz_data.series`。
+    static func apiKeyAmountSeries(fromAmount root: [String: Any]) -> [APIKeyAmountSeries] {
+        guard let bizData = bizData(from: root),
+              let series = bizData["series"] as? [[String: Any]] else {
+            return []
+        }
+        return series.map { item in
+            APIKeyAmountSeries(
+                apiKey: apiKeyIdentity(from: item["api_key"]),
+                model: stringValue(item["model"]),
+                buckets: item["buckets"] as? [[String: Any]] ?? []
+            )
+        }
+    }
+
+    /// 走到 `data.biz_data.data`（币种层，里层才是 `series`）。
+    static func apiKeyCostCurrencies(fromCost root: [String: Any]) -> [APIKeyCostCurrency] {
+        guard let bizData = bizData(from: root),
+              let currencies = bizData["data"] as? [[String: Any]] else {
+            return []
+        }
+        return currencies.map { item in
+            APIKeyCostCurrency(
+                currency: stringValue(item["currency"]) ?? "CNY",
+                series: (item["series"] as? [[String: Any]] ?? []).map { entry in
+                    APIKeyCostSeries(
+                        apiKey: apiKeyIdentity(from: entry["api_key"]),
+                        model: stringValue(entry["model"]),
+                        buckets: entry["buckets"] as? [[String: Any]] ?? []
+                    )
+                }
+            )
+        }
+    }
+
+    /// `api_key` 的两种形态：对象 `{name, tracking_id}`，或裸字符串（cost 侧就是这样）。
+    static func apiKeyIdentity(from value: Any?) -> APIKeyIdentity? {
+        if let text = value as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : APIKeyIdentity(name: nil, trackingID: trimmed)
+        }
+        guard let object = value as? [String: Any] else {
+            return nil
+        }
+        let identity = APIKeyIdentity(
+            name: stringValue(object["name"]),
+            trackingID: stringValue(object["tracking_id"])
+        )
+        return (identity.name == nil && identity.trackingID == nil) ? nil : identity
+    }
+
+    /// bucket 的 `usage` 是**字典**形态 `{TYPE: 值}`，与数组形态的 `intAmount(in:type:)` 各走一条。
+    static func intAmount(inUsageDict usage: [String: Any]?, type: String) -> Int {
+        guard let amount = decimalValue(usage?[type]) else {
+            return 0
+        }
+        return max(0, NSDecimalNumber(decimal: amount).intValue)
+    }
+
+    /// cost bucket 的金额。负数（坏数据）夹到 0。
+    static func costAmount(inBucket bucket: [String: Any]) -> Decimal {
+        max(0, decimalValue(bucket["cost"]) ?? Decimal(0))
+    }
+
+    /// bucket 的时间戳（unix 秒）。缺或解不出返回 nil —— 调用方据此丢弃这个 bucket，
+    /// 而不是当成 0（1970 年那天）收进来。
+    static func time(inBucket bucket: [String: Any]) -> Int? {
+        guard let amount = decimalValue(bucket["time"]) else {
+            return nil
+        }
+        return NSDecimalNumber(decimal: amount).intValue
+    }
+
     // MARK: - 共用
 
     /// 某一天的明细行。

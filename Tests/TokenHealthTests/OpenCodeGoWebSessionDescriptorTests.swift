@@ -68,7 +68,7 @@ struct OpenCodeGoWebSessionDescriptorTests {
 
     @Test
     func usageScriptCoversTheConsoleEndpoints() {
-        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9))
+        let script = descriptor.usageFetchScript(context: WebSessionFetchContext(year: 2026, month: 9, start: 0, end: 0))
 
         for path in ["/api/orgs", "/api/go/status", "/api/usage/summary", "/api/usage/cost-by-day", "/api/usage/models"] {
             #expect(script.contains(path), "脚本少打了 \(path)")

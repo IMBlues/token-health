@@ -34,6 +34,31 @@ struct DetailPopoverRenderTests {
         #expect(image.height > 0, "全零的月份不该崩")
     }
 
+    /// 两张表都要画出来，顺序就是数组顺序；第二张在下面，浮层更高。
+    @Test
+    func rendersBothTablesInOrder() throws {
+        let model = DetailTable(
+            title: "By model · this month",
+            columns: ["Model", "Tokens"],
+            rows: [DetailTableRow(name: "deepseek-chat", cells: ["14.2M"])],
+            footnote: nil
+        )
+        let key = DetailTable(
+            title: "By API key · this month",
+            columns: ["API key", "Tokens"],
+            rows: [
+                DetailTableRow(name: "prod", cells: ["9.0M"]),
+                DetailTableRow(name: "staging", cells: ["5.2M"])
+            ],
+            footnote: "+3 more API keys"
+        )
+
+        let one = try render(UsageDetail(tables: [model]))
+        let both = try render(UsageDetail(tables: [model, key]))
+
+        #expect(both.height > one.height)
+    }
+
     @Test
     func rendersTheLoadingState() throws {
         let image = try render(nil, statusMessage: nil, updatedAt: nil)
@@ -84,15 +109,17 @@ struct DetailPopoverRenderTests {
                 DetailStat(label: "Cache miss", value: "0.7M"),
                 DetailStat(label: "Hit rate", value: "93.1%")
             ],
-            table: DetailTable(
-                title: "By model · this month",
-                columns: ["Model", "Requests", "Tokens", "Cost"],
-                rows: [
-                    DetailTableRow(name: "deepseek-chat", cells: ["980", "14.2M", "31.20 CNY"]),
-                    DetailTableRow(name: "deepseek-reasoner", cells: ["224", "4.0M", "10.60 CNY"])
-                ],
-                footnote: "+2 more models"
-            )
+            tables: [
+                DetailTable(
+                    title: "By model · this month",
+                    columns: ["Model", "Requests", "Tokens", "Cost"],
+                    rows: [
+                        DetailTableRow(name: "deepseek-chat", cells: ["980", "14.2M", "31.20 CNY"]),
+                        DetailTableRow(name: "deepseek-reasoner", cells: ["224", "4.0M", "10.60 CNY"])
+                    ],
+                    footnote: "+2 more models"
+                )
+            ]
         )
     }
 
