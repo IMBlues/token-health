@@ -26,18 +26,20 @@ struct CursorUsageProviderTests {
             """
         )
 
-        let mapped = try CursorUsageMapper.map(response)
+        let mapped = try CursorUsageMapper.map(response, grokBot: nil)
 
         #expect(mapped.planName == "Pro")
-        #expect(mapped.usages.count == 3)
-        #expect(mapped.usages.map(\.window) == [.month, .month, .month])
-        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API", "Grokbot (included in Auto)"])
-        #expect(mapped.usages.map(\.used) == [3, 42, 3])
-        #expect(mapped.usages.map(\.limit) == [100, 100, 100])
-        #expect(mapped.usages.map(\.unit) == ["%", "%", "%"])
-        #expect(mapped.usages.compactMap(\.resetDate).count == 3)
+        #expect(
+            mapped.usages.count == 2,
+            "汇总里没有 grokbot 字段时不能拿 Auto 的数字顶上去：Grok Bot 有自己独立的池"
+        )
+        #expect(mapped.usages.map(\.window) == [.month, .month])
+        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API"])
+        #expect(mapped.usages.map(\.used) == [3, 42])
+        #expect(mapped.usages.map(\.limit) == [100, 100])
+        #expect(mapped.usages.map(\.unit) == ["%", "%"])
+        #expect(mapped.usages.compactMap(\.resetDate).count == 2)
         #expect(mapped.usages[0].resetDate == mapped.usages[1].resetDate)
-        #expect(mapped.usages[0].resetDate == mapped.usages[2].resetDate)
     }
 
     @Test
@@ -57,13 +59,106 @@ struct CursorUsageProviderTests {
             """
         )
 
-        let mapped = try CursorUsageMapper.map(response)
+        let mapped = try CursorUsageMapper.map(response, grokBot: nil)
 
         #expect(mapped.usages.count == 3)
         #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API", "Grokbot"])
         #expect(mapped.usages.map(\.used) == [13, 5, 34])
         #expect(mapped.usages.map(\.window) == [.month, .month, .month])
     }
+
+    // MARK: - Grok Bot（独立的周池）
+
+    @Test
+    func mapsTheGrokBotWeeklyPoolFromItsOwnEndpoint() throws {
+        let response = try CursorTestSupport.decode(
+            """
+            {
+              "billingCycleEnd": "2026-10-30T07:13:20.000Z",
+              "membershipType": "pro",
+              "individualUsage": { "plan": { "autoPercentUsed": 9.94, "apiPercentUsed": 73.69 } }
+            }
+            """
+        )
+        let grokBot = try CursorTestSupport.decodeGrokBot(
+            """
+            {
+              "currentPeriodStart": "2026-10-08T02:49:50.750Z",
+              "nextResetTimestampUtc": "2026-10-15T02:49:50.750Z",
+              "usagePercent": 12.768065,
+              "hasAvailableUsage": true,
+              "hasNonZeroIncludedLimit": true,
+              "grokPlanLabel": "Grok Bot Plan",
+              "cursorPlanName": "Pro"
+            }
+            """
+        )
+
+        let mapped = try CursorUsageMapper.map(response, grokBot: grokBot)
+        let grok = try #require(mapped.usages.last)
+
+        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API", "Grok Bot"])
+        #expect(grok.window == .week, "Grok Bot 是周池，不是月池")
+        #expect(grok.used == 13, "12.768 四舍五入到 13")
+        #expect(grok.limit == 100)
+        #expect(grok.unit == "%")
+        #expect(
+            grok.resetDate == Self.grokBotReset,
+            "重置时间取 nextResetTimestampUtc，不是计费周期末"
+        )
+    }
+
+    @Test
+    func omitsTheGrokBotPoolWhenTheAccountHasNoIncludedLimit() throws {
+        let response = try CursorTestSupport.decode(
+            """
+            { "membershipType": "pro", "individualUsage": { "plan": { "autoPercentUsed": 9.94 } } }
+            """
+        )
+        let grokBot = try CursorTestSupport.decodeGrokBot(
+            """
+            { "usagePercent": 0, "hasAvailableUsage": false, "hasNonZeroIncludedLimit": false }
+            """
+        )
+
+        let mapped = try CursorUsageMapper.map(response, grokBot: grokBot)
+
+        #expect(
+            mapped.usages.map(\.label) == ["Auto + Composer"],
+            "没有 Grok Bot 额度的账号不画那一行，而不是画一根 0% 的空槽"
+        )
+    }
+
+    @Test
+    func theEndpointPoolIsTheOnlyGrokBotRowEvenWhenTheSummaryCarriesOne() throws {
+        let response = try CursorTestSupport.decode(
+            """
+            {
+              "membershipType": "pro",
+              "individualUsage": {
+                "plan": { "autoPercentUsed": 9.94, "grokbotPercentUsed": 33.7 }
+              }
+            }
+            """
+        )
+        let grokBot = try CursorTestSupport.decodeGrokBot(
+            """
+            { "nextResetTimestampUtc": "2026-10-15T02:49:50.750Z", "usagePercent": 12.768065 }
+            """
+        )
+
+        let mapped = try CursorUsageMapper.map(response, grokBot: grokBot)
+
+        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "Grok Bot"])
+        #expect(
+            mapped.usages.last?.resetDate == Self.grokBotReset,
+            "两个来源都在时以独立的周池接口为准，不能画出两行 Grok"
+        )
+    }
+
+    private static let grokBotReset = CursorTestSupport
+        .date(year: 2026, month: 10, day: 15, hour: 2, minute: 49, second: 50)
+        .addingTimeInterval(0.75)
 
     @Test
     func acceptsFlexiblePercentagesAndFormatsPlanName() throws {
@@ -81,11 +176,11 @@ struct CursorUsageProviderTests {
             """
         )
 
-        let mapped = try CursorUsageMapper.map(response)
+        let mapped = try CursorUsageMapper.map(response, grokBot: nil)
 
         #expect(mapped.planName == "Pro Plus")
-        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API", "Grokbot (included in Auto)"])
-        #expect(mapped.usages.map(\.used) == [100, 0, 100])
+        #expect(mapped.usages.map(\.label) == ["Auto + Composer", "API"])
+        #expect(mapped.usages.map(\.used) == [100, 0])
     }
 
     @Test
@@ -103,7 +198,7 @@ struct CursorUsageProviderTests {
             """
         )
 
-        let mapped = try CursorUsageMapper.map(response)
+        let mapped = try CursorUsageMapper.map(response, grokBot: nil)
 
         #expect(mapped.planName == "Enterprise")
         #expect(mapped.usages.map(\.label) == ["Included usage"])
@@ -126,7 +221,7 @@ struct CursorUsageProviderTests {
         )
 
         #expect(throws: CursorUsageError.self) {
-            try CursorUsageMapper.map(response)
+            try CursorUsageMapper.map(response, grokBot: nil)
         }
     }
 
@@ -136,6 +231,15 @@ struct CursorUsageProviderTests {
 
         #expect(mapped.usages.contains { $0.label == "Auto + Composer" })
         #expect(mapped.usages.contains { $0.label == "API" })
+    }
+
+    /// 走的就是 App 的真实请求：`GetSandUsageStatus` 带 bearer token。
+    @Test(.enabled(if: CursorTestSupport.liveCursorCheckEnabled))
+    func readsTheLiveGrokBotWeeklyPool() async throws {
+        let grokBot = try await CursorTestSupport.fetchLiveGrokBot()
+
+        #expect(grokBot.usagePercent != nil, "本机账号有 Grok Bot 池，取不到说明端点或凭据变了")
+        #expect(grokBot.nextResetTimestampUtc != nil)
     }
 
     // MARK: - 周期与花费
@@ -159,7 +263,7 @@ struct CursorUsageProviderTests {
             """
         )
 
-        let mapped = try CursorUsageMapper.map(response)
+        let mapped = try CursorUsageMapper.map(response, grokBot: nil)
 
         #expect(mapped.billingCycleStart == CursorTestSupport.date(year: 2026, month: 8, day: 30, hour: 7, minute: 13, second: 20))
         #expect(mapped.billingCycleEnd == CursorTestSupport.date(year: 2026, month: 9, day: 30, hour: 7, minute: 13, second: 20))
@@ -179,7 +283,7 @@ struct CursorUsageProviderTests {
             """
         )
 
-        let mapped = try CursorUsageMapper.map(response)
+        let mapped = try CursorUsageMapper.map(response, grokBot: nil)
 
         #expect(mapped.billingCycleStart == nil)
         #expect(mapped.billingCycleEnd == nil)
@@ -199,7 +303,7 @@ struct CursorUsageProviderTests {
             """
         )
 
-        let mapped = try CursorUsageMapper.map(response)
+        let mapped = try CursorUsageMapper.map(response, grokBot: nil)
 
         #expect(mapped.billingCycleStart == nil)
         #expect(mapped.billingCycleEnd != nil)
@@ -218,10 +322,10 @@ struct CursorUsageProviderTests {
             """
         )
 
-        let mapped = try CursorUsageMapper.map(response)
+        let mapped = try CursorUsageMapper.map(response, grokBot: nil)
 
         #expect(mapped.breakdown == nil)
-        #expect(mapped.usages.count == 2, "额度照常")
+        #expect(mapped.usages.map(\.label) == ["Auto + Composer"], "额度照常")
     }
 
     // MARK: - 快照
@@ -243,7 +347,7 @@ struct CursorUsageProviderTests {
               }
             }
             """
-        ))
+        ), grokBot: nil)
         let today = CursorTestSupport.date(year: 2026, month: 9, day: 30, hour: 12)
         let dailySpend = try JSONDecoder().decode(
             CursorDailySpendResponse.self,
@@ -267,7 +371,7 @@ struct CursorUsageProviderTests {
 
         #expect(snapshot.state == .ready)
         #expect(snapshot.planName == "Pro")
-        #expect(detail.headline.map(\.label) == ["Auto + Composer", "API", "Grokbot (included in Auto)"])
+        #expect(detail.headline.map(\.label) == ["Auto + Composer", "API"])
         #expect(detail.groups.last?.values.first?.value == "114.32M")
         #expect(detail.tables.first?.rows.map(\.name) == ["grok-bot-default"])
         #expect(detail.breakdown.map(\.value) == ["$20.00", "$430.19", "$450.19", "9/30"])
@@ -282,7 +386,7 @@ struct CursorUsageProviderTests {
               "individualUsage": { "plan": { "autoPercentUsed": 94.87 } }
             }
             """
-        ))
+        ), grokBot: nil)
 
         let snapshot = CursorUsageProvider().snapshot(
             config: ServiceConfig(displayName: "Cursor", providerKind: .cursor, authMode: .api),
@@ -294,8 +398,8 @@ struct CursorUsageProviderTests {
         let detail = try #require(snapshot.detail)
 
         #expect(snapshot.state == .ready)
-        #expect(snapshot.usages.count == 2)
-        #expect(detail.headline.count == 2)
+        #expect(snapshot.usages.map(\.label) == ["Auto + Composer"])
+        #expect(detail.headline.count == 1)
         #expect(detail.groups.isEmpty)
         #expect(detail.series == nil)
         #expect(detail.tables.isEmpty)

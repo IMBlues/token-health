@@ -32,7 +32,7 @@ Token Health 读取官方用量，压成几张清爽的小卡片。不开代理�
 | Provider | 你能看到 |
 | --- | --- |
 | **Codex** | 短周期、周额度、模型额度桶、重置倒计时 |
-| **Cursor** | 月度 Auto + Composer、API、Grokbot 用量（Grokbot 被并进 Auto 时会标明）；token 从本地 `state.vscdb` 只读读取，钉住后有按模型明细 |
+| **Cursor** | 月度 Auto + Composer、API 用量，外加 Grok Bot 自己那条独立的周额度；token 从本地 `state.vscdb` 只读读取，钉住后有 Grok Bot 按模型明细 |
 | **Kimi Code** | 5 小时、周额度 |
 | **Zhipu Coding** | 5 小时、周额度、MCP 月额度、token/tool 明细 |
 | **DeepSeek** | 余额、今日费用、token 与请求明细 |

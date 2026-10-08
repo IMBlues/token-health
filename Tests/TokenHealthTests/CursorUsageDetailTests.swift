@@ -24,12 +24,13 @@ struct CursorUsageDetailTests {
         ))!
     }
 
-    /// 与 `CursorUsageMapper` 产出的形状一致：三条池都是 `.month`、unit 是 `%`、带自己的 label。
+    /// 与 `CursorUsageMapper` 产出的形状一致：Auto / API 是 `.month`，Grok Bot 是它自己的
+    /// `.week` 池，三条都带自己的 label。
     private func poolUsages() -> [TokenUsage] {
         [
             TokenUsage(window: .month, label: "Auto + Composer", used: 95, limit: 100, unit: "%"),
             TokenUsage(window: .month, label: "API", used: 100, limit: 100, unit: "%"),
-            TokenUsage(window: .month, label: "Grokbot", used: 34, limit: 100, unit: "%")
+            TokenUsage(window: .week, label: "Grok Bot", used: 34, limit: 100, unit: "%")
         ]
     }
 
@@ -72,7 +73,7 @@ struct CursorUsageDetailTests {
     func headlineMirrorsThePinnedMenuBarMetrics() {
         let detail = make(planBreakdown: breakdown, cycleEnd: cycleEnd)
 
-        #expect(detail?.headline.map(\.label) == ["Auto + Composer", "API", "Grokbot"])
+        #expect(detail?.headline.map(\.label) == ["Auto + Composer", "API", "Grok Bot"])
         #expect(detail?.headline.map(\.value) == ["95%", "100%", "34%"])
         #expect(detail?.headline.map(\.ratio) == [0.95, 1, 0.34], "额度行要带比例，浮层才画得出条")
         // 没有按天数据时不该凭空造出别的区块。
@@ -251,7 +252,7 @@ struct CursorUsageDetailTests {
         #expect(detail.series?.axisStart == "9/1")
         #expect(detail.series?.axisEnd == "9/30")
         #expect(detail.tables.first?.title == "Grok bot · last 30 days")
-        #expect(detail.tables.first?.rows.map(\.name) == ["cursor-grok-4.6-high", "grok-bot-default"])
+        #expect(detail.tables.first?.rows.map(\.name) == ["grok-bot-default"])
     }
 
     /// 同一个账号、同一天，但周期已经跑了 30 天以上时仍然按周期画（既有行为）。
@@ -346,13 +347,14 @@ struct CursorUsageDetailTests {
     // MARK: - Grok bot table
 
     @Test
-    func theTableListsEveryGrokModelByTokens() throws {
+    func theTableListsOnlyTheGrokBotPoolModels() throws {
         let spend = try dailySpend(
             """
             { "dailySpend": [
               { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 29)))", "category": "cursor-grok-4.6-high", "totalTokens": "49474832" },
               { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-bot-default", "totalTokens": "100000000" },
               { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "GROK-bot-automation", "totalTokens": "3182562" },
+              { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-4.7-high", "totalTokens": "71385370" },
               { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "claude-opus-5-thinking-high", "totalTokens": "6252288" },
               { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "Other", "totalTokens": "1929649" },
               { "day": "\(milliseconds(Self.date(year: 2026, month: 8, day: 29)))", "category": "cursor-grok-4.5-high", "totalTokens": "999999999" }
@@ -365,9 +367,10 @@ struct CursorUsageDetailTests {
 
         #expect(table.title == "Grok bot · this cycle")
         #expect(table.columns == ["Model", "Tokens"])
-        // 名字原样保留（大小写也不改写）；非 grok 的模型与 Other 不进表；周期外的那条不算。
-        #expect(table.rows.map(\.name) == ["grok-bot-default", "cursor-grok-4.6-high", "GROK-bot-automation"])
-        #expect(table.rows.map(\.cells) == [["100M"], ["49.47M"], ["3.18M"]])
+        // 表与菜单栏那条周额度同一个口径，只算 `grok-bot-*`：`grok-4.7-high` / `cursor-grok-*`
+        // 是 Cursor 月池的模型，不属于 Grok Bot。名字原样保留（大小写也不改写）。
+        #expect(table.rows.map(\.name) == ["grok-bot-default", "GROK-bot-automation"])
+        #expect(table.rows.map(\.cells) == [["100M"], ["3.18M"]])
         #expect(table.footnote == nil)
     }
 
@@ -375,7 +378,7 @@ struct CursorUsageDetailTests {
     func theTableKeepsSixRowsAndCountsTheRest() throws {
         let rows = (1...9).map { index in
             """
-            { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-\(index)", "totalTokens": "\(index * 1000)" }
+            { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-bot-\(index)", "totalTokens": "\(index * 1000)" }
             """
         }.joined(separator: ",")
         let detail = try #require(make(
@@ -386,7 +389,7 @@ struct CursorUsageDetailTests {
 
         let table = try #require(detail.tables.first)
         #expect(table.rows.count == 6)
-        #expect(table.rows.first?.name == "grok-9")
+        #expect(table.rows.first?.name == "grok-bot-9")
         #expect(table.footnote == "+3 more models")
     }
 
@@ -433,8 +436,8 @@ struct CursorUsageDetailTests {
         let spend = try dailySpend(
             """
             { "dailySpend": [
-              { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-a", "totalTokens": "\(Int64.max)" },
-              { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-b", "totalTokens": "\(Int64.max)" }
+              { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-bot-a", "totalTokens": "\(Int64.max)" },
+              { "day": "\(milliseconds(Self.date(year: 2026, month: 9, day: 30)))", "category": "grok-bot-b", "totalTokens": "\(Int64.max)" }
             ] }
             """
         )

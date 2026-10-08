@@ -7,11 +7,11 @@ import Foundation
 /// detail with nothing to draw is nil so the popover falls back to its error line.
 enum CursorUsageDetail {
     static let tableRowLimit = 6
-    /// The one substring that decides what counts as Grok bot usage. Cursor reports the pool as
-    /// `grok-bot-default` / `grok-bot-automation` and the Grok models inside the Auto bucket as
-    /// `cursor-grok-4.6-high` / `grok-4.7-high`; the card is about the pool, so both spellings
-    /// count and the row names stay exactly as Cursor wrote them.
-    static let grokModelNeedle = "grok"
+    /// The one substring that decides what counts as Grok bot usage. Grok Bot is its own pool —
+    /// Cursor reports it as `grok-bot-default` / `grok-bot-automation` — and the menu bar's Grok
+    /// Bot row comes from that same pool's weekly endpoint. The Grok models billed to the Cursor
+    /// monthly plan (`grok-4.7-high`, `cursor-grok-4.6-high`) are a different thing and stay out.
+    static let grokModelNeedle = "grok-bot"
     /// How many days the rolling window covers, and the shortest window the dated sections are
     /// ever cut with. A billing cycle younger than this falls back to the rolling window:
     /// cutting to a day-old cycle draws a single full-width bar under a `9/30 … 9/30` axis,
@@ -174,7 +174,7 @@ enum CursorUsageDetail {
         )
     }
 
-    /// The Grok bot rows: every model the window used whose category mentions Grok, summed over
+    /// The Grok bot rows: every Grok Bot pool model (`grok-bot-*`) the window used, summed over
     /// the window's days. Nothing is drawn when the account used none of them.
     private static func table(window: Window, byDay: [Date: DayTotals]) -> DetailTable? {
         var byModel: [String: Int] = [:]

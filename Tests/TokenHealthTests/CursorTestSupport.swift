@@ -10,10 +10,20 @@ enum CursorTestSupport {
         try JSONDecoder().decode(CursorUsageSummary.self, from: Data(json.utf8))
     }
 
+    static func decodeGrokBot(_ json: String) throws -> CursorGrokBotUsage {
+        try JSONDecoder().decode(CursorGrokBotUsage.self, from: Data(json.utf8))
+    }
+
     static func fetchLiveUsage() async throws -> CursorMappedUsage {
         let token = try CursorLocalSessionReader().readAccessToken()
         let response = try await CursorUsageClient().fetchUsage(accessToken: token)
-        return try CursorUsageMapper.map(response)
+        let grokBot = try? await CursorUsageClient().fetchGrokBotUsage(accessToken: token)
+        return try CursorUsageMapper.map(response, grokBot: grokBot)
+    }
+
+    static func fetchLiveGrokBot() async throws -> CursorGrokBotUsage {
+        let token = try CursorLocalSessionReader().readAccessToken()
+        return try await CursorUsageClient().fetchGrokBotUsage(accessToken: token)
     }
 
     /// One live refresh's worth of data: the summary mapping plus the daily read the detail needs.
@@ -23,7 +33,8 @@ enum CursorTestSupport {
     ) {
         let token = try CursorLocalSessionReader().readAccessToken()
         let response = try await CursorUsageClient().fetchUsage(accessToken: token)
-        let mapped = try CursorUsageMapper.map(response)
+        let grokBot = try? await CursorUsageClient().fetchGrokBotUsage(accessToken: token)
+        let mapped = try CursorUsageMapper.map(response, grokBot: grokBot)
         let range = CursorUsageProvider.dailySpendRange(mapped: mapped, today: today)
         let dailySpend = try? await CursorUsageClient().fetchDailySpend(
             accessToken: token,

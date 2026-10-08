@@ -31,7 +31,7 @@ Pin the accounts you check most to the menu bar, and you can see what's left wit
 | Provider | What you see |
 | --- | --- |
 | **Codex** | Short window, weekly quota, per-model buckets, reset countdown |
-| **Cursor** | Monthly Auto + Composer, API, and Grokbot usage (marked when Grokbot is folded into Auto); the token is read from the local `state.vscdb` read-only, plus a per-model breakdown once pinned |
+| **Cursor** | Monthly Auto + Composer and API usage, plus Grok Bot's own weekly pool; the token is read from the local `state.vscdb` read-only, with a per-model Grok bot breakdown once pinned |
 | **Kimi Code** | 5-hour and weekly quota |
 | **Zhipu Coding** | 5-hour and weekly quota, monthly MCP quota, token/tool breakdown |
 | **DeepSeek** | Balance, today's cost, token and request breakdown |

@@ -63,17 +63,19 @@ enum UsageMetricSelection {
 
     static func sorted(_ usages: [TokenUsage], kind: ProviderKind) -> [TokenUsage] {
         usages.sorted { lhs, rhs in
-            let leftRank = rank(lhs)
-            let rightRank = rank(rhs)
-            if leftRank != rightRank {
-                return leftRank < rightRank
-            }
-            if kind == .cursor, lhs.window == .month, rhs.window == .month {
+            // Cursor 的三条池按业务上的主次排（Auto → API → Grok Bot），**压过** window 的
+            // 通用次序：Grok Bot 是周池、另外两条是月池，光按 window 排会把周池顶到最前面。
+            if kind == .cursor {
                 let leftLabelRank = cursorLabelRank(lhs.label)
                 let rightLabelRank = cursorLabelRank(rhs.label)
                 if leftLabelRank != rightLabelRank {
                     return leftLabelRank < rightLabelRank
                 }
+            }
+            let leftRank = rank(lhs)
+            let rightRank = rank(rhs)
+            if leftRank != rightRank {
+                return leftRank < rightRank
             }
             return (lhs.label ?? lhs.window.title) < (rhs.label ?? rhs.window.title)
         }
@@ -85,7 +87,7 @@ enum UsageMetricSelection {
             0
         case "API":
             1
-        case "Grokbot", "Grokbot (included in Auto)":
+        case "Grok Bot", "Grokbot":
             2
         default:
             3

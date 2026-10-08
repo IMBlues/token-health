@@ -16,7 +16,10 @@ struct CursorUsageProvider: UsageProvider {
         do {
             let accessToken = try credentialReader.readAccessToken()
             let response = try await client.fetchUsage(accessToken: accessToken)
-            let mapped = try CursorUsageMapper.map(response)
+            // 和有按天数据一样是「锦上添花」的一次请求：取不到只是少一行 Grok Bot，
+            // 不能把整次刷新判成失败。
+            let grokBot = try? await client.fetchGrokBotUsage(accessToken: accessToken)
+            let mapped = try CursorUsageMapper.map(response, grokBot: grokBot)
             let now = Date()
             let dailySpend = await fetchDailySpend(accessToken: accessToken, mapped: mapped, today: now)
             return snapshot(config: config, mapped: mapped, dailySpend: dailySpend, fetchedAt: now, today: now)
@@ -174,6 +177,9 @@ struct CursorUsageClient: Sendable {
     private static let dailySpendEndpoint = URL(
         string: "https://api2.cursor.sh/aiserver.v1.DashboardService/GetDailySpendByCategory"
     )!
+    private static let grokBotUsageEndpoint = URL(
+        string: "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus"
+    )!
     private static let maxResponseBytes = 1_048_576
     private let session: URLSession
 
@@ -191,6 +197,27 @@ struct CursorUsageClient: Sendable {
         let data = try await responseData(for: request)
         do {
             return try JSONDecoder().decode(CursorUsageSummary.self, from: data)
+        } catch {
+            throw CursorUsageError.invalidResponse
+        }
+    }
+
+    /// Grok Bot 的周池。它是**独立于 Cursor 月池**的一条额度（Cursor 员工在论坛里确认过，
+    /// 重置周期也是周），`usage-summary` 里根本不带它 —— 只有这个端点有。
+    func fetchGrokBotUsage(accessToken: String) async throws -> CursorGrokBotUsage {
+        var request = URLRequest(url: Self.grokBotUsageEndpoint)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("1", forHTTPHeaderField: "Connect-Protocol-Version")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        // 方法不吃参数；空 body 也必须是合法 JSON，所以给一个空对象而不是零字节。
+        request.httpBody = try JSONSerialization.data(withJSONObject: [String: Any]())
+
+        let data = try await responseData(for: request)
+        do {
+            return try JSONDecoder().decode(CursorGrokBotUsage.self, from: data)
         } catch {
             throw CursorUsageError.invalidResponse
         }
@@ -323,6 +350,30 @@ struct CursorPlanBreakdown: Decodable, Equatable, Sendable {
     }
 }
 
+/// One response from `GetSandUsageStatus`: Grok Bot's own weekly pool. Every field is optional
+/// because the endpoint is undocumented — a shape change must degrade to "no row", not to a
+/// failed refresh.
+struct CursorGrokBotUsage: Decodable, Sendable {
+    let nextResetTimestampUtc: String?
+    let usagePercent: Double?
+    /// False on accounts that have no Grok Bot allowance at all; absent on responses that
+    /// predate the field, which is why the mapper only treats an explicit false as "no pool".
+    let hasNonZeroIncludedLimit: Bool?
+
+    private enum CodingKeys: String, CodingKey {
+        case nextResetTimestampUtc
+        case usagePercent
+        case hasNonZeroIncludedLimit
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        nextResetTimestampUtc = try? container.decodeIfPresent(String.self, forKey: .nextResetTimestampUtc)
+        usagePercent = container.decodeCursorDoubleIfPresent(forKey: .usagePercent)
+        hasNonZeroIncludedLimit = try? container.decodeIfPresent(Bool.self, forKey: .hasNonZeroIncludedLimit)
+    }
+}
+
 /// One response from the dashboard's daily-token read. Every field is lenient: a missing piece
 /// drops that row, never the whole response.
 struct CursorDailySpendResponse: Decodable, Sendable {
@@ -367,7 +418,7 @@ struct CursorMappedUsage: Equatable, Sendable {
 }
 
 enum CursorUsageMapper {
-    static func map(_ response: CursorUsageSummary) throws -> CursorMappedUsage {
+    static func map(_ response: CursorUsageSummary, grokBot: CursorGrokBotUsage?) throws -> CursorMappedUsage {
         guard let plan = response.individualUsage?.plan else {
             throw CursorUsageError.invalidResponse
         }
@@ -392,22 +443,15 @@ enum CursorUsageMapper {
                 )
             )
         }
-        if let grokbotPercentUsed = plan.grokbotPercentUsed ?? plan.grokPercentUsed ?? plan.grokBotPercentUsed ?? response.individualUsage?.grokbotPercentUsed ?? response.individualUsage?.grokBotPercentUsed {
+        if let grokBotUsage = grokBotUsage(from: grokBot) {
+            usages.append(grokBotUsage)
+        } else if let grokbotPercentUsed = plan.grokbotPercentUsed ?? plan.grokPercentUsed ?? plan.grokBotPercentUsed ?? response.individualUsage?.grokbotPercentUsed ?? response.individualUsage?.grokBotPercentUsed {
+            // 老的月池字段。2026-10-08 起 Grok Bot 是独立的周池（`GetSandUsageStatus`），
+            // 本机账号的汇总里已经没有这个键；留着只为汇总仍带它的账号，别再加回「拿 Auto 顶上」的兜底。
             usages.append(
                 monthlyUsage(
                     label: "Grokbot",
                     percentage: grokbotPercentUsed,
-                    resetDate: resetDate
-                )
-            )
-        } else if let autoPercentUsed = plan.autoPercentUsed {
-            // Cursor currently reports Grokbot models inside the Auto bucket rather
-            // than exposing a separate percentage. Keep the pool visible until the
-            // API provides a dedicated Grokbot value.
-            usages.append(
-                monthlyUsage(
-                    label: "Grokbot (included in Auto)",
-                    percentage: autoPercentUsed,
                     resetDate: resetDate
                 )
             )
@@ -435,21 +479,48 @@ enum CursorUsageMapper {
         )
     }
 
+    /// Grok Bot 自己的周池，来自 `GetSandUsageStatus`。它和 Cursor 的月池是两套额度，
+    /// 重置周期也是周，所以窗口给 `.week`、重置时间取接口的 `nextResetTimestampUtc`。
+    ///
+    /// 只在接口给了百分比、并且账号确实有这项额度时才有这一行。`hasNonZeroIncludedLimit`
+    /// 明确为 false 的账号不画 —— 一条恒 0% 的空槽会被读成「用了 0%」。字段整个缺席按
+    /// 「有」处理：这个端点没有对外承诺过字段名，缺席不等于没额度。
+    private static func grokBotUsage(from grokBot: CursorGrokBotUsage?) -> TokenUsage? {
+        guard let grokBot,
+              grokBot.hasNonZeroIncludedLimit != false,
+              let percentage = grokBot.usagePercent else {
+            return nil
+        }
+        return TokenUsage(
+            window: .week,
+            label: "Grok Bot",
+            used: clampedPercent(percentage),
+            limit: 100,
+            resetDate: grokBot.nextResetTimestampUtc.flatMap(parseDate),
+            unit: "%"
+        )
+    }
+
     private static func monthlyUsage(
         label: String,
         percentage: Double,
         resetDate: Date?
     ) -> TokenUsage {
-        let rounded = percentage.isFinite ? percentage.rounded() : 0
-        let clamped = min(max(rounded, 0), 100)
-        return TokenUsage(
+        TokenUsage(
             window: .month,
             label: label,
-            used: Int(clamped),
+            used: clampedPercent(percentage),
             limit: 100,
             resetDate: resetDate,
             unit: "%"
         )
+    }
+
+    /// 百分比一律按「四舍五入到整数、夹在 0...100」处理：上游给过 130.2 和负数，
+    /// 直接进 `Int` 会画出超过满格的条或反向的条。
+    private static func clampedPercent(_ percentage: Double) -> Int {
+        let rounded = percentage.isFinite ? percentage.rounded() : 0
+        return Int(min(max(rounded, 0), 100))
     }
 
     private static func parseDate(_ value: String) -> Date? {

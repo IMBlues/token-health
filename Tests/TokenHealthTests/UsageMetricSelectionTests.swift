@@ -97,6 +97,20 @@ struct UsageMetricSelectionTests {
         #expect(pinned.map(\.label) == ["Auto + Composer", "API", "Grokbot"])
     }
 
+    /// Grok Bot 是 `.week` 池，另外两条是 `.month`。按 window 排序会把它顶到最前面，
+    /// 菜单栏上第一根条会莫名其妙换人 —— 所以 Cursor 的池顺序按 label 定，压过 window。
+    @Test
+    func pinnedMetricsKeepCursorPoolOrderAcrossWindowKinds() {
+        let usages = [
+            TokenUsage(window: .week, label: "Grok Bot", used: 13, limit: 100, unit: "%"),
+            TokenUsage(window: .month, label: "API", used: 74, limit: 100, unit: "%"),
+            TokenUsage(window: .month, label: "Auto + Composer", used: 10, limit: 100, unit: "%")
+        ]
+        let pinned = UsageMetricSelection.pinnedMetrics(from: usages, kind: .cursor)
+
+        #expect(pinned.map(\.label) == ["Auto + Composer", "API", "Grok Bot"])
+    }
+
     @Test
     func pinnedMetricsAreEmptyWhenNothingHasAQuota() {
         let usages = [
