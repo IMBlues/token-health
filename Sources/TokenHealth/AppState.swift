@@ -29,17 +29,21 @@ final class AppState: ObservableObject {
     private let providerFactory = ProviderFactory()
     private let usageReporter: UsageReporter
     private let rateStore: ExchangeRateStore
+    /// 「检查更新」。设置页直接观察它 —— 检查/下载是个多步状态机，摊成一个值再转发反而绕。
+    let updateStore: UpdateStore
     private var refreshTimer: Timer?
 
     init(
         configStore: ConfigStore = ConfigStore(),
         usageReporter: UsageReporter = UsageReporter(),
-        rateStore: ExchangeRateStore? = nil
+        rateStore: ExchangeRateStore? = nil,
+        updateStore: UpdateStore? = nil
     ) {
         self.configStore = configStore
         self.usageReporter = usageReporter
         let resolvedRateStore = rateStore ?? ExchangeRateStore(configStore: configStore)
         self.rateStore = resolvedRateStore
+        self.updateStore = updateStore ?? UpdateStore()
         configs = configStore.loadConfigs()
         reportHookConfig = configStore.loadReportHookConfig()
         let interval = Self.normalizedRefreshInterval(configStore.loadRefreshInterval())

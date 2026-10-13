@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct TokenHealthApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var appState: AppState
+    private let settingsController: SettingsWindowController
     private let pinnedItemController: PinnedStatusItemController
     private let panelController: MenuBarPanelController
 
@@ -31,9 +32,11 @@ struct TokenHealthApp: App {
         // 不挂在任何 SwiftUI 视图上 —— 挂在视图的 onAppear 上会让状态项直到面板被打开过才出现。
         let state = AppState()
         _appState = StateObject(wrappedValue: state)
-        let pinned = PinnedStatusItemController(appState: state)
+        let settings = SettingsWindowController(appState: state)
+        settingsController = settings
+        let pinned = PinnedStatusItemController(appState: state, settings: settings)
         pinnedItemController = pinned
-        let panel = MenuBarPanelController(appState: state)
+        let panel = MenuBarPanelController(appState: state, settings: settings)
         panelController = panel
 
         // App.init 在 NSApplicationMain 完成之前就跑；控制器自己会等 didFinishLaunching，
@@ -45,13 +48,22 @@ struct TokenHealthApp: App {
     }
 
     var body: some Scene {
-        // 主面板是 AppKit 的 NSStatusItem + NSPopover（见 MenuBarPanelController），不是
-        // MenuBarExtra：后者在 .accessory 的 app 里收不到外部点击，面板点别处不会关。
-        // 这里就只剩设置窗口一个 scene。
+        // 设置窗口由 `SettingsWindowController` 自己拿 `NSWindow` 托管（见那个类的注释：
+        // SwiftUI 的 `showSettingsWindow:` 在 macOS 26 上已经不响了）。这里的 `Settings`
+        // scene 只有两个用处：满足 App 必须有 scene 的要求，以及万一有哪条系统路径还能
+        // 开它时内容与自管窗口一致。⌘, 由下面的命令组接管，走的是同一个控制器。
         Settings {
             SettingsView()
                 .environmentObject(appState)
                 .frame(minWidth: 720, minHeight: 460)
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    settingsController.show()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }

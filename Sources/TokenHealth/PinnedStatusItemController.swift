@@ -13,6 +13,7 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
     static let detailStaleness: TimeInterval = 5 * 60
 
     private let appState: AppState
+    private let settings: SettingsWindowController
     private var statusItems: [UUID: NSStatusItem] = [:]
     private var popovers: [UUID: NSPopover] = [:]
     private var detailHosts: [UUID: NSHostingController<DetailPopoverView>] = [:]
@@ -34,8 +35,9 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
     /// 状态项在 NSApplication 启动完成前创建会被系统丢掉，所以首次重绘挂在启动通知上。
     private var hasLaunched = false
 
-    init(appState: AppState) {
+    init(appState: AppState, settings: SettingsWindowController) {
         self.appState = appState
+        self.settings = settings
     }
 
     func start() {
@@ -292,7 +294,7 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
             },
             onOpenSettings: { [weak self] in
                 self?.closePopover(for: config.id)
-                self?.openSettings()
+                self?.settings.show()
             },
             onQuit: {
                 NSApp.terminate(nil)
@@ -355,9 +357,9 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
 
         menu.addItem(.separator())
 
-        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings), keyEquivalent: "")
-        settings.target = self
-        menu.addItem(settings)
+        let settingsItem = NSMenuItem(title: "Settings…", action: #selector(openSettingsFromMenu), keyEquivalent: "")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
         let quit = NSMenuItem(title: "Quit Token Health", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
@@ -374,15 +376,8 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
         appState.setPinned(id, false)
     }
 
-    @objc private func openSettings() {
-        // SwiftUI 的 openSettings 环境值只在 View 里可用，这里走同一套 responder action。
-        // 两个选择器按系统版本依次尝试，都不认就只是没反应，不影响其余菜单项。
-        for selector in ["showSettingsWindow:", "showPreferencesWindow:"] {
-            if NSApp.sendAction(Selector(selector), to: nil, from: nil) {
-                break
-            }
-        }
-        NSApp.activate(ignoringOtherApps: true)
+    @objc private func openSettingsFromMenu() {
+        settings.show()
     }
 
     @objc private func quit() {

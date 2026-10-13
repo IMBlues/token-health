@@ -53,14 +53,16 @@ final class MenuBarPanelController: NSObject, NSPopoverDelegate {
     }
 
     private let appState: AppState
+    private let settings: SettingsWindowController
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
     /// 上一次浮层关闭的时刻，用来识别「这次点击其实是刚才那一下的关闭」。
     private var lastCloseAt: Date?
     private var cancellables = Set<AnyCancellable>()
 
-    init(appState: AppState) {
+    init(appState: AppState, settings: SettingsWindowController) {
         self.appState = appState
+        self.settings = settings
     }
 
     func start() {
@@ -118,7 +120,7 @@ final class MenuBarPanelController: NSObject, NSPopoverDelegate {
 
     private func showPanel(anchor: NSStatusBarButton) {
         let content = NSHostingController(
-            rootView: StatusMenuView()
+            rootView: StatusMenuView(openSettings: { [settings] in settings.show() })
                 .environmentObject(appState)
                 .frame(width: Self.panelWidth)
         )

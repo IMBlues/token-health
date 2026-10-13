@@ -334,6 +334,8 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            UpdateSettingsSection(store: appState.updateStore)
         }
         .formStyle(.grouped)
         .padding()
@@ -761,5 +763,86 @@ struct SettingsView: View {
 
     private func localLoginAccess(for provider: ProviderKind) -> String {
         provider == .cursor ? "Monthly quota" : "Quota only"
+    }
+}
+
+/// General 页里的「检查更新」。
+///
+/// 只在用户按按钮时去 GitHub 问一次，不做启动自动检查 —— 这是个人工具，没必要为了一个
+/// 版本号让每台机器每次开机都发一次请求。
+///
+/// 拿到新版本后走的是「下载 dmg 并打开它」，App 不碰 `/Applications` 里的自己：自己替换
+/// 自己的安装目录，出错时后果是「应用没了」，而拖一下最多是多花三秒。
+private struct UpdateSettingsSection: View {
+    @ObservedObject var store: UpdateStore
+
+    var body: some View {
+        Section("Updates") {
+            LabeledContent("Current version") {
+                Text(store.currentVersion.raw)
+                    .monospacedDigit()
+            }
+
+            HStack(spacing: 12) {
+                Button(isBusy ? "Checking…" : "Check for Updates") {
+                    Task { await store.check() }
+                }
+                .disabled(isBusy)
+
+                if case let .updateAvailable(release) = store.state {
+                    Button("Download \(release.dmg.name)") {
+                        Task { await store.downloadAndOpen() }
+                    }
+                    Link("Release notes", destination: release.pageURL)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            statusLine
+        }
+    }
+
+    private var isBusy: Bool {
+        switch store.state {
+        case .checking, .downloading:
+            true
+        case .idle, .upToDate, .updateAvailable, .downloaded, .failed:
+            false
+        }
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        switch store.state {
+        case .idle:
+            Text("Checks GitHub for the newest release.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .checking:
+            Text("Asking GitHub…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case let .upToDate(latest):
+            Text("Up to date · \(latest)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case let .updateAvailable(release):
+            Text("Version \(release.tagName) is available.")
+                .font(.caption)
+        case .downloading:
+            Text("Downloading…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case let .downloaded(url):
+            // 拖拽这一步是刻意的：dmg 里的 App 换了之后，用户自己决定什么时候替换。
+            Text("Saved to \(url.path). Open the disk image and drag Token Health into Applications.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case let .failed(message):
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.red)
+        }
     }
 }

@@ -78,7 +78,7 @@ bash scripts/install-release.sh
 
 点齿轮添加 Provider，按提示登录，刷新即可。网页型服务从官方控制台导入会话；API 型服务在设置里填 key。
 
-刷新默认 15 分钟一次，设置 → General → Refresh 可以改（最短 30 秒），打开菜单不会触发刷新。第一次读 Keychain 时 macOS 会弹授权框，被拒或超时后设置里会出现 **Retry Keychain Access**，点一下重新弹框就能当场恢复，不用重启。
+刷新默认 15 分钟一次，设置 → General → Refresh 可以改（最短 30 秒），打开菜单不会触发刷新。第一次读 Keychain 时 macOS 会弹授权框，被拒或超时后设置里会出现 **Retry Keychain Access**，点一下重新弹框就能当场恢复，不用重启。同一个 General 页上的 **Check for Updates** 会去 GitHub 看有没有新版本，有的话把 dmg 下到 Downloads 并打开，拖进 Applications 覆盖即可；它只在你点的时候才发请求。
 
 ### 钉住账号
 
