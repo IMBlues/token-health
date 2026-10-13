@@ -115,8 +115,8 @@ struct UpdateStoreTests {
     ) -> UpdateStore {
         UpdateStore(
             currentVersion: currentVersion,
-            checker: StubChecker(release: latest, error: error),
-            downloader: StubDownloader(result: downloaded ?? downloadsDirectory.appendingPathComponent("TokenHealth-1.0.9.dmg")),
+            checker: StubUpdateChecker(release: latest, error: error),
+            downloader: StubUpdateDownloader(result: downloaded ?? downloadsDirectory.appendingPathComponent("TokenHealth-1.0.9.dmg")),
             downloadsDirectory: downloadsDirectory,
             openFile: opened
         )
@@ -191,8 +191,8 @@ struct UpdateStoreTests {
     func aFailedDownloadIsReported() async {
         let store = UpdateStore(
             currentVersion: "1.0.8",
-            checker: StubChecker(release: Self.release("1.0.9"), error: nil),
-            downloader: StubDownloader(result: nil, error: URLError(.networkConnectionLost)),
+            checker: StubUpdateChecker(release: Self.release("1.0.9"), error: nil),
+            downloader: StubUpdateDownloader(result: nil, error: URLError(.networkConnectionLost)),
             downloadsDirectory: URL(fileURLWithPath: "/tmp/token-health-tests"),
             openFile: { _ in Issue.record("下载失败时不该打开任何东西") }
         )
@@ -220,38 +220,6 @@ struct UpdateStoreTests {
     }
 
     static func release(_ tag: String) -> AppRelease {
-        AppRelease(
-            tagName: tag,
-            version: AppVersion(tag),
-            dmg: DMGAsset(
-                name: "TokenHealth-\(tag).dmg",
-                url: URL(string: "https://example.com/download/TokenHealth-\(tag).dmg")!
-            ),
-            pageURL: URL(string: "https://example.com/release")!
-        )
-    }
-}
-
-// MARK: - 测试替身
-
-private struct StubChecker: UpdateChecking {
-    let release: AppRelease?
-    let error: (any Error & Sendable)?
-
-    func latestRelease() async throws -> AppRelease {
-        if let error { throw error }
-        guard let release else { throw UpdateError.malformedRelease("no stub release") }
-        return release
-    }
-}
-
-private struct StubDownloader: UpdateDownloading {
-    let result: URL?
-    var error: (any Error & Sendable)?
-
-    func download(_ release: AppRelease, into directory: URL) async throws -> URL {
-        if let error { throw error }
-        guard let result else { throw UpdateError.malformedRelease("no stub download") }
-        return result
+        UpdateTestData.release(tag)
     }
 }

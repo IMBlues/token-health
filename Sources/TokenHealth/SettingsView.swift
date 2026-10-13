@@ -773,7 +773,7 @@ struct SettingsView: View {
 ///
 /// 拿到新版本后走的是「下载 dmg 并打开它」，App 不碰 `/Applications` 里的自己：自己替换
 /// 自己的安装目录，出错时后果是「应用没了」，而拖一下最多是多花三秒。
-private struct UpdateSettingsSection: View {
+struct UpdateSettingsSection: View {
     @ObservedObject var store: UpdateStore
 
     var body: some View {
