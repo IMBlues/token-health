@@ -77,7 +77,7 @@ struct StatusMenuPanelRenderTests {
         }
 
         let renderer = ImageRenderer(
-            content: StatusMenuView()
+            content: StatusMenuView(openSettings: {})
                 .environmentObject(state)
                 .frame(width: 360)
         )
