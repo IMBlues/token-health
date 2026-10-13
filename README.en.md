@@ -77,7 +77,7 @@ Local builds are ad-hoc signed and not notarized by Apple.
 
 Click the gear to add a provider, sign in as prompted, and refresh. Web-based services import a session from the official console; API-based ones take a key in settings.
 
-Auto-refresh defaults to every 15 minutes and can be changed under Settings → General → Refresh (30 seconds minimum); opening the menu doesn't trigger a refresh. The first Keychain read makes macOS put up a prompt, and if it gets denied or times out, settings grows a **Retry Keychain Access** button that brings it back — no restart needed.
+Auto-refresh defaults to every 15 minutes and can be changed under Settings → General → Refresh (30 seconds minimum); opening the menu doesn't trigger a refresh. The first Keychain read makes macOS put up a prompt, and if it gets denied or times out, settings grows a **Retry Keychain Access** button that brings it back — no restart needed. **Check for Updates** on the same General page asks GitHub for a newer release, downloads the dmg into Downloads and opens it — drag it into Applications to replace the old copy. It only ever talks to GitHub when you press it.
 
 ### Pinning accounts
 
