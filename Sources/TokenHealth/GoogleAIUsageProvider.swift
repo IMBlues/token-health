@@ -32,7 +32,12 @@ struct GoogleAIUsageProvider: UsageProvider {
                     .appendingPathComponent(".gemini/jetski-standalone-oauth-token"),
                 antigravityBinaryURL: binaryURL,
                 tokenEndpoint: URL(string: "https://oauth2.googleapis.com/token")!,
-                codeAssistEndpoint: URL(string: "https://cloudcode-pa.googleapis.com")!,
+                // Not cloudcode-pa.googleapis.com. Both hosts serve the same RPCs, but the prod
+                // one answers the quota calls as if the account had spent nothing — every pool
+                // comes back at remainingFraction 1 — while this one reports the real numbers, the
+                // ones Antigravity's own Models & Usage page shows. Antigravity's language server
+                // logs every request it makes and it is calling this host.
+                codeAssistEndpoint: URL(string: "https://daily-cloudcode-pa.googleapis.com")!,
                 userAgent: GoogleAIClientIdentity.userAgent(
                     version: GoogleAIClientIdentity.installedVersion(executableAt: binaryURL)
                 ),

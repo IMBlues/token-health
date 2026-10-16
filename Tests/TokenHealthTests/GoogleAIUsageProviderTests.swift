@@ -310,6 +310,24 @@ struct GoogleAIUsageProviderTests {
     // MARK: - the snapshot the fetch path builds
 
     @Test
+    func theLiveProviderTalksToTheDailyHost() {
+        // The two hosts are not interchangeable, and this is the whole of a reported bug where the
+        // card disagreed with Antigravity's own Models & Usage page. At one and the same moment,
+        // with one and the same token:
+        //
+        //   cloudcode-pa        both Gemini pools remainingFraction = 1
+        //   daily-cloudcode-pa  weekly 0.99235, five-hour 0.97828
+        //
+        // and Antigravity's page was showing 99% and 98%. The prod host answers this RPC with a
+        // uniformly untouched account; daily answers with what the account has actually spent.
+        // Antigravity's own language server logs every call it makes, and it is calling daily.
+        #expect(
+            GoogleAIUsageProvider.Environment.live.codeAssistEndpoint.absoluteString
+                == "https://daily-cloudcode-pa.googleapis.com"
+        )
+    }
+
+    @Test
     func aSummaryBecomesFourLabelledQuotaWindows() async throws {
         let harness = try await makeHarness()
 
