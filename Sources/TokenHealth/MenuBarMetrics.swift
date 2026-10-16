@@ -29,7 +29,7 @@ enum MenuBarMetrics {
         if kind == .deepSeek {
             return deepSeekMetrics(from: snapshot.usages, displayCurrency: displayCurrency, rateTable: rateTable)
         }
-        return UsageMetricSelection.pinnedMetrics(from: snapshot.usages, kind: kind).map { usage in
+        return UsageMetricSelection.menuBarMetrics(from: snapshot.usages, kind: kind).map { usage in
             let ratio = min(max(usage.ratio ?? 0, 0), 1)
             return MenuBarMetric(label: shortLabel(for: usage), shape: .ratio(ratio), severity: ratio)
         }

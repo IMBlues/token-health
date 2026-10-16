@@ -151,4 +151,33 @@ struct MenuBarMetricsTests {
                 == "Kimi · Waiting for refresh"
         )
     }
+
+    @Test
+    func theGoogleAIMenuBarItemStaysAtThreeBars() {
+        // 钉住的项就一根条子一个额度，五六根并排时长度和颜色都读不出谁是谁 —— 菜单栏只留每组的
+        // 5 小时额度，外加 Argon（有的话）。周额度在卡片和详情浮层里。
+        let snap = snapshot(kind: .googleAI, usages: [
+            TokenUsage(window: .week, label: "Gemini Week", used: 60, limit: 100, unit: "%"),
+            TokenUsage(window: .fiveHours, label: "Gemini 5h", used: 2, limit: 100, unit: "%"),
+            TokenUsage(window: .week, label: "Claude & GPT Week", used: 0, limit: 100, unit: "%"),
+            TokenUsage(window: .fiveHours, label: "Claude & GPT 5h", used: 0, limit: 100, unit: "%"),
+            TokenUsage(window: .week, label: "Gemini 4 Argon Week", used: 61, limit: 100, unit: "%")
+        ])
+
+        let metrics = MenuBarMetrics.metrics(for: snap, kind: .googleAI, displayCurrency: nil, rateTable: rateTable)
+
+        #expect(metrics.map(\.label) == ["Gemini 5h", "Claude & GPT 5h", "Gemini 4 Argon Week"])
+        #expect(metrics.allSatisfy { if case .ratio = $0.shape { true } else { false } })
+    }
+
+    @Test
+    func theGoogleAITooltipNamesWhateverTheBarsShow() {
+        let snap = snapshot(kind: .googleAI, usages: [
+            TokenUsage(window: .fiveHours, label: "Gemini 5h", used: 2, limit: 100, unit: "%")
+        ])
+
+        let metrics = MenuBarMetrics.metrics(for: snap, kind: .googleAI, displayCurrency: nil, rateTable: rateTable)
+
+        #expect(MenuBarMetrics.tooltipText(serviceName: "Google AI", metrics: metrics) == "Google AI · Gemini 5h 2%")
+    }
 }

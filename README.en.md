@@ -38,7 +38,7 @@ Pin the accounts you check most to the menu bar, and you can see what's left wit
 | **MiniMax** | 5-hour and weekly quota, gifted video, credits, token breakdown |
 | **Volcengine Ark** | 5-hour, weekly, and monthly AFP usage |
 | **OpenCode Go** | 5-hour, weekly, and monthly dollar quota |
-| **Google AI** | 5-hour and weekly quota for the Gemini and the Claude/GPT model groups; the session is read from the local Antigravity install read-only, with a per-model breakdown once pinned |
+| **Google AI** | 5-hour and weekly quota for the Gemini and the Claude/GPT model groups, with the session read from the local Antigravity install read-only. The menu bar draws only each group's 5-hour pool, plus the Argon pool on accounts that have one — three bars at most; the weekly pools and the per-model detail live in the card and the popover |
 | **Generic HTTP** | Your own JSON usage endpoint |
 | **Demo** | Safe fake data for trying out the UI |
 

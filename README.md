@@ -39,7 +39,7 @@ Token Health 读取官方用量，压成几张清爽的小卡片。不开代理�
 | **MiniMax** | 5 小时、周额度、视频赠送、积分、token 明细 |
 | **Volcengine Ark** | 5 小时、周、月 AFP 用量 |
 | **OpenCode Go** | 5 小时、周、月美元额度 |
-| **Google AI** | Gemini 与 Claude/GPT 两个模型组的 5 小时与周额度；会话从本机 Antigravity 只读读取，钉住后有按模型明细 |
+| **Google AI** | Gemini 与 Claude/GPT 两个模型组的 5 小时与周额度，会话从本机 Antigravity 只读读取。菜单栏只画各组的 5 小时那根（账号若有 Argon 池则再加一根，最多三根），周额度与按模型明细留在卡片和浮层里 |
 | **Generic HTTP** | 自定义 JSON 用量接口 |
 | **Demo** | 用来试 UI 的安全假数据 |
 

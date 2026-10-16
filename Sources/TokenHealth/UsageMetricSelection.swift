@@ -90,13 +90,17 @@ enum UsageMetricSelection {
         }
     }
 
-    /// Gemini 组排在 Claude & GPT 组前面。名字取自 `GoogleAIQuotaSummary`，两处不会各自漂移；
-    /// 认不出来的标签一律排在最后，而不是被当成 Gemini。
+    /// Gemini 组排在 Claude & GPT 组前面，认不出来的组（比如部分账号才有的 Argon 池）排最后，
+    /// 而不是被当成 Gemini。整名比较，见 `GoogleAIQuotaSummary.groupTitle(inLabel:)`。
     static func googleAIGroupRank(_ label: String?) -> Int {
         guard let label else {
             return 1
         }
-        return label.hasPrefix(GoogleAIQuotaSummary.geminiGroupTitle) ? 0 : 1
+        return switch GoogleAIQuotaSummary.groupTitle(inLabel: label) {
+        case GoogleAIQuotaSummary.geminiGroupTitle: 0
+        case GoogleAIQuotaSummary.thirdPartyGroupTitle: 1
+        default: 2
+        }
     }
 
     static func cursorLabelRank(_ label: String?) -> Int {
@@ -124,5 +128,37 @@ enum UsageMetricSelection {
             return kind == .codex ? isAccountLevel(usage) : true
         }
         return sorted(quota, kind: kind)
+    }
+
+    /// 菜单栏上的条数上限。
+    static let menuBarMetricLimit = 3
+
+    /// 菜单栏那根条子要画的指标。
+    ///
+    /// 默认就是 `pinnedMetrics` —— 每个额度一根。Google AI 是唯一的例外，见下。
+    static func menuBarMetrics(from usages: [TokenUsage], kind: ProviderKind) -> [TokenUsage] {
+        kind == .googleAI ? googleAIMenuBarMetrics(from: usages) : pinnedMetrics(from: usages, kind: kind)
+    }
+
+    /// Google AI 的额度横跨好几个模型组（Gemini、Claude & GPT，外加一部分账号才有的 Argon 池），
+    /// 全画上就是五六根长度和颜色都差不多、读不出谁是谁的条子。菜单栏只留每组的 5 小时那根，
+    /// 加上 Argon（有的话）正好压在 `menuBarMetricLimit` 以内；周额度和逐模型明细交给卡片和详情浮层。
+    static func googleAIMenuBarMetrics(from usages: [TokenUsage]) -> [TokenUsage] {
+        let quota = pinnedMetrics(from: usages, kind: .googleAI)
+        let fiveHours = quota.filter { $0.window == .fiveHours }
+        let argon = quota.filter(isArgonPool)
+
+        var seen = Set<String>()
+        return Array(
+            (fiveHours + argon)
+                .filter { seen.insert($0.id).inserted }
+                .prefix(menuBarMetricLimit)
+        )
+    }
+
+    /// Antigravity 给一部分账号额外开的池（界面上叫 `Gemini 4 Argon`）。它没有固定的组名，
+    /// 认 label 里的关键词：认不出来就是没有这个池，那第三根条子自然不出现。
+    static func isArgonPool(_ usage: TokenUsage) -> Bool {
+        (usage.label ?? "").localizedCaseInsensitiveContains("argon")
     }
 }

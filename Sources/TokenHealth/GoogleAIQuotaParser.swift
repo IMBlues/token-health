@@ -61,12 +61,22 @@ struct GoogleAIQuotaSummary: Equatable, Sendable {
     static let geminiGroupTitle = "Gemini"
     static let thirdPartyGroupTitle = "Claude & GPT"
 
-    private static func windowLabel(_ window: UsageWindow) -> String {
-        switch window {
-        case .fiveHours: "5h"
-        case .week: "Week"
-        default: window.title
+    /// 每个额度窗口在标签里的写法。`usages` 拼标签、菜单栏拆标签，两处都认这一份。
+    static let windowLabels: [UsageWindow: String] = [.fiveHours: "5h", .week: "Week"]
+
+    /// 从标签里取回组名 —— 标签就是 `<组名> <窗口名>`。
+    ///
+    /// 菜单栏要按模型组排序，光看 `hasPrefix("Gemini")` 会把同样带这个名字的 Argon 池并进
+    /// Gemini 组里；拆开再比整名才不会认错。
+    static func groupTitle(inLabel label: String) -> String {
+        for windowLabel in windowLabels.values where label.hasSuffix(" " + windowLabel) {
+            return String(label.dropLast(windowLabel.count + 1))
         }
+        return label
+    }
+
+    private static func windowLabel(_ window: UsageWindow) -> String {
+        windowLabels[window] ?? window.title
     }
 }
 

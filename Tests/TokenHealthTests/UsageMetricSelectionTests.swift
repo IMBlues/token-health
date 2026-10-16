@@ -172,4 +172,79 @@ struct UsageMetricSelectionTests {
             TokenUsage(window: .fiveHours, label: "Claude & GPT 5h", used: 0, limit: 100, unit: "%")
         ]
     }
+
+    /// Antigravity 给一部分账号另外开的一个池，只在有它的账号上出现。
+    private func argonUsage() -> TokenUsage {
+        TokenUsage(window: .week, label: "Gemini 4 Argon Week", used: 61, limit: 100, unit: "%")
+    }
+
+    @Test
+    func googleAIMenuBarShowsOnlyTheFiveHourWindows() {
+        // 菜单栏是「抬眼就懂」的地方，五六根长得差不多的条子只会互相淹没。周额度留给卡片和浮层。
+        let metrics = UsageMetricSelection.menuBarMetrics(from: googleAIUsages(), kind: .googleAI)
+
+        #expect(metrics.map(\.label) == ["Gemini 5h", "Claude & GPT 5h"])
+    }
+
+    @Test
+    func googleAIMenuBarAddsTheArgonPoolWhenThereIsOne() {
+        let usages = googleAIUsages() + [argonUsage()]
+
+        let metrics = UsageMetricSelection.menuBarMetrics(from: usages, kind: .googleAI)
+
+        #expect(metrics.map(\.label) == ["Gemini 5h", "Claude & GPT 5h", "Gemini 4 Argon Week"])
+    }
+
+    @Test
+    func googleAIMenuBarStopsAtThreeBars() {
+        // 「最多三根」是这里的硬约束，不是巧合：以后多出一个池也不该把菜单栏挤满。
+        let usages = googleAIUsages() + [argonUsage()] + [
+            TokenUsage(window: .fiveHours, label: "Gemma 5h", used: 10, limit: 100, unit: "%")
+        ]
+
+        let metrics = UsageMetricSelection.menuBarMetrics(from: usages, kind: .googleAI)
+
+        #expect(metrics.count == UsageMetricSelection.menuBarMetricLimit)
+        #expect(UsageMetricSelection.menuBarMetricLimit == 3)
+    }
+
+    @Test
+    func everyOtherProviderKeepsEveryPinnedWindow() {
+        // 别的 Provider 没有这个上限 —— 这条规则是 Google AI 的额度形状逼出来的，不是通用偏好。
+        let usages = [
+            TokenUsage(window: .fiveHours, used: 1, limit: 10),
+            TokenUsage(window: .week, used: 1, limit: 10),
+            TokenUsage(window: .month, used: 1, limit: 10),
+            TokenUsage(window: .mcpMonth, used: 1, limit: 10)
+        ]
+
+        #expect(UsageMetricSelection.menuBarMetrics(from: usages, kind: .zhipuCode).count == 4)
+    }
+
+    @Test
+    func anUnknownGoogleGroupIsRankedAfterTheTwoKnownOnes() {
+        // 名字里带 Gemini 不代表它属于 Gemini 那个池，只有名字完全对上才算。
+        #expect(UsageMetricSelection.googleAIGroupRank("Gemini 5h") == 0)
+        #expect(UsageMetricSelection.googleAIGroupRank("Claude & GPT 5h") == 1)
+        #expect(UsageMetricSelection.googleAIGroupRank("Gemini 4 Argon Week") == 2)
+    }
+
+    @Test
+    func theArgonPoolSortsAfterTheTwoKnownGroups() {
+        let usages = googleAIUsages() + [argonUsage()]
+
+        #expect(
+            UsageMetricSelection.sorted(usages, kind: .googleAI).map(\.label) == [
+                "Gemini 5h", "Gemini Week", "Claude & GPT 5h", "Claude & GPT Week", "Gemini 4 Argon Week"
+            ]
+        )
+    }
+
+    @Test
+    func theDetailHeadlineStillCarriesEveryWindow() {
+        // 菜单栏砍掉的周额度必须还在浮层里，否则那些数字就彻底没地方看了。
+        let usages = googleAIUsages() + [argonUsage()]
+
+        #expect(UsageMetricSelection.pinnedMetrics(from: usages, kind: .googleAI).count == 5)
+    }
 }
