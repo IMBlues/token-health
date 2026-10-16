@@ -168,6 +168,7 @@ struct GoogleAIUsageProviderTests {
             antigravityBinaryURL: binaryURL,
             tokenEndpoint: URL(string: tokenEndpoint)!,
             codeAssistEndpoint: URL(string: codeAssistEndpoint)!,
+            userAgent: "antigravity/2.23.1",
             now: { clock },
             send: { try await transport.send($0) }
         )
@@ -238,6 +239,19 @@ struct GoogleAIUsageProviderTests {
         let calls = await harness.transport.calls
         #expect(!calls.isEmpty)
         #expect(calls.allSatisfy { $0.userAgent?.lowercased().contains("antigravity") == true })
+    }
+
+    @Test
+    func everyCallCarriesTheAntigravityVersion() async throws {
+        // The backend reads the version off the User-Agent and trims what it sends back to a client
+        // it does not recognise: an unversioned `antigravity` came back with 29 models where
+        // `antigravity/2.23.1` came back with 35, and the daily host dropped a whole quota group.
+        let harness = try await makeHarness()
+
+        _ = await harness.provider.fetchUsage(config: config, secrets: .empty)
+
+        let calls = await harness.transport.calls
+        #expect(calls.allSatisfy { $0.userAgent == "antigravity/2.23.1" })
     }
 
     @Test

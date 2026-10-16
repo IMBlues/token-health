@@ -18,26 +18,34 @@ struct GoogleAIUsageProvider: UsageProvider {
         var antigravityBinaryURL: URL
         var tokenEndpoint: URL
         var codeAssistEndpoint: URL
+        /// 见 `GoogleAIClientIdentity`：后端按它裁剪返回，不是装饰。
+        var userAgent: String
         var now: @Sendable () -> Date
         var send: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
 
-        static let live = Environment(
-            credentialFileURL: FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".gemini/jetski-standalone-oauth-token"),
-            antigravityBinaryURL: URL(
+        static let live: Environment = {
+            let binaryURL = URL(
                 fileURLWithPath: "/Applications/Antigravity.app/Contents/Resources/bin/language_server"
-            ),
-            tokenEndpoint: URL(string: "https://oauth2.googleapis.com/token")!,
-            codeAssistEndpoint: URL(string: "https://cloudcode-pa.googleapis.com")!,
-            now: { Date() },
-            send: { request in
-                let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse else {
-                    throw GoogleAIError.transport("Google AI did not answer over HTTP")
+            )
+            return Environment(
+                credentialFileURL: FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".gemini/jetski-standalone-oauth-token"),
+                antigravityBinaryURL: binaryURL,
+                tokenEndpoint: URL(string: "https://oauth2.googleapis.com/token")!,
+                codeAssistEndpoint: URL(string: "https://cloudcode-pa.googleapis.com")!,
+                userAgent: GoogleAIClientIdentity.userAgent(
+                    version: GoogleAIClientIdentity.installedVersion(executableAt: binaryURL)
+                ),
+                now: { Date() },
+                send: { request in
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw GoogleAIError.transport("Google AI did not answer over HTTP")
+                    }
+                    return (data, http)
                 }
-                return (data, http)
-            }
-        )
+            )
+        }()
     }
 
     /// Discovered clients and refreshed tokens survive between refresh cycles: scanning the 155 MB
@@ -66,15 +74,6 @@ struct GoogleAIUsageProvider: UsageProvider {
     }
 
     private static let sessions = SessionCache()
-
-    /// The Cloud Code backend will not hand an account's project to just anyone.
-    ///
-    /// Without a `User-Agent` naming Antigravity, `loadCodeAssist` answers with an
-    /// `UNSUPPORTED_CLIENT` tier, omits `cloudaicompanionProject`, and every quota call after it
-    /// comes back `403 SUBSCRIPTION_REQUIRED` — which reads like "you are not entitled" but
-    /// actually means "I do not recognise the client". This app is reading the entitlement of the
-    /// account the user signed in to Antigravity with, so it says so.
-    private static let userAgent = "antigravity"
 
     private let environment: Environment
 
@@ -198,7 +197,7 @@ struct GoogleAIUsageProvider: UsageProvider {
 
         var request = URLRequest(url: environment.tokenEndpoint)
         request.httpMethod = "POST"
-        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(environment.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data(
             Self.formEncoded([
@@ -259,7 +258,7 @@ struct GoogleAIUsageProvider: UsageProvider {
     private func rpc(_ method: String, token: String, body: [String: Any]) async throws -> Data {
         var request = URLRequest(url: environment.codeAssistEndpoint.appendingPathComponent("v1internal:\(method)"))
         request.httpMethod = "POST"
-        request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue(environment.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
