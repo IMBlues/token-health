@@ -20,6 +20,10 @@ struct GoogleAIUsageProvider: UsageProvider {
         var codeAssistEndpoint: URL
         /// 见 `GoogleAIClientIdentity`：后端按它裁剪返回，不是装饰。
         var userAgent: String
+        /// 本机语言服务器 —— `Gemini 4 Argon` 那一池只有它有。
+        var localSession: @Sendable () -> AntigravityLocalQuota.Session?
+        /// 本机那个服务用自签证书，得走单独放行回环地址的 session。
+        var sendLocal: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
         var now: @Sendable () -> Date
         var send: @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
 
@@ -41,6 +45,14 @@ struct GoogleAIUsageProvider: UsageProvider {
                 userAgent: GoogleAIClientIdentity.userAgent(
                     version: GoogleAIClientIdentity.installedVersion(executableAt: binaryURL)
                 ),
+                localSession: { AntigravityLocalQuota.liveSession() },
+                sendLocal: { request in
+                    let (data, response) = try await AntigravityLocalQuota.session.data(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        throw GoogleAIError.transport("the local language server did not answer over HTTP")
+                    }
+                    return (data, http)
+                },
                 now: { Date() },
                 send: { request in
                     let (data, response) = try await URLSession.shared.data(for: request)
@@ -90,11 +102,7 @@ struct GoogleAIUsageProvider: UsageProvider {
         do {
             let token = try await accessToken()
             let context = try await codeAssistContext(token: token)
-            let summary = try await rpc(
-                "retrieveUserQuotaSummary",
-                token: token,
-                body: ["project": context.project].compactMapValues { $0 }
-            )
+            let summary = try await quotaSummary(token: token, project: context.project)
             // The catalogue is a nice-to-have: without it the popover loses its per-model table
             // and nothing else.
             let models = try? await rpc(
@@ -237,6 +245,51 @@ struct GoogleAIUsageProvider: UsageProvider {
     }
 
     // MARK: - Cloud Code
+
+    /// The quota summary, from the local language server when it is there.
+    ///
+    /// `Gemini 4 Argon` is a pool only that server knows about: Google's own
+    /// `retrieveUserQuotaSummary` answers the same account, host, `project` and `User-Agent` with
+    /// two groups, and the string "argon" appears nowhere in any of its three quota payloads. The
+    /// IDE's Models & Usage page shows a third group because it asks the local server, so we do too.
+    ///
+    /// A local server that is not running — or that has moved — only costs the Argon row.
+    private func quotaSummary(token: String, project: String?) async throws -> Data {
+        if let local = await localSummary() {
+            return local
+        }
+        return try await rpc(
+            "retrieveUserQuotaSummary",
+            token: token,
+            body: ["project": project].compactMapValues { $0 }
+        )
+    }
+
+    private func localSummary() async -> Data? {
+        guard let session = environment.localSession() else {
+            return nil
+        }
+        // The command line only carries `--https_server_port 0`, so which of the listening ports
+        // speaks HTTPS is not written down anywhere; ask them in turn.
+        for port in session.ports {
+            guard let url = URL(string: "https://127.0.0.1:\(port)\(AntigravityLocalQuota.path)") else {
+                continue
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(session.csrfToken, forHTTPHeaderField: "X-Codeium-Csrf-Token")
+            request.httpBody = Data(#"{"forceRefresh":true}"#.utf8)
+
+            guard let (data, response) = try? await environment.sendLocal(request),
+                  response.statusCode == 200,
+                  let unwrapped = AntigravityLocalQuota.unwrapped(data) else {
+                continue
+            }
+            return unwrapped
+        }
+        return nil
+    }
 
     /// Which plan the account is on, and which project the quota calls want. Both calls need the
     /// project, so a failure here is not something the rest can shrug off.

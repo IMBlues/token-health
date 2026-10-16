@@ -132,7 +132,8 @@ struct GoogleAIUsageProviderTests {
         accessToken: String = "ya29.fresh",
         expiry: String = "2026-10-16T15:52:07.431752+08:00",
         now: Date? = ISO8601DateFormatter().date(from: "2026-10-16T07:00:00Z"),
-        acceptClients: [(clientID: String, secret: String, accessToken: String)] = []
+        acceptClients: [(clientID: String, secret: String, accessToken: String)] = [],
+        localSummary: Data? = nil
     ) async throws -> (provider: GoogleAIUsageProvider, transport: StubTransport, credentialURL: URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("google-ai-\(UUID().uuidString)")
@@ -169,6 +170,23 @@ struct GoogleAIUsageProviderTests {
             tokenEndpoint: URL(string: tokenEndpoint)!,
             codeAssistEndpoint: URL(string: codeAssistEndpoint)!,
             userAgent: "antigravity/2.23.1",
+            localSession: {
+                localSummary == nil
+                    ? nil
+                    : AntigravityLocalQuota.Session(csrfToken: "csrf", ports: [1234])
+            },
+            sendLocal: { _ in
+                guard let localSummary else {
+                    throw GoogleAIError.transport("no local language server")
+                }
+                return (
+                    localSummary,
+                    HTTPURLResponse(
+                        url: URL(string: "https://127.0.0.1:1234")!,
+                        statusCode: 200, httpVersion: nil, headerFields: nil
+                    )!
+                )
+            },
             now: { clock },
             send: { try await transport.send($0) }
         )
@@ -325,6 +343,42 @@ struct GoogleAIUsageProviderTests {
             GoogleAIUsageProvider.Environment.live.codeAssistEndpoint.absoluteString
                 == "https://daily-cloudcode-pa.googleapis.com"
         )
+    }
+
+    @Test
+    func theLocalLanguageServerCarriesTheArgonPool() async throws {
+        // Antigravity 界面上那份额度是本机语言服务器给的，它有三组；Google 的直连接口只回两组，
+        // 无论换 host、project、UA 还是版本号都拿不到第三组。所以优先问本机这个。
+        let harness = try await makeHarness(
+            localSummary: Data(#"""
+            {"response":{"groups":[
+              {"displayName":"Gemini Models","buckets":[
+                {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.99,
+                 "resetTime":"2026-10-23T07:01:50Z"}]},
+              {"displayName":"Gemini 4 Argon","buckets":[
+                {"bucketId":"gemini-argon-wtu-weekly","window":"weekly","remainingFraction":0.03,
+                 "resetTime":"2026-10-23T06:38:56Z"}]}]}}
+            """#.utf8)
+        )
+
+        let snapshot = await harness.provider.fetchUsage(config: config, secrets: .empty)
+
+        #expect(snapshot.state == .ready)
+        #expect(snapshot.usages.map(\.label) == ["Gemini Week", "Gemini 4 Argon Week"])
+        // 直连那份是拿不到的备份值，用了本地这份就不该再出现它。
+        let calls = await harness.transport.calls
+        #expect(!calls.contains { $0.url.contains("retrieveUserQuotaSummary") })
+    }
+
+    @Test
+    func aLocalServerThatWillNotAnswerFallsBackToTheDirectCall() async throws {
+        // 进程没跑、参数变了、端口猜错 —— 都只会让 Argon 少一根条子，别的数字照常。
+        let harness = try await makeHarness(localSummary: nil)
+
+        let snapshot = await harness.provider.fetchUsage(config: config, secrets: .empty)
+
+        #expect(snapshot.state == .ready)
+        #expect(snapshot.usages.map(\.label) == ["Gemini Week", "Gemini 5h", "Claude & GPT Week", "Claude & GPT 5h"])
     }
 
     @Test
