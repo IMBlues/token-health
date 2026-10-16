@@ -41,9 +41,16 @@ struct ProviderDetailCapabilityTests {
     }
 
     @Test
+    func googleAIProducesDetailInEitherMode() {
+        // 与 Codex / Cursor 同理：Google AI 走 `usesLocalLogin`，authMode 被固定成 `.api`。
+        #expect(ProviderFactory.producesUsageDetail(for: config(.googleAI, auth: .api)))
+        #expect(ProviderFactory.producesUsageDetail(for: config(.googleAI, auth: .browserLogin)))
+    }
+
+    @Test
     func everyOtherProviderIsUnsupported() {
         for kind in ProviderKind.allCases
-        where kind != .deepSeek && kind != .openCodeGo && kind != .codex && kind != .cursor {
+        where kind != .deepSeek && kind != .openCodeGo && kind != .codex && kind != .cursor && kind != .googleAI {
             for auth in AuthMode.allCases {
                 #expect(
                     !ProviderFactory.producesUsageDetail(for: config(kind, auth: auth)),

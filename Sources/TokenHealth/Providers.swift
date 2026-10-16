@@ -19,9 +19,10 @@ struct ProviderFactory {
         switch config.providerKind {
         case .deepSeek, .openCodeGo:
             config.authMode == .browserLogin
-        case .codex, .cursor:
-            // Codex 与 Cursor 都没有登录 / API 之分：`usesLocalLogin` 让 `AppState.saveConfigs()`
-            // 把 authMode 固定成 `.api`，所以这一支**不能**看 authMode —— 照上面那条写就永远不会为真。
+        case .codex, .cursor, .googleAI:
+            // Codex / Cursor / Google AI 都没有登录 / API 之分：`usesLocalLogin` 让
+            // `AppState.saveConfigs()` 把 authMode 固定成 `.api`，所以这一支**不能**看 authMode
+            // —— 照上面那条写就永远不会为真。
             true
         default:
             false
@@ -50,6 +51,8 @@ struct ProviderFactory {
             CodexUsageProvider()
         case .cursor:
             CursorUsageProvider()
+        case .googleAI:
+            GoogleAIUsageProvider()
         case .openAI, .anthropic:
             switch config.authMode {
             case .api:

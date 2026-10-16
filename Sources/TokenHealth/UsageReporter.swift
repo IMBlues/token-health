@@ -234,6 +234,7 @@ struct UsageReportBuilder {
         case .miniMax: "minimax"
         case .volcengineArk: "volcengine-ark"
         case .openCodeGo: "opencode-go"
+        case .googleAI: "google-ai"
         case .genericHTTP: "generic-http"
         case .demo: "demo"
         }

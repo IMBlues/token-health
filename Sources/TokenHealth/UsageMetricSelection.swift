@@ -72,6 +72,15 @@ enum UsageMetricSelection {
                     return leftLabelRank < rightLabelRank
                 }
             }
+            // Google AI 的四条额度横跨两个模型组，同理**压过** window：两个组的 5h 会先凑到一起，
+            // 把每个组的两条拆散。
+            if kind == .googleAI {
+                let leftGroupRank = googleAIGroupRank(lhs.label)
+                let rightGroupRank = googleAIGroupRank(rhs.label)
+                if leftGroupRank != rightGroupRank {
+                    return leftGroupRank < rightGroupRank
+                }
+            }
             let leftRank = rank(lhs)
             let rightRank = rank(rhs)
             if leftRank != rightRank {
@@ -79,6 +88,15 @@ enum UsageMetricSelection {
             }
             return (lhs.label ?? lhs.window.title) < (rhs.label ?? rhs.window.title)
         }
+    }
+
+    /// Gemini 组排在 Claude & GPT 组前面。名字取自 `GoogleAIQuotaSummary`，两处不会各自漂移；
+    /// 认不出来的标签一律排在最后，而不是被当成 Gemini。
+    static func googleAIGroupRank(_ label: String?) -> Int {
+        guard let label else {
+            return 1
+        }
+        return label.hasPrefix(GoogleAIQuotaSummary.geminiGroupTitle) ? 0 : 1
     }
 
     static func cursorLabelRank(_ label: String?) -> Int {

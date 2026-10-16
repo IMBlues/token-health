@@ -21,6 +21,7 @@ enum ProviderIcon {
         case .miniMax: "minimax"
         case .volcengineArk: "volcengine"
         case .openCodeGo: "opencode"
+        case .googleAI: "gemini"
         case .genericHTTP, .demo: nil
         }
     }
@@ -37,6 +38,7 @@ enum ProviderIcon {
         case .miniMax: "m.circle"
         case .volcengineArk: "flame"
         case .openCodeGo: "terminal"
+        case .googleAI: "sparkle"
         case .genericHTTP: "network"
         case .demo: "chart.bar"
         }

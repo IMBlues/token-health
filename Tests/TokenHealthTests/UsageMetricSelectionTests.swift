@@ -141,4 +141,35 @@ struct UsageMetricSelectionTests {
         ]
         #expect(UsageMetricSelection.sorted(usages, kind: .kimiCode).map(\.window) == [.fiveHours, .week])
     }
+
+    @Test
+    func googleAIKeepsEachModelGroupsWindowsTogether() {
+        // 通用排序只看 window，会把这四个交错成 [Claude 5h, Gemini 5h, Claude Week, Gemini Week] ——
+        // 同一组的两条被拆到两头，读起来像两件不相干的事。Google AI 要的是「一个模型组的两条挨着」。
+        let usages = googleAIUsages()
+
+        #expect(
+            UsageMetricSelection.sorted(usages, kind: .googleAI).map(\.label) == [
+                "Gemini 5h", "Gemini Week", "Claude & GPT 5h", "Claude & GPT Week"
+            ]
+        )
+    }
+
+    @Test
+    func googleAIPinsAllFourWindows() {
+        // 两个模型组各两条，四条都是额度窗口，钉住项一根都不能少。
+        let pinned = UsageMetricSelection.pinnedMetrics(from: googleAIUsages(), kind: .googleAI)
+
+        #expect(pinned.count == 4)
+        #expect(pinned.allSatisfy { $0.ratio != nil })
+    }
+
+    private func googleAIUsages() -> [TokenUsage] {
+        [
+            TokenUsage(window: .week, label: "Gemini Week", used: 60, limit: 100, unit: "%"),
+            TokenUsage(window: .fiveHours, label: "Gemini 5h", used: 0, limit: 100, unit: "%"),
+            TokenUsage(window: .week, label: "Claude & GPT Week", used: 0, limit: 100, unit: "%"),
+            TokenUsage(window: .fiveHours, label: "Claude & GPT 5h", used: 0, limit: 100, unit: "%")
+        ]
+    }
 }

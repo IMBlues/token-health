@@ -38,10 +38,11 @@ Pin the accounts you check most to the menu bar, and you can see what's left wit
 | **MiniMax** | 5-hour and weekly quota, gifted video, credits, token breakdown |
 | **Volcengine Ark** | 5-hour, weekly, and monthly AFP usage |
 | **OpenCode Go** | 5-hour, weekly, and monthly dollar quota |
+| **Google AI** | 5-hour and weekly quota for the Gemini and the Claude/GPT model groups; the session is read from the local Antigravity install read-only, with a per-model breakdown once pinned |
 | **Generic HTTP** | Your own JSON usage endpoint |
 | **Demo** | Safe fake data for trying out the UI |
 
-Credentials stay in the macOS Keychain. Provider sessions are read-only and are only ever sent to that service's official endpoint.
+Credentials stay in the macOS Keychain. Provider sessions are read-only and are only ever sent to that service's official endpoint. Google AI works like Cursor and Codex: it reads the official app you are already signed in to, and keeps no credential of its own.
 
 The add-provider menu also lists **OpenAI** and **Anthropic** — neither has a built-in adapter yet: API mode takes a usage endpoint you supply yourself (it behaves like Generic HTTP), and console login isn't wired up.
 
@@ -85,7 +86,7 @@ Turn on **Menu Bar → Pin to menu bar** in settings, or click the pin in the to
 
 The gourd is the global entry point (it reads the level inside the gourd, meaning what's left) and is independent of the pinned accounts. Menu bar artwork is black and white only; the bars' green/orange/red is the one color that stays.
 
-Clicking a pinned item opens a detail popover, one level deeper than the card. Only these four have one:
+Clicking a pinned item opens a detail popover, one level deeper than the card. Only these five have one:
 
 | Pinned account | What the popover adds |
 | --- | --- |
@@ -93,6 +94,7 @@ Clicking a pinned item opens a detail popover, one level deeper than the card. O
 | **Cursor** | Token totals and a by-day trend, the spend split, per-model Grok bot usage |
 | **DeepSeek** | Balance and spend totals, a by-day trend, the token breakdown, by-model / by-key splits |
 | **OpenCode Go** | Requests / tokens / cost, a by-day cost trend, the input/output breakdown, a by-model split |
+| **Google AI** | When each model group's 5-hour and weekly pools reset, and how much of each model's quota has been used |
 
 Every other account opens a small menu instead (unpin / settings / quit). The popover is display-only: no filtering, no date range, no drill-down. Numbers older than 5 minutes refresh once when you open it, there's a manual refresh in the top-right, and a failed fetch keeps the previous numbers and marks the error.
 

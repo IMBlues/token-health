@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$ROOT/Sources/TokenHealth/Resources/ProviderIcons"
 PACKAGE="@lobehub/icons-static-svg@1.95.1"
 BASE_URL="https://cdn.jsdelivr.net/npm/$PACKAGE/icons"
-SLUGS=(openai anthropic cursor codex kimi zhipu deepseek minimax volcengine opencode)
+SLUGS=(openai anthropic cursor codex kimi zhipu deepseek minimax volcengine opencode gemini)
 
 FORCE=0
 if [[ "${1:-}" == "--force" ]]; then

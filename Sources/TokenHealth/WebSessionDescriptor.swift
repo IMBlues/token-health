@@ -136,7 +136,7 @@ struct WebSessionDescriptorFactory {
             ZhipuWebSessionDescriptor()
         case .kimiCode:
             KimiWebSessionDescriptor()
-        case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .codex, .googleAI, .genericHTTP, .demo:
             nil
         }
     }

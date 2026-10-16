@@ -39,10 +39,11 @@ Token Health 读取官方用量，压成几张清爽的小卡片。不开代理�
 | **MiniMax** | 5 小时、周额度、视频赠送、积分、token 明细 |
 | **Volcengine Ark** | 5 小时、周、月 AFP 用量 |
 | **OpenCode Go** | 5 小时、周、月美元额度 |
+| **Google AI** | Gemini 与 Claude/GPT 两个模型组的 5 小时与周额度；会话从本机 Antigravity 只读读取，钉住后有按模型明细 |
 | **Generic HTTP** | 自定义 JSON 用量接口 |
 | **Demo** | 用来试 UI 的安全假数据 |
 
-凭证留在 macOS Keychain。Provider 会话只读，并且只发往对应服务的官方接口。
+凭证留在 macOS Keychain。Provider 会话只读，并且只发往对应服务的官方接口。Google AI 和 Cursor / Codex 一样读本机已登录的官方 App，自己不另存一份凭证。
 
 加号菜单里还能选 **OpenAI** 和 **Anthropic** —— 这两项没有内置适配器：API 模式要你自己填一个用量接口（行为等同 Generic HTTP），控制台登录尚未接通。
 
@@ -86,7 +87,7 @@ bash scripts/install-release.sh
 
 那枚葫芦是全局入口（它读的是葫芦里的水位，也就是余量），和钉住的账号互不影响。菜单栏图形只用黑白两色，竖条的绿/橙/红是唯一保留的颜色。
 
-点钉住的项会弹详情浮层，比卡片再深一层。只有这四个有浮层：
+点钉住的项会弹详情浮层，比卡片再深一层。只有这五个有浮层：
 
 | 钉住的账号 | 浮层里多出什么 |
 | --- | --- |
@@ -94,6 +95,7 @@ bash scripts/install-release.sh
 | **Cursor** | Token 汇总与每日趋势、花费拆分、Grok bot 按模型用量 |
 | **DeepSeek** | 余额与花费汇总、按天趋势、token 构成、按模型 / 按 key 拆分 |
 | **OpenCode Go** | 请求数 / token / 花费、每日花费趋势、输入输出构成、按模型拆分 |
+| **Google AI** | 两个模型组各自的 5 小时 / 周重置时刻，以及每个模型的已用比例 |
 
 其余账号点开是一个小菜单（取消钉住 / 设置 / 退出）。浮层只做展示 —— 没有筛选、没有日期范围、不能下钻；数字超过 5 分钟会在打开时自动刷新一次，右上角也能手动刷新，取数失败就保留上一次的数字并标出错误。
 

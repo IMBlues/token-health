@@ -11,6 +11,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
     case miniMax
     case volcengineArk
     case openCodeGo
+    case googleAI
     case genericHTTP
     case demo
 
@@ -28,6 +29,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         case .miniMax: "MiniMax"
         case .volcengineArk: "Volcengine Ark"
         case .openCodeGo: "OpenCode Go"
+        case .googleAI: "Google AI"
         case .genericHTTP: "Generic HTTP"
         case .demo: "Demo"
         }
@@ -37,7 +39,7 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .kimiCode, .zhipuCode, .deepSeek, .miniMax, .volcengineArk, .openCodeGo:
             true
-        case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .codex, .googleAI, .genericHTTP, .demo:
             false
         }
     }
@@ -53,13 +55,15 @@ enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
         switch self {
         case .kimiCode, .zhipuCode, .miniMax, .volcengineArk:
             true
-        case .openAI, .anthropic, .cursor, .codex, .deepSeek, .openCodeGo, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .codex, .deepSeek, .openCodeGo, .googleAI, .genericHTTP, .demo:
             false
         }
     }
 
+    /// Google AI reads the OAuth token Antigravity leaves behind, the way Codex reads ChatGPT's
+    /// and Cursor reads its own database — so it has no login / API distinction to configure.
     var usesLocalLogin: Bool {
-        self == .cursor || self == .codex
+        self == .cursor || self == .codex || self == .googleAI
     }
 
     /// Provider 只用单个 API key（endpoint 内置于适配器），无需 API endpoint / 本地数据 / 账号密码字段。

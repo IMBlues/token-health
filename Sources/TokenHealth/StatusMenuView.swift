@@ -256,24 +256,49 @@ private struct UsageCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                HStack(alignment: .top, spacing: 10) {
-                    ForEach(usages) { usage in
-                        CompactUsageMetric(
-                            usage: usage,
-                            labelOverride: config.providerKind == .codex || config.providerKind == .cursor
-                                ? usage.label
-                                : nil,
-                            isSensitiveAmount: isSensitiveAmount(usage),
-                            revealsSensitiveAmount: $revealsSensitiveAmounts
-                        )
-                        .frame(maxWidth: .infinity)
-                    }
-                }
+                compactMetricsLayout(usages)
             }
         } else {
             Text(snapshot?.statusMessage ?? "Waiting for refresh")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// 一条额度一行放不下时折成两行两列。
+    ///
+    /// Google AI 的四条横跨两个模型组，四条并排时每列只有 ~75pt 宽，而「Claude & GPT 5h」要
+    /// 八十多点 —— 四列会被一起截成「Gemini…」「Claud…」，看起来像同一个东西重复了四遍。
+    /// 两列时标签完整，数字也还留在同一行。
+    @ViewBuilder
+    private func compactMetricsLayout(_ usages: [TokenUsage]) -> some View {
+        if config.providerKind == .googleAI {
+            LazyVGrid(
+                columns: [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)],
+                alignment: .leading,
+                spacing: 8
+            ) {
+                compactMetricCells(usages)
+            }
+        } else {
+            HStack(alignment: .top, spacing: 10) {
+                compactMetricCells(usages)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func compactMetricCells(_ usages: [TokenUsage]) -> some View {
+        ForEach(usages) { usage in
+            CompactUsageMetric(
+                usage: usage,
+                labelOverride: [.codex, .cursor, .googleAI].contains(config.providerKind)
+                    ? usage.label
+                    : nil,
+                isSensitiveAmount: isSensitiveAmount(usage),
+                revealsSensitiveAmount: $revealsSensitiveAmounts
+            )
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -372,6 +397,17 @@ private struct UsageCard: View {
             )
             if !monthlyPools.isEmpty {
                 return Array(monthlyPools.prefix(3))
+            }
+        }
+        if config.providerKind == .googleAI {
+            // 下面是通用的「取前两条」，而 Google AI 的四条横跨两个模型组 —— 截一半会把
+            // Claude & GPT 整个藏掉，而它恰恰是这个订阅里最常被问到的那个额度。
+            let rollingQuota = UsageMetricSelection.sorted(
+                usages.filter { $0.window == .fiveHours || $0.window == .week },
+                kind: config.providerKind
+            )
+            if !rollingQuota.isEmpty {
+                return rollingQuota
             }
         }
 

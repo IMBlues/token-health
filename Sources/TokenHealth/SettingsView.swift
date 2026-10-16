@@ -719,7 +719,7 @@ struct SettingsView: View {
                 return
             }
             controller.startLogin(completion: completion)
-        case .openAI, .anthropic, .cursor, .codex, .genericHTTP, .demo:
+        case .openAI, .anthropic, .cursor, .codex, .googleAI, .genericHTTP, .demo:
             isWebLoginInProgress = false
         }
     }
@@ -756,6 +756,8 @@ struct SettingsView: View {
             "Official Cursor app"
         case .codex:
             "Official Codex app"
+        case .googleAI:
+            "Official Antigravity app"
         case .openAI, .anthropic, .kimiCode, .zhipuCode, .deepSeek, .miniMax, .volcengineArk, .openCodeGo, .genericHTTP, .demo:
             provider.title
         }
