@@ -124,10 +124,14 @@ struct GoogleAIUsageProviderTests {
 
     /// A token file plus an Antigravity binary carrying the two ids and two secrets, and a
     /// transport that accepts only the real pairing.
+    ///
+    /// The clock is pinned rather than left at `Date()`: the fixture's expiry is a fixed instant,
+    /// so a test that reads the real clock flips from "fresh" to "expired" the moment the wall
+    /// clock walks past it, and every assertion about the fresh path starts failing at 15:52.
     private func makeHarness(
         accessToken: String = "ya29.fresh",
         expiry: String = "2026-10-16T15:52:07.431752+08:00",
-        now: Date? = nil,
+        now: Date? = ISO8601DateFormatter().date(from: "2026-10-16T07:00:00Z"),
         acceptClients: [(clientID: String, secret: String, accessToken: String)] = []
     ) async throws -> (provider: GoogleAIUsageProvider, transport: StubTransport, credentialURL: URL) {
         let directory = FileManager.default.temporaryDirectory

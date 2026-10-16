@@ -24,7 +24,8 @@ struct SettingsView: View {
                         // 单行。provider 类型不再占第二行 —— 详情面板里的 Provider 字段已经有了。
                         // 行尾也刻意不放拖拽把手：macOS 的可重排列表不画那个符号，直接拖行本身就重排。
                         HStack(spacing: 10) {
-                            Image(nsImage: ProviderIcon.image(for: config.providerKind, size: 16, tint: .labelColor))
+                            Image(nsImage: ProviderIcon.templateImage(for: config.providerKind, size: 16))
+                                .renderingMode(.template)
                                 .frame(width: 18)
                             Text(config.displayName)
                                 .lineLimit(1)
@@ -379,7 +380,8 @@ struct SettingsView: View {
                     ForEach(appState.configs) { config in
                         Toggle(isOn: reportProviderSelectionBinding(for: config)) {
                             HStack(spacing: 10) {
-                                Image(nsImage: ProviderIcon.image(for: config.providerKind, size: 16, tint: .labelColor))
+                                Image(nsImage: ProviderIcon.templateImage(for: config.providerKind, size: 16))
+                                    .renderingMode(.template)
                                     .frame(width: 18)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(config.displayName)

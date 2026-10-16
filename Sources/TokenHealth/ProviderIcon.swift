@@ -50,6 +50,22 @@ enum ProviderIcon {
         return tinted(source, color: tint, size: size)
     }
 
+    /// 不带颜色的模板图，交给 SwiftUI 用它自己的前景色画。
+    ///
+    /// 与 `image(for:size:tint:)` 的分别不只是省掉一次填充，而是**没有颜色可被缓存**：设置
+    /// 侧边栏是 SwiftUI，它会把这张图连同当时的外观一起光栅化下来，系统换外观时不会重画延迟
+    /// 着色的那张 —— 同一行的字已经变回黑色，logo 还停在白色（`NSAppearance` 相关的 KVO 在
+    /// 菜单栏那条 AppKit 路径上是自己处理的，所以那里没这个毛病）。
+    static func templateImage(for kind: ProviderKind, size: CGFloat) -> NSImage {
+        let source = bundledLogo(for: kind) ?? symbolImage(for: kind, size: size)
+        let result = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            source.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+        result.isTemplate = true
+        return result
+    }
+
     /// 供测试断言资源确实打进了包 —— 测试进程里 `Bundle.main` 是测试自己的 bundle，
     /// 只有经 ResourceBundle 才走得到 App 的资源。
     static func bundledLogoURL(for kind: ProviderKind) -> URL? {
