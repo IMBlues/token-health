@@ -138,8 +138,8 @@ struct GoogleAIOAuthClientScannerTests {
         // The ids are preceded by `runtime` and `arena` in the pool; neither belongs to the id.
         #expect(
             Set(clients.map(\.clientID)).sorted() == [
-                "\(GoogleAIFixtureCredentials.clientIDTwo)",
-                "\(GoogleAIFixtureCredentials.clientIDOne)"
+                "\(GoogleAIFixtureCredentials.clientIDOne)",
+                "\(GoogleAIFixtureCredentials.clientIDTwo)"
             ]
         )
     }
