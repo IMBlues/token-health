@@ -13,6 +13,13 @@ struct MenuBarItemLayout: Equatable {
     static let minimumVisibleHeight: CGFloat = 1.5
     /// 状态项两侧留一点，避免图像贴着相邻项。
     static let statusItemPadding: CGFloat = 6
+    static let percentageWidth: CGFloat = 23
+    static let percentageGap: CGFloat = 1
+    static let percentageIconSize: CGFloat = 10
+    static let percentageIconGap: CGFloat = 1
+    static let percentageRowHeight: CGFloat = 7
+    static let percentageRowsPerColumn = 3
+    static let percentageStatusItemPadding: CGFloat = 2
 
     var size: CGSize
     var iconRect: CGRect?
@@ -22,15 +29,30 @@ struct MenuBarItemLayout: Equatable {
     var fills: [CGRect]
     /// 金额型内容的可用区域；有它时 `tracks` 与 `fills` 必为空。
     var amountRect: CGRect?
+    var percentageRects: [CGRect] = []
 
-    static func make(metrics: [MenuBarMetric], hasIcon: Bool, amountWidth: CGFloat) -> MenuBarItemLayout {
-        let iconWidth = hasIcon ? iconSize + iconGap : 0
-        let height = maxBarHeight + 2 * verticalPadding
+    var statusItemLength: CGFloat {
+        size.width + (percentageRects.isEmpty ? Self.statusItemPadding : Self.percentageStatusItemPadding)
+    }
+
+    static func make(
+        metrics: [MenuBarMetric],
+        hasIcon: Bool,
+        amountWidth: CGFloat,
+        displayStyle: MenuBarDisplayStyle = .bars
+    ) -> MenuBarItemLayout {
+        let amount = amountText(in: metrics)
+        let isPercentage = displayStyle == .percentage && amount == nil
+        let metricCount = metrics.filter { if case .ratio = $0.shape { true } else { false } }.count
+        let percentageRows = min(max(metricCount, 1), percentageRowsPerColumn)
+        let logoSize = isPercentage ? percentageIconSize : iconSize
+        let iconWidth = hasIcon ? logoSize + (isPercentage ? percentageIconGap : iconGap) : 0
+        let height = max(maxBarHeight + 2 * verticalPadding, isPercentage ? CGFloat(percentageRows) * percentageRowHeight : 0)
         let iconRect = hasIcon
-            ? CGRect(x: 0, y: (height - iconSize) / 2, width: iconSize, height: iconSize)
+            ? CGRect(x: 0, y: (height - logoSize) / 2, width: logoSize, height: logoSize)
             : nil
 
-        if amountText(in: metrics) != nil {
+        if amount != nil {
             let width = max(amountWidth, 0)
             return MenuBarItemLayout(
                 size: CGSize(width: iconWidth + width, height: height),
@@ -49,6 +71,26 @@ struct MenuBarItemLayout: Equatable {
         }
         if ratios.isEmpty {
             ratios = [0]
+        }
+
+        if displayStyle == .percentage {
+            let insetY = (height - CGFloat(percentageRows) * percentageRowHeight) / 2
+            let rects = ratios.indices.map { index in
+                CGRect(
+                    x: iconWidth + CGFloat(index / percentageRowsPerColumn) * (percentageWidth + percentageGap),
+                    y: insetY + CGFloat(percentageRows - 1 - index % percentageRowsPerColumn) * percentageRowHeight,
+                    width: percentageWidth,
+                    height: percentageRowHeight
+                )
+            }
+            return MenuBarItemLayout(
+                size: CGSize(width: rects.last!.maxX, height: height),
+                iconRect: iconRect,
+                tracks: [],
+                fills: [],
+                amountRect: nil,
+                percentageRects: rects
+            )
         }
 
         var tracks: [CGRect] = []

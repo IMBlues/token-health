@@ -20,10 +20,12 @@ final class SettingsWindowController {
     static let frameAutosaveName = "TokenHealthSettingsWindow"
 
     private let appState: AppState
+    private weak var popoverController: StatusItemPopoverController?
     private var window: NSWindow?
 
-    init(appState: AppState) {
+    init(appState: AppState, popoverController: StatusItemPopoverController? = nil) {
         self.appState = appState
+        self.popoverController = popoverController
     }
 
     /// 已经建出来的设置窗口；从没开过就是 nil。
@@ -31,6 +33,7 @@ final class SettingsWindowController {
 
     /// 打开（或再次置前）设置窗口。
     func show() {
+        popoverController?.close()
         let window = window ?? makeWindow()
         self.window = window
 

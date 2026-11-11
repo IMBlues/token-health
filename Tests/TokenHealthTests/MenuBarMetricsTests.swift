@@ -44,6 +44,66 @@ struct MenuBarMetricsTests {
     }
 
     @Test
+    func remainingModeInvertsValuesButKeepsConsumedQuotaSeverity() {
+        let cases: [(used: Int, remaining: Double, severity: Double)] = [
+            (0, 1, 0), (25, 0.75, 0.25), (50, 0.5, 0.5), (75, 0.25, 0.75), (100, 0, 1), (300, 0, 1), (-10, 1, 0)
+        ]
+        for item in cases {
+            let snap = snapshot(kind: .kimiCode, usages: [TokenUsage(window: .fiveHours, used: item.used, limit: 100)])
+            let metrics = MenuBarMetrics.metrics(for: snap, kind: .kimiCode, displayCurrency: nil, rateTable: rateTable, quotaMode: .remaining)
+
+            #expect(metrics.first?.shape == .ratio(item.remaining))
+            #expect(metrics.first?.severity == item.severity, "low remaining quota must stay dangerous, not green")
+        }
+    }
+
+    @Test
+    func theSelectedModeDrivesBothBarsAndPercentagesWithoutMutatingUsage() {
+        let snap = snapshot(kind: .kimiCode, usages: [TokenUsage(window: .fiveHours, used: 25, limit: 100)])
+        let used = MenuBarMetrics.metrics(for: snap, kind: .kimiCode, displayCurrency: nil, rateTable: rateTable, quotaMode: .used)
+        let remaining = MenuBarMetrics.metrics(for: snap, kind: .kimiCode, displayCurrency: nil, rateTable: rateTable, quotaMode: .remaining)
+
+        let usedBars = MenuBarItemLayout.make(metrics: used, hasIcon: true, amountWidth: 0)
+        let remainingBars = MenuBarItemLayout.make(metrics: remaining, hasIcon: true, amountWidth: 0)
+        #expect(usedBars.fills[0].height == 3.25)
+        #expect(remainingBars.fills[0].height == 9.75)
+        #expect(MenuBarMetrics.percentageText(used[0]) == "25%")
+        #expect(MenuBarMetrics.percentageText(remaining[0]) == "75%")
+        #expect(MenuBarItemLayout.make(metrics: used, hasIcon: true, amountWidth: 0, displayStyle: .percentage)
+            == MenuBarItemLayout.make(metrics: remaining, hasIcon: true, amountWidth: 0, displayStyle: .percentage))
+        #expect(snap.usages[0].used == 25)
+        #expect(used[0].severity == remaining[0].severity)
+    }
+
+    @Test
+    func remainingModeDoesNotInventQuotaForMissingOrUnavailableData() {
+        #expect(MenuBarMetrics.metrics(for: nil, kind: .kimiCode, displayCurrency: nil, rateTable: rateTable, quotaMode: .remaining).isEmpty)
+        let unavailable = snapshot(kind: .kimiCode, usages: [TokenUsage(window: .fiveHours, used: 0, limit: 100)], state: .unavailable)
+        #expect(MenuBarMetrics.metrics(for: unavailable, kind: .kimiCode, displayCurrency: nil, rateTable: rateTable, quotaMode: .remaining).isEmpty)
+        let unknownLimit = snapshot(kind: .kimiCode, usages: [TokenUsage(window: .fiveHours, used: 0, limit: nil)])
+        #expect(MenuBarMetrics.metrics(for: unknownLimit, kind: .kimiCode, displayCurrency: nil, rateTable: rateTable, quotaMode: .remaining).isEmpty)
+        #expect(MenuBarMetrics.percentageText(MenuBarMetrics.placeholder) == "--")
+    }
+
+    @Test
+    func remainingModeLeavesMoneyUnchanged() {
+        let snap = snapshot(kind: .deepSeek, usages: [
+            TokenUsage(window: .balance, label: "Balance CNY", used: 0, limit: nil, unit: "CNY", amount: Decimal(string: "24.00"))
+        ])
+        let metrics = MenuBarMetrics.metrics(for: snap, kind: .deepSeek, displayCurrency: nil, rateTable: rateTable, quotaMode: .remaining)
+
+        #expect(metrics.first?.shape == .amount("24.00"))
+        #expect(MenuBarMetrics.tooltipText(serviceName: "DeepSeek", metrics: metrics, quotaMode: .remaining) == "DeepSeek · Balance CNY 24.00")
+    }
+
+    @Test
+    func theTooltipMakesTheModeClearEvenWhenBothValuesAreFiftyPercent() {
+        let metrics = [MenuBarMetric(label: "5h", shape: .ratio(0.5), severity: 0.5)]
+        #expect(MenuBarMetrics.tooltipText(serviceName: "Kimi", metrics: metrics, quotaMode: .used) == "Kimi · 5h 50% used")
+        #expect(MenuBarMetrics.tooltipText(serviceName: "Kimi", metrics: metrics, quotaMode: .remaining) == "Kimi · 5h 50% remaining")
+    }
+
+    @Test
     func clampsRatiosAboveOne() {
         let snap = snapshot(kind: .kimiCode, usages: [TokenUsage(window: .fiveHours, used: 300, limit: 100)])
         let metrics = MenuBarMetrics.metrics(for: snap, kind: .kimiCode, displayCurrency: nil, rateTable: rateTable)
@@ -141,7 +201,7 @@ struct MenuBarMetricsTests {
         ])
         let metrics = MenuBarMetrics.metrics(for: snap, kind: .kimiCode, displayCurrency: nil, rateTable: rateTable)
 
-        #expect(MenuBarMetrics.tooltipText(serviceName: "Kimi", metrics: metrics) == "Kimi · 5h 62% · Week 34%")
+        #expect(MenuBarMetrics.tooltipText(serviceName: "Kimi", metrics: metrics) == "Kimi · 5h 62% used · Week 34% used")
     }
 
     @Test
@@ -178,6 +238,6 @@ struct MenuBarMetricsTests {
 
         let metrics = MenuBarMetrics.metrics(for: snap, kind: .googleAI, displayCurrency: nil, rateTable: rateTable)
 
-        #expect(MenuBarMetrics.tooltipText(serviceName: "Google AI", metrics: metrics) == "Google AI · Gemini 5h 2%")
+        #expect(MenuBarMetrics.tooltipText(serviceName: "Google AI", metrics: metrics) == "Google AI · Gemini 5h 2% used")
     }
 }

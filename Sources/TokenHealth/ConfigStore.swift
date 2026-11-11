@@ -11,6 +11,8 @@ final class ConfigStore: @unchecked Sendable {
     private let legacyDefaultsKey = "service.configs.v1"
     private let reportHookDefaultsKey = "usage-report-hook.config.v1"
     private let refreshIntervalDefaultsKey = "refresh-interval.config.v1"
+    private let menuBarDisplayStyleDefaultsKey = "menu-bar.display-style.v1"
+    private let menuBarQuotaModeDefaultsKey = "menu-bar.quota-mode.v1"
     private let pinnedProvidersDefaultsKey = "pinned-provider.config.v2"
     // 只存单个 pin 的旧键。只读不写：读到就当作一个元素的列表，与其他历史键的处理一致。
     private let legacyPinnedProviderDefaultsKey = "pinned-provider.config.v1"
@@ -66,6 +68,24 @@ final class ConfigStore: @unchecked Sendable {
 
     func saveRefreshInterval(_ interval: TimeInterval) {
         defaults.set(interval, forKey: refreshIntervalDefaultsKey)
+    }
+
+    func loadMenuBarDisplayStyle() -> MenuBarDisplayStyle {
+        defaults.string(forKey: menuBarDisplayStyleDefaultsKey)
+            .flatMap(MenuBarDisplayStyle.init(rawValue:)) ?? .bars
+    }
+
+    func saveMenuBarDisplayStyle(_ style: MenuBarDisplayStyle) {
+        defaults.set(style.rawValue, forKey: menuBarDisplayStyleDefaultsKey)
+    }
+
+    func loadMenuBarQuotaMode() -> MenuBarQuotaMode {
+        defaults.string(forKey: menuBarQuotaModeDefaultsKey)
+            .flatMap(MenuBarQuotaMode.init(rawValue:)) ?? .used
+    }
+
+    func saveMenuBarQuotaMode(_ mode: MenuBarQuotaMode) {
+        defaults.set(mode.rawValue, forKey: menuBarQuotaModeDefaultsKey)
     }
 
     func loadPinnedConfigIDs() -> [UUID] {

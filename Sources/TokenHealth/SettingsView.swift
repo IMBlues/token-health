@@ -40,9 +40,9 @@ struct SettingsView: View {
 
                     Section("General") {
                         HStack(spacing: 10) {
-                            Image(systemName: "clock.arrow.circlepath")
+                            Image(systemName: "gearshape")
                                 .frame(width: 18)
-                            Text("Refresh")
+                            Text("General")
                             Spacer(minLength: 0)
                         }
                         .contentShape(Rectangle())
@@ -209,10 +209,6 @@ struct SettingsView: View {
                             }
                         }
                     }
-
-                    Text("Each pinned account gets its own menu bar item: the provider logo, then one thin bar per quota window. Items follow the order of the account list above. The other icon keeps managing everything.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section {
@@ -311,6 +307,22 @@ struct SettingsView: View {
 
     private var generalDetail: some View {
         Form {
+            Section("Menu Bar") {
+                Picker("Quota display", selection: $appState.menuBarDisplayStyle) {
+                    ForEach(MenuBarDisplayStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Picker("Quota value", selection: $appState.menuBarQuotaMode) {
+                    ForEach(MenuBarQuotaMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
             Section {
                 LabeledContent("Auto-refresh interval") {
                     HStack(spacing: 6) {

@@ -1,5 +1,33 @@
 import Foundation
 
+enum MenuBarDisplayStyle: String, CaseIterable, Identifiable, Sendable {
+    case bars
+    case percentage
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .bars: "Progress bars"
+        case .percentage: "Percentage"
+        }
+    }
+}
+
+enum MenuBarQuotaMode: String, CaseIterable, Identifiable, Sendable {
+    case used
+    case remaining
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .used: "Used"
+        case .remaining: "Remaining"
+        }
+    }
+}
+
 enum ProviderKind: String, CaseIterable, Codable, Identifiable, Sendable {
     case openAI
     case anthropic

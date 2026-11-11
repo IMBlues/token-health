@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 
 /// 把一份布局画成菜单栏项用的位图。
 ///
@@ -7,6 +8,7 @@ import AppKit
 @MainActor
 enum MenuBarItemRenderer {
     static let amountFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+    static let percentageFont = NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .medium)
 
     /// 金额型内容的文本宽度。布局层拿不到字体度量，所以由这里量好传进去。
     static func amountWidth(for metrics: [MenuBarMetric]) -> CGFloat {
@@ -81,6 +83,16 @@ enum MenuBarItemRenderer {
             barPath(in: fill).fill()
         }
 
+        let quotaMetrics = metrics.filter { if case .ratio = $0.shape { true } else { false } }
+        for (index, rect) in layout.percentageRects.enumerated() {
+            let metric = index < quotaMetrics.count ? quotaMetrics[index] : MenuBarMetrics.placeholder
+            drawPercentage(
+                MenuBarMetrics.percentageText(metric),
+                in: rect,
+                color: metric.severity == nil ? iconColor.withAlphaComponent(0.6) : fillColor(for: metric.severity)
+            )
+        }
+
         if let amountRect = layout.amountRect,
            let text = MenuBarItemLayout.amountText(in: metrics) {
             let string = NSAttributedString(
@@ -94,6 +106,22 @@ enum MenuBarItemRenderer {
                 )
             )
         }
+    }
+
+    private static func drawPercentage(_ text: String, in rect: CGRect, color: NSColor) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let string = NSAttributedString(string: text, attributes: [
+            .font: percentageFont,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): color.cgColor
+        ])
+        let line = CTLineCreateWithAttributedString(string)
+        // Center the actual ink, not the font's leading, so small stacked rows remain separate.
+        let bounds = CTLineGetBoundsWithOptions(line, [.useGlyphPathBounds])
+        context.saveGState()
+        context.textMatrix = .identity
+        context.textPosition = CGPoint(x: rect.midX - bounds.midX, y: rect.midY - bounds.midY)
+        CTLineDraw(line, context)
+        context.restoreGState()
     }
 
     private static func barPath(in rect: CGRect) -> NSBezierPath {

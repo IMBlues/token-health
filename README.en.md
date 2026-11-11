@@ -78,13 +78,15 @@ Local builds are ad-hoc signed and not notarized by Apple.
 
 Click the gear to add a provider, sign in as prompted, and refresh. Web-based services import a session from the official console; API-based ones take a key in settings.
 
-Auto-refresh defaults to every 15 minutes and can be changed under Settings → General → Refresh (30 seconds minimum); opening the menu doesn't trigger a refresh. The first Keychain read makes macOS put up a prompt, and if it gets denied or times out, settings grows a **Retry Keychain Access** button that brings it back — no restart needed. **Check for Updates** on the same General page asks GitHub for a newer release, downloads the dmg into Downloads and opens it — drag it into Applications to replace the old copy. It only ever talks to GitHub when you press it.
+Auto-refresh defaults to every 15 minutes and can be changed under Settings → General (30 seconds minimum); opening the menu doesn't trigger a refresh. Account Enabled, names, ordinary configuration and usage-reporting settings save automatically; credentials still need **Save & Refresh** or **Save**. The first Keychain read makes macOS put up a prompt, and if it gets denied or times out, settings grows a **Retry Keychain Access** button that brings it back — no restart needed. **Check for Updates** on the same General page asks GitHub for a newer release, downloads the dmg into Downloads and opens it — drag it into Applications to replace the old copy. It only ever talks to GitHub when you press it.
 
 ### Pinning accounts
 
 Turn on **Menu Bar → Pin to menu bar** in settings, or click the pin in the top-right corner of any card in the dropdown. Each pinned account adds one icon to the menu bar: the provider's logo plus one thin bar per quota window, taller meaning more used, the color shifting from green through orange to red as usage climbs, and hovering shows the exact percentage. Click again to unpin. Icons follow the account order, with no limit on how many, and the system lays out the menu bar — ⌘-drag to rearrange.
 
-The gourd is the global entry point (it reads the level inside the gourd, meaning what's left) and is independent of the pinned accounts. Menu bar artwork is black and white only; the bars' green/orange/red is the one color that stays.
+Under **General → Menu Bar → Quota display**, choose **Progress bars** (the default) or **Percentage** for all pinned accounts. Percentages stack beside the logo, with up to three quota values per column. **Quota value** selects **Used** (the default) or **Remaining** for both styles; changes apply immediately and save automatically. Both modes warn in orange/red as quota runs out and leave monetary values unchanged. For unknown usage, Percentage shows `--` and bars keep an empty track. Click an item again to close its popover; switching accounts keeps only one open. Outside clicks, Escape and switching windows or applications also dismiss it.
+
+The gourd is the global entry point (it reads the level inside the gourd, meaning what's left) and is independent of the pinned accounts. Menu bar artwork is black and white only; usage indicators retain their green/orange/red colors.
 
 Clicking a pinned item opens a detail popover, one level deeper than the card. Only these five have one:
 

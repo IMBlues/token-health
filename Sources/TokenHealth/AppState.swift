@@ -6,17 +6,44 @@ final class AppState: ObservableObject {
     static let defaultRefreshInterval: TimeInterval = 60 * 15
     static let minimumRefreshInterval: TimeInterval = 30
 
-    @Published var configs: [ServiceConfig]
+    // Bindings update these values immediately; disk must not lag behind until Save & Refresh.
+    @Published var configs: [ServiceConfig] {
+        didSet {
+            if configs != oldValue {
+                configStore.saveConfigs(configs)
+            }
+        }
+    }
     @Published var snapshots: [UUID: ProviderUsageSnapshot] = [:]
     @Published var isRefreshing = false
     @Published var lastError: String?
     @Published var settingsSelectedID: UUID?
     @Published var nextRefreshAt: Date
     @Published var refreshInterval: TimeInterval
+    @Published var menuBarDisplayStyle: MenuBarDisplayStyle {
+        didSet {
+            if menuBarDisplayStyle != oldValue {
+                configStore.saveMenuBarDisplayStyle(menuBarDisplayStyle)
+            }
+        }
+    }
+    @Published var menuBarQuotaMode: MenuBarQuotaMode {
+        didSet {
+            if menuBarQuotaMode != oldValue {
+                configStore.saveMenuBarQuotaMode(menuBarQuotaMode)
+            }
+        }
+    }
     @Published var lastRefreshAt: Date?
     @Published var pinnedConfigIDs: [UUID]
     @Published private(set) var exchangeRate: ExchangeRateTable
-    @Published var reportHookConfig: ReportHookConfig
+    @Published var reportHookConfig: ReportHookConfig {
+        didSet {
+            if reportHookConfig != oldValue {
+                configStore.saveReportHookConfig(reportHookConfig)
+            }
+        }
+    }
     @Published var isReporting = false
     @Published var lastReportMessage: String?
     @Published var lastReportSucceeded: Bool?
@@ -48,6 +75,8 @@ final class AppState: ObservableObject {
         reportHookConfig = configStore.loadReportHookConfig()
         let interval = Self.normalizedRefreshInterval(configStore.loadRefreshInterval())
         refreshInterval = interval
+        menuBarDisplayStyle = configStore.loadMenuBarDisplayStyle()
+        menuBarQuotaMode = configStore.loadMenuBarQuotaMode()
         nextRefreshAt = Date().addingTimeInterval(interval)
         exchangeRate = resolvedRateStore.table
         pinnedConfigIDs = configStore.loadPinnedConfigIDs()

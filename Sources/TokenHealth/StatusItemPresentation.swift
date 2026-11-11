@@ -23,4 +23,5 @@ struct StatusItemPresentation: Equatable {
     var scale: CGFloat
     var tooltip: String
     var interaction: StatusItemInteraction
+    var displayStyle: MenuBarDisplayStyle = .bars
 }

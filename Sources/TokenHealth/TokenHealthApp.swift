@@ -32,11 +32,12 @@ struct TokenHealthApp: App {
         // 不挂在任何 SwiftUI 视图上 —— 挂在视图的 onAppear 上会让状态项直到面板被打开过才出现。
         let state = AppState()
         _appState = StateObject(wrappedValue: state)
-        let settings = SettingsWindowController(appState: state)
+        let popovers = StatusItemPopoverController()
+        let settings = SettingsWindowController(appState: state, popoverController: popovers)
         settingsController = settings
-        let pinned = PinnedStatusItemController(appState: state, settings: settings)
+        let pinned = PinnedStatusItemController(appState: state, settings: settings, popoverController: popovers)
         pinnedItemController = pinned
-        let panel = MenuBarPanelController(appState: state, settings: settings)
+        let panel = MenuBarPanelController(appState: state, settings: settings, popoverController: popovers)
         panelController = panel
 
         // App.init 在 NSApplicationMain 完成之前就跑；控制器自己会等 didFinishLaunching，

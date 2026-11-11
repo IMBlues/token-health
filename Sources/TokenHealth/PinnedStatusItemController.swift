@@ -8,14 +8,14 @@ import SwiftUI
 /// 支持详情的 Provider 点下去弹浮层（余额、按天趋势、按模型拆分…），
 /// 不支持的就是原来的 Unpin / Settings / Quit 小菜单。
 @MainActor
-final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
+final class PinnedStatusItemController: NSObject {
     /// 详情超过这个岁数就在打开时顺手拉一次。
     static let detailStaleness: TimeInterval = 5 * 60
 
     private let appState: AppState
     private let settings: SettingsWindowController
+    private let popoverController: StatusItemPopoverController
     private var statusItems: [UUID: NSStatusItem] = [:]
-    private var popovers: [UUID: NSPopover] = [:]
     private var detailHosts: [UUID: NSHostingController<DetailPopoverView>] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var appearanceObservation: NSKeyValueObservation?
@@ -35,9 +35,14 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
     /// 状态项在 NSApplication 启动完成前创建会被系统丢掉，所以首次重绘挂在启动通知上。
     private var hasLaunched = false
 
-    init(appState: AppState, settings: SettingsWindowController) {
+    init(
+        appState: AppState,
+        settings: SettingsWindowController,
+        popoverController: StatusItemPopoverController = StatusItemPopoverController()
+    ) {
         self.appState = appState
         self.settings = settings
+        self.popoverController = popoverController
     }
 
     func start() {
@@ -122,7 +127,8 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
             for: snapshot,
             kind: config.providerKind,
             displayCurrency: config.displayCurrency,
-            rateTable: appState.exchangeRate
+            rateTable: appState.exchangeRate,
+            quotaMode: appState.menuBarQuotaMode
         )
         let displayMetrics = metrics.isEmpty ? [MenuBarMetrics.placeholder] : metrics
         let item = statusItem(for: config.id)
@@ -138,11 +144,13 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
             tooltip: MenuBarMetrics.tooltipText(
                 serviceName: config.displayName,
                 metrics: metrics,
-                statusMessage: snapshot?.statusMessage
+                statusMessage: snapshot?.statusMessage,
+                quotaMode: appState.menuBarQuotaMode
             ),
             interaction: ProviderFactory.producesUsageDetail(for: config)
                 ? .detailPopover
-                : .menu(displayName: config.displayName)
+                : .menu(displayName: config.displayName),
+            displayStyle: appState.menuBarDisplayStyle
         )
 
         // 内容没变就一个字节都别写回状态项。写回会让 AppKit 为它复制一张按钮位图、
@@ -165,7 +173,8 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
         let layout = MenuBarItemLayout.make(
             metrics: presentation.metrics,
             hasIcon: true,
-            amountWidth: MenuBarItemRenderer.amountWidth(for: presentation.metrics)
+            amountWidth: MenuBarItemRenderer.amountWidth(for: presentation.metrics),
+            displayStyle: presentation.displayStyle
         )
         let image = MenuBarItemRenderer.image(
             layout: layout,
@@ -175,7 +184,7 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
             scale: presentation.scale
         )
 
-        item.length = image.size.width + MenuBarItemLayout.statusItemPadding
+        item.length = layout.statusItemLength
         item.button?.image = image
         item.button?.toolTip = presentation.tooltip
 
@@ -250,22 +259,15 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
             return
         }
 
-        closePopover(for: id)
+        let shown = popoverController.toggle(relativeTo: sender, content: {
+            let host = NSHostingController(rootView: makeDetailView(for: config))
+            detailHosts[id] = host
+            return host
+        }, onClose: { [weak self] in
+            self?.forgetDetail(for: id)
+        })
 
-        let host = NSHostingController(rootView: makeDetailView(for: config))
-        let popover = NSPopover()
-        popover.behavior = .transient
-        // 没人接 `popoverDidClose` 的话，用户点别处关掉的浮层在这边仍算「开着」。
-        popover.delegate = self
-        popover.contentViewController = host
-        detailHosts[id] = host
-        popovers[id] = popover
-
-        // .transient 要能响应外部点击关闭，得先让 App 拿到焦点。
-        NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-
-        if isStale(config) {
+        if shown, isStale(config) {
             Task { await appState.refresh(configID: id) }
         }
     }
@@ -318,24 +320,14 @@ final class PinnedStatusItemController: NSObject, NSPopoverDelegate {
         host.rootView = makeDetailView(for: config)
     }
 
-    /// `.transient` 的浮层被点别处、或是按 Esc 关掉时不会走 `closePopover`。没人接这一下，
-    /// 已经关掉的浮层在这边就一直算开着的：每次重绘都往里塞一份新的 `rootView`，
-    /// 于是隐藏窗口里的整棵 SwiftUI 树跟着一遍遍重算。
-    func popoverDidClose(_ notification: Notification) {
-        guard let popover = notification.object as? NSPopover,
-              let id = popovers.first(where: { $0.value === popover })?.key else {
-            return
+    private func closePopover(for id: UUID) {
+        if let button = statusItems[id]?.button {
+            popoverController.close(ifAnchoredTo: button)
         }
         forgetDetail(for: id)
     }
 
-    private func closePopover(for id: UUID) {
-        popovers[id]?.close()
-        forgetDetail(for: id)
-    }
-
     private func forgetDetail(for id: UUID) {
-        popovers.removeValue(forKey: id)
         detailHosts.removeValue(forKey: id)
         pushedDetails.forget(id)
     }

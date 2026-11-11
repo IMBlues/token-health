@@ -9,7 +9,7 @@ struct MenuBarMetric: Equatable, Sendable {
 
     var label: String
     var shape: Shape
-    /// 用于给条选色；金额型没有严重度。
+    /// 始终是已用比例，剩余模式也不能反转警示色；金额型没有严重度。
     var severity: Double?
 }
 
@@ -21,7 +21,8 @@ enum MenuBarMetrics {
         for snapshot: ProviderUsageSnapshot?,
         kind: ProviderKind,
         displayCurrency: String?,
-        rateTable: ExchangeRateTable
+        rateTable: ExchangeRateTable,
+        quotaMode: MenuBarQuotaMode = .used
     ) -> [MenuBarMetric] {
         guard let snapshot, snapshot.state == .ready else {
             return []
@@ -31,18 +32,24 @@ enum MenuBarMetrics {
         }
         return UsageMetricSelection.menuBarMetrics(from: snapshot.usages, kind: kind).map { usage in
             let ratio = min(max(usage.ratio ?? 0, 0), 1)
-            return MenuBarMetric(label: shortLabel(for: usage), shape: .ratio(ratio), severity: ratio)
+            let displayedRatio = quotaMode == .remaining ? 1 - ratio : ratio
+            return MenuBarMetric(label: shortLabel(for: usage), shape: .ratio(displayedRatio), severity: ratio)
         }
     }
 
-    static func tooltipText(serviceName: String, metrics: [MenuBarMetric], statusMessage: String? = nil) -> String {
+    static func tooltipText(
+        serviceName: String,
+        metrics: [MenuBarMetric],
+        statusMessage: String? = nil,
+        quotaMode: MenuBarQuotaMode = .used
+    ) -> String {
         guard !metrics.isEmpty else {
             return "\(serviceName) · \(statusMessage ?? "Waiting for refresh")"
         }
         let parts = metrics.map { metric in
             switch metric.shape {
-            case let .ratio(value):
-                "\(metric.label) \(percentText(value))"
+            case .ratio:
+                "\(metric.label) \(percentageText(metric)) \(quotaMode.title.lowercased())"
             case let .amount(text):
                 "\(metric.label) \(text)"
             }
@@ -57,6 +64,13 @@ enum MenuBarMetrics {
         formatter.numberStyle = .decimal
         formatter.maximumFractionDigits = 0
         return "\(formatter.string(from: NSNumber(value: percent)) ?? "\(Int(percent))")%"
+    }
+
+    static func percentageText(_ metric: MenuBarMetric) -> String {
+        guard case let .ratio(value) = metric.shape, value.isFinite, metric.severity != nil else {
+            return "--"
+        }
+        return percentText(min(max(value, 0), 1))
     }
 
     /// 短标签；usage 自带 label 时优先用它（Cursor 的三个池靠这个区分）。
